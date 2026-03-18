@@ -11,6 +11,7 @@ dist/
 .venv/
 *.DS_Store
 .pytest_cache/
+site/
 
 # edfarray Python package — ignore generated build artifacts, keep source and stubs
 edfarray/*

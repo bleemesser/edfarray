@@ -1,0 +1,42 @@
+site_name: edfarray
+site_description: An EDF/EDF+ parser written in Rust with numpy-like Python bindings
+repo_url: https://github.com/bleemesser/edfarray
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: white
+    accent: teal
+  font: false
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.highlight
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - attr_list
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Guide:
+    - Getting Started: guide/getting-started.md
+    - Working with Signals: guide/signals.md
+    - Annotations & Time: guide/annotations.md
+    - Performance: guide/performance.md
+  - Reference:
+    - Python API: reference/python-api.md
+    - Rust Crate: reference/rust-api.md
+    - EDF Format: reference/edf-format.md

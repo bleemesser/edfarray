@@ -23,4 +23,5 @@ dev = [
     "pytest>=7",
     "maturin>=1.0",
     "pyedflib>=0.1.42",
+    "mkdocs-material>=9.7.5",
 ]
