@@ -23,10 +23,7 @@ impl PyAnnotation {
                 "Annotation(onset={}, duration={}, text={:?})",
                 self.onset, d, self.text
             ),
-            None => format!(
-                "Annotation(onset={}, text={:?})",
-                self.onset, self.text
-            ),
+            None => format!("Annotation(onset={}, text={:?})", self.onset, self.text),
         }
     }
 }

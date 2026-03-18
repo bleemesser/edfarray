@@ -140,16 +140,10 @@ impl PyEdfFile {
             Some(MaybeDate::Parsed(date)) => {
                 let datetime_mod = py.import("datetime")?;
                 let date_cls = datetime_mod.getattr("date")?;
-                let result = date_cls.call1((
-                    date.year(),
-                    date.month(),
-                    date.day(),
-                ))?;
+                let result = date_cls.call1((date.year(), date.month(), date.day()))?;
                 Ok(Some(result.unbind()))
             }
-            Some(MaybeDate::Raw(s)) => {
-                Ok(Some(s.clone().into_pyobject(py)?.into_any().unbind()))
-            }
+            Some(MaybeDate::Raw(s)) => Ok(Some(s.clone().into_pyobject(py)?.into_any().unbind())),
             None => Ok(None),
         }
     }
@@ -187,7 +181,11 @@ impl PyEdfFile {
     /// All non-timekeeping annotations, sorted by onset.
     #[getter]
     fn annotations(&self) -> Vec<PyAnnotation> {
-        self.inner.annotations().iter().map(PyAnnotation::from).collect()
+        self.inner
+            .annotations()
+            .iter()
+            .map(PyAnnotation::from)
+            .collect()
     }
 
     /// Parse warnings accumulated during file open.

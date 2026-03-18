@@ -130,7 +130,11 @@ impl AnnotationIndex {
             &mut warnings,
         );
 
-        annotations.sort_by(|a, b| a.onset.partial_cmp(&b.onset).unwrap_or(std::cmp::Ordering::Equal));
+        annotations.sort_by(|a, b| {
+            a.onset
+                .partial_cmp(&b.onset)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(AnnotationIndex {
             annotations,
@@ -188,14 +192,18 @@ fn parse_single_tal(
         format!("invalid TAL onset at record {record_idx}, byte offset {tal_start}: {reason}")
     })?;
 
-    let duration = if *pos > 0 && *pos <= data.len() && data.get(pos.wrapping_sub(1)) == Some(&TAL_DURATION_MARKER) {
-        let dur_str = read_until(data, pos, &[TAL_SEPARATOR]);
-        parse_duration(&dur_str).map_err(|reason| format!(
+    let duration =
+        if *pos > 0
+            && *pos <= data.len()
+            && data.get(pos.wrapping_sub(1)) == Some(&TAL_DURATION_MARKER)
+        {
+            let dur_str = read_until(data, pos, &[TAL_SEPARATOR]);
+            parse_duration(&dur_str).map_err(|reason| format!(
             "invalid TAL duration at record {record_idx}, byte offset {tal_start}: {reason}"
         )).ok()
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     let mut annotations = Vec::new();
 
@@ -208,7 +216,11 @@ fn parse_single_tal(
         }
 
         let text_bytes = read_until_raw(data, pos, &[TAL_SEPARATOR, TAL_TERMINATOR]);
-        let terminated_by = if *pos > 0 { data.get(pos.wrapping_sub(1)).copied() } else { None };
+        let terminated_by = if *pos > 0 {
+            data.get(pos.wrapping_sub(1)).copied()
+        } else {
+            None
+        };
 
         match std::str::from_utf8(&text_bytes) {
             Ok(text) => {
@@ -602,7 +614,10 @@ mod tests {
             file_data.extend_from_slice(&ann_bytes);
         }
 
-        assert_eq!(file_data.len(), header.data_offset() + 2 * layout.record_size);
+        assert_eq!(
+            file_data.len(),
+            header.data_offset() + 2 * layout.record_size
+        );
         let header = EdfHeader::parse(&file_data[..header.header_bytes]).unwrap();
         (file_data, header)
     }

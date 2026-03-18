@@ -231,19 +231,22 @@ impl EdfHeader {
 }
 
 fn read_field(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<String> {
-    let bytes = data.get(offset..offset + size).ok_or(EdfError::InvalidHeaderField {
-        field: name,
-        reason: "header truncated".to_string(),
-    })?;
+    let bytes = data
+        .get(offset..offset + size)
+        .ok_or(EdfError::InvalidHeaderField {
+            field: name,
+            reason: "header truncated".to_string(),
+        })?;
     Ok(String::from_utf8_lossy(bytes).trim().to_string())
 }
 
 fn read_usize(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<usize> {
     let s = read_field(data, offset, size, name)?;
-    s.parse::<usize>().map_err(|_| EdfError::InvalidHeaderField {
-        field: name,
-        reason: format!("not a valid unsigned integer: {:?}", s),
-    })
+    s.parse::<usize>()
+        .map_err(|_| EdfError::InvalidHeaderField {
+            field: name,
+            reason: format!("not a valid unsigned integer: {:?}", s),
+        })
 }
 
 fn read_i64(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<i64> {
@@ -366,11 +369,7 @@ fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) 
 /// Parse EDF+ recording_id into structured subfields.
 ///
 /// Format: `"Startdate DD-MMM-YYYY admincode technician equipment [additional...]"`
-fn parse_recording_id(
-    raw: &str,
-    variant: EdfVariant,
-    warnings: &mut Vec<String>,
-) -> RecordingInfo {
+fn parse_recording_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> RecordingInfo {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 5 || !parts[0].eq_ignore_ascii_case("Startdate") {
         if variant != EdfVariant::Edf {
@@ -556,7 +555,12 @@ mod tests {
     #[test]
     fn parse_patient_info() {
         let mut data = build_test_header(1);
-        write_field(&mut data, 8, 80, "MCH-0234567 F 02-MAR-1951 Haagansen_Erlangen extra_info");
+        write_field(
+            &mut data,
+            8,
+            80,
+            "MCH-0234567 F 02-MAR-1951 Haagansen_Erlangen extra_info",
+        );
         // Recalculate to ensure EDF+ variant
         write_field(&mut data, 192, 44, "EDF+C");
 
@@ -564,7 +568,12 @@ mod tests {
         assert_eq!(header.patient.code.as_deref(), Some("MCH-0234567"));
         assert_eq!(header.patient.sex, Some(Sex::Female));
         assert_eq!(
-            header.patient.birthdate.as_ref().and_then(|d| d.as_date()).copied(),
+            header
+                .patient
+                .birthdate
+                .as_ref()
+                .and_then(|d| d.as_date())
+                .copied(),
             NaiveDate::from_ymd_opt(1951, 3, 2)
         );
         assert_eq!(header.patient.name.as_deref(), Some("Haagansen Erlangen"));
@@ -584,7 +593,12 @@ mod tests {
 
         let header = EdfHeader::parse(&data).unwrap();
         assert_eq!(
-            header.recording.start_date.as_ref().and_then(|d| d.as_date()).copied(),
+            header
+                .recording
+                .start_date
+                .as_ref()
+                .and_then(|d| d.as_date())
+                .copied(),
             NaiveDate::from_ymd_opt(2002, 3, 2)
         );
         assert_eq!(header.recording.admin_code.as_deref(), Some("PSG-1234"));

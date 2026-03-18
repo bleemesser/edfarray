@@ -57,8 +57,7 @@ impl SignalHeader {
             });
         }
 
-        let gain =
-            (physical_max - physical_min) / (digital_max as f64 - digital_min as f64);
+        let gain = (physical_max - physical_min) / (digital_max as f64 - digital_min as f64);
         let offset = physical_min - gain * digital_min as f64;
         let is_annotation = label.starts_with(EDF_ANNOTATIONS_LABEL);
 
@@ -107,11 +106,13 @@ fn read_signal_field(
 ) -> Result<String> {
     let start = field_offset * num_signals + field_size * index;
     let end = start + field_size;
-    let bytes = data.get(start..end).ok_or_else(|| EdfError::InvalidSignalField {
-        index,
-        field: "header",
-        reason: format!("signal header truncated at byte {start}"),
-    })?;
+    let bytes = data
+        .get(start..end)
+        .ok_or_else(|| EdfError::InvalidSignalField {
+            index,
+            field: "header",
+            reason: format!("signal header truncated at byte {start}"),
+        })?;
     Ok(String::from_utf8_lossy(bytes).trim().to_string())
 }
 
@@ -156,11 +157,12 @@ fn parse_signal_usize(
     field_name: &'static str,
 ) -> Result<usize> {
     let s = read_signal_field(data, index, num_signals, field_offset, field_size)?;
-    s.parse::<usize>().map_err(|_| EdfError::InvalidSignalField {
-        index,
-        field: field_name,
-        reason: format!("not a valid unsigned integer: {:?}", s),
-    })
+    s.parse::<usize>()
+        .map_err(|_| EdfError::InvalidSignalField {
+            index,
+            field: field_name,
+            reason: format!("not a valid unsigned integer: {:?}", s),
+        })
 }
 
 #[cfg(test)]
@@ -187,16 +189,16 @@ mod tests {
     #[test]
     fn parse_valid_signal() {
         let fields: Vec<(&[u8], usize)> = vec![
-            (b"EEG Fp1", 16),          // label
-            (b"AgAgCl", 80),            // transducer
-            (b"uV", 8),                 // physical_dimension
-            (b"-3200", 8),              // physical_min
-            (b"3200", 8),               // physical_max
-            (b"-32768", 8),             // digital_min
-            (b"32767", 8),              // digital_max
-            (b"HP:0.1Hz", 80),          // prefiltering
-            (b"256", 8),                // num_samples
-            (b"", 32),                  // reserved
+            (b"EEG Fp1", 16),  // label
+            (b"AgAgCl", 80),   // transducer
+            (b"uV", 8),        // physical_dimension
+            (b"-3200", 8),     // physical_min
+            (b"3200", 8),      // physical_max
+            (b"-32768", 8),    // digital_min
+            (b"32767", 8),     // digital_max
+            (b"HP:0.1Hz", 80), // prefiltering
+            (b"256", 8),       // num_samples
+            (b"", 32),         // reserved
         ];
         let data = build_signal_header_bytes(1, &fields);
         let sig = SignalHeader::parse(&data, 0, 1).unwrap();
@@ -240,7 +242,7 @@ mod tests {
             (b"uV", 8),
             (b"-100", 8),
             (b"100", 8),
-            (b"100", 8),   // digital_min > digital_max
+            (b"100", 8), // digital_min > digital_max
             (b"-100", 8),
             (b"", 80),
             (b"256", 8),

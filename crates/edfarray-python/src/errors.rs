@@ -1,6 +1,6 @@
 use edfarray_core::error::EdfError;
-use pyo3::exceptions::{PyIndexError, PyKeyError, PyOSError, PyValueError};
 use pyo3::PyErr;
+use pyo3::exceptions::{PyIndexError, PyKeyError, PyOSError, PyValueError};
 
 /// Convert an `EdfError` into the appropriate Python exception.
 pub fn to_py_err(e: EdfError) -> PyErr {
@@ -18,9 +18,7 @@ pub fn to_py_err(e: EdfError) -> PyErr {
         | EdfError::InvalidPhysicalRange { .. }
         | EdfError::InvalidTal { .. }
         | EdfError::InvalidAnnotationEncoding { .. }
-        | EdfError::MissingTimekeepingAnnotation { .. } => {
-            PyValueError::new_err(e.to_string())
-        }
+        | EdfError::MissingTimekeepingAnnotation { .. } => PyValueError::new_err(e.to_string()),
 
         EdfError::RecordOutOfRange { .. }
         | EdfError::SignalOutOfRange { .. }

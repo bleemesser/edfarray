@@ -114,8 +114,8 @@ impl MappedFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     fn build_test_file() -> (NamedTempFile, usize, usize) {
         let num_signals = 1;

@@ -36,11 +36,7 @@ impl RecordLayout {
     /// Extract the raw bytes for a specific signal within a data record.
     ///
     /// `record_data` must be exactly `record_size` bytes (one complete data record).
-    pub fn signal_bytes<'a>(
-        &self,
-        record_data: &'a [u8],
-        signal_idx: usize,
-    ) -> Result<&'a [u8]> {
+    pub fn signal_bytes<'a>(&self, record_data: &'a [u8], signal_idx: usize) -> Result<&'a [u8]> {
         if signal_idx >= self.signal_offsets.len() {
             return Err(EdfError::SignalOutOfRange {
                 index: signal_idx,

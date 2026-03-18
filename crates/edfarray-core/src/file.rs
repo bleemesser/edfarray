@@ -267,8 +267,7 @@ mod tests {
     fn write_sig(data: &mut [u8], index: usize, ns: usize, fo: usize, fs: usize, value: &str) {
         let start = fo * ns + fs * index;
         let bytes = value.as_bytes();
-        data[start..start + bytes.len().min(fs)]
-            .copy_from_slice(&bytes[..bytes.len().min(fs)]);
+        data[start..start + bytes.len().min(fs)].copy_from_slice(&bytes[..bytes.len().min(fs)]);
     }
 }
 

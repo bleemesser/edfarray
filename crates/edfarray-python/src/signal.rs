@@ -104,11 +104,7 @@ impl PySignal {
     }
 
     /// Supports `s[i]`, `s[start:stop]`, and `s[start:stop:step]`.
-    fn __getitem__<'py>(
-        &self,
-        py: Python<'py>,
-        key: &Bound<'py, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
+    fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         if let Ok(idx) = key.extract::<isize>() {
             let idx = self.normalize_index(idx)?;
             let val = self.proxy.get_physical(idx).map_err(to_py_err)?;
@@ -128,7 +124,9 @@ impl PySignal {
                 if count > 0 {
                     unsafe {
                         let slice = array.as_slice_mut()?;
-                        self.proxy.read_physical(start, stop, slice).map_err(to_py_err)?;
+                        self.proxy
+                            .read_physical(start, stop, slice)
+                            .map_err(to_py_err)?;
                     }
                 }
                 Ok(array.into_any().unbind())

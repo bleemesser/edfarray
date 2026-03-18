@@ -21,10 +21,7 @@ pub enum EdfError {
     FileTooSmall { expected: usize, actual: usize },
 
     #[error("invalid header field `{field}`: {reason}")]
-    InvalidHeaderField {
-        field: &'static str,
-        reason: String,
-    },
+    InvalidHeaderField { field: &'static str, reason: String },
 
     #[error("header declares {header_bytes} header bytes, but file is only {file_size} bytes")]
     HeaderSizeMismatch {
