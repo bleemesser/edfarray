@@ -1,0 +1,12 @@
+[package]
+name = "edfarray"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+edfarray-core = { path = "../edfarray-core" }
+numpy = "0.28.0"
+pyo3 = { version = "0.28.2", features = ["extension-module"] }

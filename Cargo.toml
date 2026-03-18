@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/edfarray-core", "crates/edfarray-python"]
+resolver = "2"
