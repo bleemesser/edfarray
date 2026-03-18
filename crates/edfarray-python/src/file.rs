@@ -1,0 +1,207 @@
+use chrono::{Datelike, Timelike};
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+
+use edfarray_core::file::EdfFile;
+use edfarray_core::header::Sex;
+
+use crate::annotations::PyAnnotation;
+use crate::errors::to_py_err;
+use crate::signal::PySignal;
+
+/// An open EDF/EDF+ file.
+#[pyclass(name = "EdfFile")]
+pub struct PyEdfFile {
+    inner: EdfFile,
+}
+
+#[pymethods]
+impl PyEdfFile {
+    #[new]
+    fn new(path: &str) -> PyResult<Self> {
+        let inner = EdfFile::open(path).map_err(to_py_err)?;
+        Ok(PyEdfFile { inner })
+    }
+
+    fn __enter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    #[pyo3(signature = (*_args))]
+    fn __exit__(&self, _args: Bound<'_, pyo3::types::PyTuple>) {}
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EdfFile(variant={:?}, signals={}, records={}, duration={}s)",
+            self.inner.variant().to_string(),
+            self.inner.num_signals(),
+            self.inner.num_records(),
+            self.inner.duration()
+        )
+    }
+
+    #[getter]
+    fn num_signals(&self) -> usize {
+        self.inner.num_signals()
+    }
+
+    #[getter]
+    fn num_records(&self) -> usize {
+        self.inner.num_records()
+    }
+
+    #[getter]
+    fn record_duration(&self) -> f64 {
+        self.inner.record_duration()
+    }
+
+    #[getter]
+    fn duration(&self) -> f64 {
+        self.inner.duration()
+    }
+
+    #[getter]
+    fn variant(&self) -> String {
+        self.inner.variant().to_string()
+    }
+
+    #[getter]
+    fn patient_id(&self) -> &str {
+        &self.inner.header().patient_id
+    }
+
+    #[getter]
+    fn recording_id(&self) -> &str {
+        &self.inner.header().recording_id
+    }
+
+    /// Returns `datetime.datetime` if the header date/time could be parsed,
+    /// or a string like `"04.04.yy 12.57.02"` if it was anonymized.
+    #[getter]
+    fn start_datetime<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        let mdt = &self.inner.header().start_datetime;
+        match mdt.as_datetime() {
+            Some(dt) => {
+                let datetime_mod = py.import("datetime")?;
+                let datetime_cls = datetime_mod.getattr("datetime")?;
+                let result = datetime_cls.call1((
+                    dt.year(),
+                    dt.month(),
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    dt.second(),
+                ))?;
+                Ok(result.unbind())
+            }
+            None => {
+                let s = format!("{} {}", mdt.raw_date(), mdt.raw_time());
+                Ok(s.into_pyobject(py)?.into_any().unbind())
+            }
+        }
+    }
+
+    #[getter]
+    fn patient_name(&self) -> Option<&str> {
+        self.inner.patient().name.as_deref()
+    }
+
+    #[getter]
+    fn patient_code(&self) -> Option<&str> {
+        self.inner.patient().code.as_deref()
+    }
+
+    #[getter]
+    fn patient_sex(&self) -> Option<&str> {
+        self.inner.patient().sex.map(|s| match s {
+            Sex::Male => "M",
+            Sex::Female => "F",
+        })
+    }
+
+    /// Returns `datetime.date` if parseable, a raw string if anonymized, or `None` if absent.
+    #[getter]
+    fn patient_birthdate<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
+        use edfarray_core::header::MaybeDate;
+        match &self.inner.patient().birthdate {
+            Some(MaybeDate::Parsed(date)) => {
+                let datetime_mod = py.import("datetime")?;
+                let date_cls = datetime_mod.getattr("date")?;
+                let result = date_cls.call1((
+                    date.year(),
+                    date.month(),
+                    date.day(),
+                ))?;
+                Ok(Some(result.unbind()))
+            }
+            Some(MaybeDate::Raw(s)) => {
+                Ok(Some(s.clone().into_pyobject(py)?.into_any().unbind()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[getter]
+    fn patient_additional(&self) -> Option<&str> {
+        self.inner.patient().additional.as_deref()
+    }
+
+    #[getter]
+    fn admin_code(&self) -> Option<&str> {
+        self.inner.recording().admin_code.as_deref()
+    }
+
+    #[getter]
+    fn technician(&self) -> Option<&str> {
+        self.inner.recording().technician.as_deref()
+    }
+
+    #[getter]
+    fn equipment(&self) -> Option<&str> {
+        self.inner.recording().equipment.as_deref()
+    }
+
+    #[getter]
+    fn recording_additional(&self) -> Option<&str> {
+        self.inner.recording().additional.as_deref()
+    }
+
+    #[getter]
+    fn annotations(&self) -> Vec<PyAnnotation> {
+        self.inner.annotations().iter().map(PyAnnotation::from).collect()
+    }
+
+    #[getter]
+    fn warnings(&self) -> Vec<String> {
+        self.inner.warnings()
+    }
+
+    #[getter]
+    fn header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        dict.set_item("version", &self.inner.header().version)?;
+        dict.set_item("patient_id", &self.inner.header().patient_id)?;
+        dict.set_item("recording_id", &self.inner.header().recording_id)?;
+        dict.set_item("num_signals", self.inner.num_signals())?;
+        dict.set_item("num_records", self.inner.num_records())?;
+        dict.set_item("record_duration", self.inner.record_duration())?;
+        dict.set_item("duration", self.inner.duration())?;
+        dict.set_item("variant", self.inner.variant().to_string())?;
+        Ok(dict)
+    }
+
+    /// Get a signal by index or label.
+    fn signal(&self, idx_or_label: &Bound<'_, PyAny>) -> PyResult<PySignal> {
+        if let Ok(idx) = idx_or_label.extract::<usize>() {
+            let proxy = self.inner.signal(idx).map_err(to_py_err)?;
+            Ok(PySignal::new(proxy))
+        } else if let Ok(label) = idx_or_label.extract::<String>() {
+            let proxy = self.inner.signal_by_label(&label).map_err(to_py_err)?;
+            Ok(PySignal::new(proxy))
+        } else {
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "signal() argument must be int or str",
+            ))
+        }
+    }
+}

@@ -25,6 +25,11 @@ pub struct AnnotationIndex {
     /// For EDF+C this increases uniformly; for EDF+D it may have gaps.
     pub record_onsets: Vec<f64>,
 
+    /// Subsecond component of the recording start time, extracted from the
+    /// first time-keeping annotation in the first data record. The EDF header
+    /// only stores integer seconds; EDF+ encodes subsecond precision here.
+    pub starttime_subsecond: f64,
+
     /// Warnings encountered during parsing (malformed TALs, etc.).
     pub warnings: Vec<String>,
 }
@@ -55,6 +60,7 @@ impl AnnotationIndex {
             return Ok(AnnotationIndex {
                 annotations,
                 record_onsets,
+                starttime_subsecond: 0.0,
                 warnings,
             });
         }
@@ -103,6 +109,20 @@ impl AnnotationIndex {
             }
         }
 
+        // The first time-keeping annotation's onset encodes the subsecond
+        // component of the recording start time. The EDF header only stores
+        // integer seconds, so EDF+ files use this to convey sub-second precision.
+        // All onsets in the file are relative to the integer-second start, so we
+        // subtract this offset to make them relative to the true start time.
+        let starttime_subsecond = record_onsets.first().copied().unwrap_or(0.0);
+
+        for onset in &mut record_onsets {
+            *onset -= starttime_subsecond;
+        }
+        for ann in &mut annotations {
+            ann.onset -= starttime_subsecond;
+        }
+
         validate_record_onsets(
             &record_onsets,
             header.record_duration_secs,
@@ -115,6 +135,7 @@ impl AnnotationIndex {
         Ok(AnnotationIndex {
             annotations,
             record_onsets,
+            starttime_subsecond,
             warnings,
         })
     }
@@ -604,5 +625,110 @@ mod tests {
         let bytes = value.as_bytes();
         let len = bytes.len().min(field_size);
         data[start..start + len].copy_from_slice(&bytes[..len]);
+    }
+}
+
+#[cfg(test)]
+mod proptest_fuzz {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The TAL parser must never panic on arbitrary byte sequences.
+        #[test]
+        fn parse_tals_never_panics(data in proptest::collection::vec(any::<u8>(), 0..1024)) {
+            let mut warnings = Vec::new();
+            let _ = parse_tals(&data, 0, &mut warnings);
+        }
+
+        /// Onset validation must never panic on arbitrary strings.
+        #[test]
+        fn parse_onset_never_panics(s in "\\PC{0,64}") {
+            let _ = parse_onset(&s);
+        }
+
+        /// Duration validation must never panic on arbitrary strings.
+        #[test]
+        fn parse_duration_never_panics(s in "\\PC{0,64}") {
+            let _ = parse_duration(&s);
+        }
+
+        /// Well-formed TALs should always round-trip: if we construct a valid TAL
+        /// from known-good components, parsing should recover the same values.
+        #[test]
+        fn well_formed_tal_roundtrips(
+            onset_sign in prop_oneof![Just("+"), Just("-")],
+            onset_int in 0u32..100_000,
+            onset_frac in 0u32..1_000_000,
+            has_duration in any::<bool>(),
+            duration_int in 0u32..10_000,
+            text in "[a-zA-Z0-9 ]{0,50}",
+        ) {
+            let onset_str = if onset_frac > 0 {
+                format!("{onset_sign}{onset_int}.{onset_frac:06}")
+            } else {
+                format!("{onset_sign}{onset_int}")
+            };
+
+            let expected_onset: f64 = onset_str.parse().unwrap();
+
+            let mut tal = Vec::new();
+            tal.extend_from_slice(onset_str.as_bytes());
+
+            let expected_duration = if has_duration {
+                let dur_str = format!("{duration_int}");
+                tal.push(TAL_DURATION_MARKER);
+                tal.extend_from_slice(dur_str.as_bytes());
+                Some(duration_int as f64)
+            } else {
+                None
+            };
+
+            tal.push(TAL_SEPARATOR);
+            if !text.is_empty() {
+                tal.extend_from_slice(text.as_bytes());
+                tal.push(TAL_SEPARATOR);
+            }
+            tal.push(TAL_TERMINATOR);
+
+            let mut warnings = Vec::new();
+            let result = parse_tals(&tal, 0, &mut warnings);
+
+            prop_assert!(warnings.is_empty(), "unexpected warnings: {:?}", warnings);
+            prop_assert!(!result.is_empty(), "expected at least one annotation");
+
+            let ann = &result[0];
+            prop_assert!(
+                (ann.onset - expected_onset).abs() < 1e-6,
+                "onset mismatch: got {}, expected {}",
+                ann.onset,
+                expected_onset
+            );
+            prop_assert_eq!(ann.duration, expected_duration);
+            prop_assert_eq!(&ann.text, &text);
+        }
+
+        /// Arbitrary bytes appended after a valid TAL should not corrupt parsing
+        /// of the valid TAL.
+        #[test]
+        fn valid_tal_with_trailing_garbage(
+            garbage in proptest::collection::vec(any::<u8>(), 0..256),
+        ) {
+            let mut data = Vec::new();
+            data.extend_from_slice(b"+0");
+            data.push(TAL_SEPARATOR);
+            data.extend_from_slice(b"TestEvent");
+            data.push(TAL_SEPARATOR);
+            data.push(TAL_TERMINATOR);
+            data.extend_from_slice(&garbage);
+
+            let mut warnings = Vec::new();
+            let result = parse_tals(&data, 0, &mut warnings);
+
+            // The first TAL should always parse correctly
+            let valid_anns: Vec<_> = result.iter().filter(|a| a.text == "TestEvent").collect();
+            prop_assert!(!valid_anns.is_empty(), "valid TAL was lost");
+            prop_assert!((valid_anns[0].onset - 0.0).abs() < 1e-10);
+        }
     }
 }

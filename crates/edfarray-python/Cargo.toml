@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
+name = "edfarray"
 crate-type = ["cdylib"]
 
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
+chrono = { version = "0.4.44", default-features = false }
 edfarray-core = { path = "../edfarray-core" }
 numpy = "0.28.0"
-pyo3 = { version = "0.28.2", features = ["extension-module"] }
+pyo3 = { version = "0.28.2" }

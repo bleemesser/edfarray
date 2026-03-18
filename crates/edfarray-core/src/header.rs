@@ -6,6 +6,56 @@ use crate::signal::SignalHeader;
 /// Fixed size of the main header block in bytes.
 const MAIN_HEADER_SIZE: usize = 256;
 
+/// A date/time value that may be a parsed datetime or a raw string
+/// (e.g. when the file uses anonymized or non-standard date fields).
+#[derive(Debug, Clone)]
+pub enum MaybeDateTime {
+    Parsed(NaiveDateTime),
+    Raw { date: String, time: String },
+}
+
+impl MaybeDateTime {
+    /// Returns the parsed datetime if available.
+    pub fn as_datetime(&self) -> Option<&NaiveDateTime> {
+        match self {
+            MaybeDateTime::Parsed(dt) => Some(dt),
+            MaybeDateTime::Raw { .. } => None,
+        }
+    }
+
+    /// Returns the raw date string from the header.
+    pub fn raw_date(&self) -> &str {
+        match self {
+            MaybeDateTime::Parsed(_) => "",
+            MaybeDateTime::Raw { date, .. } => date,
+        }
+    }
+
+    /// Returns the raw time string from the header.
+    pub fn raw_time(&self) -> &str {
+        match self {
+            MaybeDateTime::Parsed(_) => "",
+            MaybeDateTime::Raw { time, .. } => time,
+        }
+    }
+}
+
+/// A date value that may be a parsed date or a raw string.
+#[derive(Debug, Clone)]
+pub enum MaybeDate {
+    Parsed(NaiveDate),
+    Raw(String),
+}
+
+impl MaybeDate {
+    pub fn as_date(&self) -> Option<&NaiveDate> {
+        match self {
+            MaybeDate::Parsed(d) => Some(d),
+            MaybeDate::Raw(_) => None,
+        }
+    }
+}
+
 /// Size of the per-signal header block for one signal.
 const SIGNAL_HEADER_SIZE: usize = 256;
 
@@ -55,7 +105,7 @@ pub enum Sex {
 pub struct PatientInfo {
     pub code: Option<String>,
     pub sex: Option<Sex>,
-    pub birthdate: Option<NaiveDate>,
+    pub birthdate: Option<MaybeDate>,
     pub name: Option<String>,
     pub additional: Option<String>,
 }
@@ -66,7 +116,7 @@ pub struct PatientInfo {
 /// `"Startdate DD-MMM-YYYY admincode technician equipment [additional...]"`.
 #[derive(Debug, Clone, Default)]
 pub struct RecordingInfo {
-    pub start_date: Option<NaiveDate>,
+    pub start_date: Option<MaybeDate>,
     pub admin_code: Option<String>,
     pub technician: Option<String>,
     pub equipment: Option<String>,
@@ -79,7 +129,7 @@ pub struct EdfHeader {
     pub version: String,
     pub patient_id: String,
     pub recording_id: String,
-    pub start_datetime: NaiveDateTime,
+    pub start_datetime: MaybeDateTime,
     pub header_bytes: usize,
     pub variant: EdfVariant,
     pub num_records: i64,
@@ -136,7 +186,7 @@ impl EdfHeader {
         }
 
         let variant = EdfVariant::parse(&reserved);
-        let start_datetime = parse_start_datetime(&start_date_str, &start_time_str)?;
+        let start_datetime = parse_start_datetime(&start_date_str, &start_time_str);
 
         let signal_data = &data[MAIN_HEADER_SIZE..header_bytes];
         let mut signals = Vec::with_capacity(num_signals);
@@ -212,31 +262,32 @@ fn read_f64(data: &[u8], offset: usize, size: usize, name: &'static str) -> Resu
     })
 }
 
-/// Parse the start date (dd.mm.yy) and time (hh.mm.ss) into a NaiveDateTime.
+/// Parse the start date (dd.mm.yy) and time (hh.mm.ss) into a `MaybeDateTime`.
 ///
 /// Per the EDF spec, two-digit years use 1985 as the clipping year:
 /// 85-99 map to 1985-1999, 00-84 map to 2000-2084.
-fn parse_start_datetime(date_str: &str, time_str: &str) -> Result<NaiveDateTime> {
+///
+/// If the fields contain anonymized or non-standard values (e.g. "04.04.yy"),
+/// the raw strings are preserved instead of failing.
+fn parse_start_datetime(date_str: &str, time_str: &str) -> MaybeDateTime {
+    match try_parse_datetime(date_str, time_str) {
+        Some(dt) => MaybeDateTime::Parsed(dt),
+        None => MaybeDateTime::Raw {
+            date: date_str.to_string(),
+            time: time_str.to_string(),
+        },
+    }
+}
+
+fn try_parse_datetime(date_str: &str, time_str: &str) -> Option<NaiveDateTime> {
     let date_parts: Vec<&str> = date_str.split('.').collect();
     if date_parts.len() != 3 {
-        return Err(EdfError::InvalidHeaderField {
-            field: "start_date",
-            reason: format!("expected dd.mm.yy format, got {:?}", date_str),
-        });
+        return None;
     }
 
-    let day: u32 = date_parts[0].parse().map_err(|_| EdfError::InvalidHeaderField {
-        field: "start_date",
-        reason: format!("invalid day: {:?}", date_parts[0]),
-    })?;
-    let month: u32 = date_parts[1].parse().map_err(|_| EdfError::InvalidHeaderField {
-        field: "start_date",
-        reason: format!("invalid month: {:?}", date_parts[1]),
-    })?;
-    let year_2d: u32 = date_parts[2].parse().map_err(|_| EdfError::InvalidHeaderField {
-        field: "start_date",
-        reason: format!("invalid year: {:?}", date_parts[2]),
-    })?;
+    let day: u32 = date_parts[0].parse().ok()?;
+    let month: u32 = date_parts[1].parse().ok()?;
+    let year_2d: u32 = date_parts[2].parse().ok()?;
 
     let year = if year_2d >= 85 {
         1900 + year_2d as i32
@@ -244,42 +295,19 @@ fn parse_start_datetime(date_str: &str, time_str: &str) -> Result<NaiveDateTime>
         2000 + year_2d as i32
     };
 
-    let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| {
-        EdfError::InvalidHeaderField {
-            field: "start_date",
-            reason: format!("invalid date: {year}-{month:02}-{day:02}"),
-        }
-    })?;
+    let date = NaiveDate::from_ymd_opt(year, month, day)?;
 
     let time_parts: Vec<&str> = time_str.split('.').collect();
     if time_parts.len() != 3 {
-        return Err(EdfError::InvalidHeaderField {
-            field: "start_time",
-            reason: format!("expected hh.mm.ss format, got {:?}", time_str),
-        });
+        return None;
     }
 
-    let hour: u32 = time_parts[0].parse().map_err(|_| EdfError::InvalidHeaderField {
-        field: "start_time",
-        reason: format!("invalid hour: {:?}", time_parts[0]),
-    })?;
-    let minute: u32 = time_parts[1].parse().map_err(|_| EdfError::InvalidHeaderField {
-        field: "start_time",
-        reason: format!("invalid minute: {:?}", time_parts[1]),
-    })?;
-    let second: u32 = time_parts[2].parse().map_err(|_| EdfError::InvalidHeaderField {
-        field: "start_time",
-        reason: format!("invalid second: {:?}", time_parts[2]),
-    })?;
+    let hour: u32 = time_parts[0].parse().ok()?;
+    let minute: u32 = time_parts[1].parse().ok()?;
+    let second: u32 = time_parts[2].parse().ok()?;
 
-    let time = NaiveTime::from_hms_opt(hour, minute, second).ok_or_else(|| {
-        EdfError::InvalidHeaderField {
-            field: "start_time",
-            reason: format!("invalid time: {hour:02}:{minute:02}:{second:02}"),
-        }
-    })?;
-
-    Ok(NaiveDateTime::new(date, time))
+    let time = NaiveTime::from_hms_opt(hour, minute, second)?;
+    Some(NaiveDateTime::new(date, time))
 }
 
 /// Parse EDF+ patient_id into structured subfields.
@@ -287,17 +315,15 @@ fn parse_start_datetime(date_str: &str, time_str: &str) -> Result<NaiveDateTime>
 /// Format: `"code sex birthdate name [additional...]"`
 /// where "X" means unknown. Underscores in names are replaced with spaces.
 fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> PatientInfo {
-    if variant == EdfVariant::Edf {
-        return PatientInfo::default();
-    }
-
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 4 {
-        warnings.push(format!(
-            "patient_id has {} subfields (expected at least 4): {:?}",
-            parts.len(),
-            raw
-        ));
+        if variant != EdfVariant::Edf {
+            warnings.push(format!(
+                "patient_id has {} subfields (expected at least 4): {:?}",
+                parts.len(),
+                raw
+            ));
+        }
         return PatientInfo::default();
     }
 
@@ -307,16 +333,18 @@ fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) 
         "F" => Some(Sex::Female),
         "X" => None,
         other => {
-            warnings.push(format!("unrecognized sex value: {:?}", other));
+            if variant != EdfVariant::Edf {
+                warnings.push(format!("unrecognized sex value: {:?}", other));
+            }
             None
         }
     };
     let birthdate = if parts[2].eq_ignore_ascii_case("X") {
         None
     } else {
-        parse_edf_plus_date(parts[2]).or_else(|| {
-            warnings.push(format!("invalid patient birthdate: {:?}", parts[2]));
-            None
+        Some(match parse_edf_plus_date(parts[2]) {
+            Some(d) => MaybeDate::Parsed(d),
+            None => MaybeDate::Raw(parts[2].to_string()),
         })
     };
     let name = non_x(parts[3]).map(|s| s.replace('_', " "));
@@ -343,25 +371,23 @@ fn parse_recording_id(
     variant: EdfVariant,
     warnings: &mut Vec<String>,
 ) -> RecordingInfo {
-    if variant == EdfVariant::Edf {
-        return RecordingInfo::default();
-    }
-
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 5 || !parts[0].eq_ignore_ascii_case("Startdate") {
-        warnings.push(format!(
-            "recording_id does not match EDF+ format: {:?}",
-            raw
-        ));
+        if variant != EdfVariant::Edf {
+            warnings.push(format!(
+                "recording_id does not match EDF+ format: {:?}",
+                raw
+            ));
+        }
         return RecordingInfo::default();
     }
 
     let start_date = if parts[1].eq_ignore_ascii_case("X") {
         None
     } else {
-        parse_edf_plus_date(parts[1]).or_else(|| {
-            warnings.push(format!("invalid recording start date: {:?}", parts[1]));
-            None
+        Some(match parse_edf_plus_date(parts[1]) {
+            Some(d) => MaybeDate::Parsed(d),
+            None => MaybeDate::Raw(parts[1].to_string()),
         })
     };
     let admin_code = non_x(parts[2]);
@@ -485,7 +511,7 @@ mod tests {
         assert_eq!(header.num_signals, 1);
         assert_eq!(header.num_records, 10);
         assert_eq!(header.record_duration_secs, 1.0);
-        assert_eq!(header.start_datetime.year(), 2000);
+        assert_eq!(header.start_datetime.as_datetime().unwrap().year(), 2000);
         assert_eq!(header.duration_secs(), 10.0);
         assert_eq!(header.record_size(), 512); // 256 samples * 2 bytes
     }
@@ -503,11 +529,11 @@ mod tests {
         let mut data = build_test_header(1);
         write_field(&mut data, 168, 8, "01.01.85");
         let header = EdfHeader::parse(&data).unwrap();
-        assert_eq!(header.start_datetime.year(), 1985);
+        assert_eq!(header.start_datetime.as_datetime().unwrap().year(), 1985);
 
         write_field(&mut data, 168, 8, "01.01.84");
         let header = EdfHeader::parse(&data).unwrap();
-        assert_eq!(header.start_datetime.year(), 2084);
+        assert_eq!(header.start_datetime.as_datetime().unwrap().year(), 2084);
     }
 
     #[test]
@@ -538,7 +564,7 @@ mod tests {
         assert_eq!(header.patient.code.as_deref(), Some("MCH-0234567"));
         assert_eq!(header.patient.sex, Some(Sex::Female));
         assert_eq!(
-            header.patient.birthdate,
+            header.patient.birthdate.as_ref().and_then(|d| d.as_date()).copied(),
             NaiveDate::from_ymd_opt(1951, 3, 2)
         );
         assert_eq!(header.patient.name.as_deref(), Some("Haagansen Erlangen"));
@@ -558,7 +584,7 @@ mod tests {
 
         let header = EdfHeader::parse(&data).unwrap();
         assert_eq!(
-            header.recording.start_date,
+            header.recording.start_date.as_ref().and_then(|d| d.as_date()).copied(),
             NaiveDate::from_ymd_opt(2002, 3, 2)
         );
         assert_eq!(header.recording.admin_code.as_deref(), Some("PSG-1234"));

@@ -4,12 +4,22 @@ build-backend = "maturin"
 
 [project]
 name = "edfarray"
+dynamic = ["version"]
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.21"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
 manifest-path = "crates/edfarray-python/Cargo.toml"
+module-name = "edfarray._core"
+python-source = "."
+python-packages = ["edfarray"]
 
-[tool.uv]
-dev-dependencies = ["pytest>=7", "maturin>=1.0"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7",
+    "maturin>=1.0",
+    "pyedflib>=0.1.42",
+]

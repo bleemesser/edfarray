@@ -184,3 +184,25 @@ mod tests {
             .copy_from_slice(&bytes[..bytes.len().min(fs)]);
     }
 }
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn fixture_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn parse_short_psg() {
+        let edf = EdfFile::open(fixture_path("short_psg.edf")).unwrap();
+        eprintln!("variant: {:?}", edf.variant());
+        eprintln!("patient_id: {:?}", edf.header().patient_id);
+        eprintln!("patient: {:?}", edf.patient());
+        assert_eq!(edf.patient().sex, Some(crate::header::Sex::Female));
+        assert_eq!(edf.patient().name.as_deref(), Some("Female 33yr"));
+    }
+}
