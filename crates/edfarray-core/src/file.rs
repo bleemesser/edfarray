@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use rayon::prelude::*;
+
 use crate::annotation::Annotation;
 use crate::error::{EdfError, Result};
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
@@ -79,6 +81,91 @@ impl EdfFile {
     pub fn signal(&self, idx: usize) -> Result<SignalProxy> {
         SignalProxy::new(Arc::clone(&self.file), idx)
     }
+
+    /// Indices of all non-annotation (ordinary) signals.
+    pub fn ordinary_signal_indices(&self) -> Vec<usize> {
+        self.file
+            .header
+            .signals
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.is_annotation)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Read a page of physical data for the given signals over a time range.
+    ///
+    /// Returns a vec of f64 buffers, one per signal index. Each buffer contains
+    /// the physical samples for that signal in the time range `[start_sec, end_sec)`.
+    /// Signals may have different sample rates, so buffers may have different lengths.
+    pub fn read_page(
+        &self,
+        signal_indices: &[usize],
+        start_sec: f64,
+        end_sec: f64,
+    ) -> Result<Vec<Vec<f64>>> {
+        self.advise_time_range(start_sec, end_sec);
+        let file = &self.file;
+        signal_indices
+            .par_iter()
+            .map(|&idx| {
+                let proxy = SignalProxy::new(Arc::clone(file), idx)?;
+                let sr = proxy.sample_rate();
+                let s_start = (start_sec * sr) as usize;
+                let s_end = ((end_sec * sr) as usize).min(proxy.len());
+                if s_start >= proxy.len() || s_start >= s_end {
+                    return Ok(Vec::new());
+                }
+                let count = s_end - s_start;
+                let mut buf = vec![0.0f64; count];
+                proxy.read_physical(s_start, s_end, &mut buf)?;
+                Ok(buf)
+            })
+            .collect()
+    }
+
+    /// Read a page of digital data for the given signals over a time range.
+    pub fn read_page_digital(
+        &self,
+        signal_indices: &[usize],
+        start_sec: f64,
+        end_sec: f64,
+    ) -> Result<Vec<Vec<i16>>> {
+        self.advise_time_range(start_sec, end_sec);
+        let file = &self.file;
+        signal_indices
+            .par_iter()
+            .map(|&idx| {
+                let proxy = SignalProxy::new(Arc::clone(file), idx)?;
+                let sr = proxy.sample_rate();
+                let s_start = (start_sec * sr) as usize;
+                let s_end = ((end_sec * sr) as usize).min(proxy.len());
+                if s_start >= proxy.len() || s_start >= s_end {
+                    return Ok(Vec::new());
+                }
+                let count = s_end - s_start;
+                let mut buf = vec![0i16; count];
+                proxy.read_digital(s_start, s_end, &mut buf)?;
+                Ok(buf)
+            })
+            .collect()
+    }
+
+    /// Hint to the OS that we'll need the data records covering the given time range.
+    #[cfg(unix)]
+    fn advise_time_range(&self, start_sec: f64, end_sec: f64) {
+        let dur = self.file.header.record_duration_secs;
+        if dur <= 0.0 {
+            return;
+        }
+        let first = (start_sec / dur) as usize;
+        let last = ((end_sec / dur).ceil() as usize).min(self.num_records());
+        self.file.advise_willneed(first, last);
+    }
+
+    #[cfg(not(unix))]
+    fn advise_time_range(&self, _start_sec: f64, _end_sec: f64) {}
 
     /// Get a signal proxy by label (first match).
     pub fn signal_by_label(&self, label: &str) -> Result<SignalProxy> {

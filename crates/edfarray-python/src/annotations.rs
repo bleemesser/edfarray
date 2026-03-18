@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 /// A single annotation from the EDF+ file.
+#[gen_stub_pyclass]
 #[pyclass(frozen, name = "Annotation", from_py_object)]
 #[derive(Clone)]
 pub struct PyAnnotation {
@@ -12,6 +14,7 @@ pub struct PyAnnotation {
     pub text: String,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAnnotation {
     fn __repr__(&self) -> String {

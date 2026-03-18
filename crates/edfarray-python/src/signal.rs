@@ -2,12 +2,14 @@ use numpy::{PyArray1, PyArrayMethods};
 use pyo3::exceptions::PyIndexError;
 use pyo3::prelude::*;
 use pyo3::types::PySlice;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use edfarray_core::proxy::SignalProxy;
 
 use crate::errors::to_py_err;
 
 /// Proxy view of a single signal, supporting numpy-style indexing.
+#[gen_stub_pyclass]
 #[pyclass(name = "Signal")]
 pub struct PySignal {
     proxy: SignalProxy,
@@ -19,6 +21,7 @@ impl PySignal {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PySignal {
     #[getter]
@@ -112,11 +115,9 @@ impl PySignal {
                 let count = stop.saturating_sub(start);
                 let array = PyArray1::<f64>::zeros(py, count, false);
                 if count > 0 {
-                    let mut buf = vec![0.0f64; count];
-                    self.proxy.read_physical(start, stop, &mut buf).map_err(to_py_err)?;
                     unsafe {
                         let slice = array.as_slice_mut()?;
-                        slice.copy_from_slice(&buf);
+                        self.proxy.read_physical(start, stop, slice).map_err(to_py_err)?;
                     }
                 }
                 Ok(array.into_any().unbind())
@@ -141,10 +142,9 @@ impl PySignal {
         let len = self.proxy.len();
         let array = PyArray1::<f64>::zeros(py, len, false);
         if len > 0 {
-            let mut buf = vec![0.0f64; len];
-            self.proxy.read_physical(0, len, &mut buf).map_err(to_py_err)?;
             unsafe {
-                array.as_slice_mut()?.copy_from_slice(&buf);
+                let slice = array.as_slice_mut()?;
+                self.proxy.read_physical(0, len, slice).map_err(to_py_err)?;
             }
         }
         Ok(array)
@@ -155,10 +155,9 @@ impl PySignal {
         let len = self.proxy.len();
         let array = PyArray1::<i16>::zeros(py, len, false);
         if len > 0 {
-            let mut buf = vec![0i16; len];
-            self.proxy.read_digital(0, len, &mut buf).map_err(to_py_err)?;
             unsafe {
-                array.as_slice_mut()?.copy_from_slice(&buf);
+                let slice = array.as_slice_mut()?;
+                self.proxy.read_digital(0, len, slice).map_err(to_py_err)?;
             }
         }
         Ok(array)

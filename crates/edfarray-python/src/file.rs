@@ -1,6 +1,7 @@
 use chrono::{Datelike, Timelike};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use edfarray_core::file::EdfFile;
 use edfarray_core::header::Sex;
@@ -10,11 +11,13 @@ use crate::errors::to_py_err;
 use crate::signal::PySignal;
 
 /// An open EDF/EDF+ file.
+#[gen_stub_pyclass]
 #[pyclass(name = "EdfFile")]
 pub struct PyEdfFile {
     inner: EdfFile,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyEdfFile {
     #[new]
@@ -203,5 +206,61 @@ impl PyEdfFile {
                 "signal() argument must be int or str",
             ))
         }
+    }
+
+    /// Indices of all non-annotation (ordinary) signals.
+    fn ordinary_signal_indices(&self) -> Vec<usize> {
+        self.inner.ordinary_signal_indices()
+    }
+
+    /// Read a page of physical data for multiple signals over a time range.
+    ///
+    /// Returns a list of numpy arrays, one per signal. Signals with different
+    /// sample rates will produce arrays of different lengths.
+    ///
+    /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+    #[pyo3(signature = (start_sec, end_sec, signal_indices=None))]
+    fn read_page<'py>(
+        &self,
+        py: Python<'py>,
+        start_sec: f64,
+        end_sec: f64,
+        signal_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<f64>>>> {
+        let indices = signal_indices.unwrap_or_else(|| self.inner.ordinary_signal_indices());
+        let buffers = self
+            .inner
+            .read_page(&indices, start_sec, end_sec)
+            .map_err(to_py_err)?;
+        let mut arrays = Vec::with_capacity(buffers.len());
+        for buf in buffers {
+            let array = numpy::PyArray1::from_vec(py, buf);
+            arrays.push(array);
+        }
+        Ok(arrays)
+    }
+
+    /// Read a page of digital (raw int16) data for multiple signals over a time range.
+    ///
+    /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+    #[pyo3(signature = (start_sec, end_sec, signal_indices=None))]
+    fn read_page_digital<'py>(
+        &self,
+        py: Python<'py>,
+        start_sec: f64,
+        end_sec: f64,
+        signal_indices: Option<Vec<usize>>,
+    ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<i16>>>> {
+        let indices = signal_indices.unwrap_or_else(|| self.inner.ordinary_signal_indices());
+        let buffers = self
+            .inner
+            .read_page_digital(&indices, start_sec, end_sec)
+            .map_err(to_py_err)?;
+        let mut arrays = Vec::with_capacity(buffers.len());
+        for buf in buffers {
+            let array = numpy::PyArray1::from_vec(py, buf);
+            arrays.push(array);
+        }
+        Ok(arrays)
     }
 }

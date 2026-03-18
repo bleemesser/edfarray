@@ -58,10 +58,15 @@ impl RecordLayout {
     }
 
     /// Decode raw little-endian i16 bytes into physical f64 values.
+    ///
+    /// Uses a two-pass approach to help the compiler autovectorize:
+    /// first widen i16→f64, then apply gain and offset as a uniform f64 pass.
     pub fn decode_physical(raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
         for (i, chunk) in raw.chunks_exact(2).enumerate() {
-            let digital = i16::from_le_bytes([chunk[0], chunk[1]]);
-            out[i] = gain * digital as f64 + offset;
+            out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+        }
+        for val in out.iter_mut() {
+            *val = *val * gain + offset;
         }
     }
 
