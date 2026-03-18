@@ -30,19 +30,40 @@ class EdfFile:
     An open EDF/EDF+ file.
     """
     @property
-    def num_signals(self) -> builtins.int: ...
+    def num_signals(self) -> builtins.int:
+        r"""
+        Total number of signals, including annotation channels.
+        """
     @property
-    def num_records(self) -> builtins.int: ...
+    def num_records(self) -> builtins.int:
+        r"""
+        Number of data records.
+        """
     @property
-    def record_duration(self) -> builtins.float: ...
+    def record_duration(self) -> builtins.float:
+        r"""
+        Duration of each data record in seconds.
+        """
     @property
-    def duration(self) -> builtins.float: ...
+    def duration(self) -> builtins.float:
+        r"""
+        Total recording duration in seconds.
+        """
     @property
-    def variant(self) -> builtins.str: ...
+    def variant(self) -> builtins.str:
+        r"""
+        File variant: "EDF", "EDF+C", or "EDF+D".
+        """
     @property
-    def patient_id(self) -> builtins.str: ...
+    def patient_id(self) -> builtins.str:
+        r"""
+        Raw 80-byte patient identification field.
+        """
     @property
-    def recording_id(self) -> builtins.str: ...
+    def recording_id(self) -> builtins.str:
+        r"""
+        Raw 80-byte recording identification field.
+        """
     @property
     def start_datetime(self) -> typing.Any:
         r"""
@@ -50,34 +71,67 @@ class EdfFile:
         or a string like `"04.04.yy 12.57.02"` if it was anonymized.
         """
     @property
-    def patient_name(self) -> typing.Optional[builtins.str]: ...
+    def patient_name(self) -> typing.Optional[builtins.str]:
+        r"""
+        Patient name parsed from the identification field, or None.
+        """
     @property
-    def patient_code(self) -> typing.Optional[builtins.str]: ...
+    def patient_code(self) -> typing.Optional[builtins.str]:
+        r"""
+        Hospital patient code, or None.
+        """
     @property
-    def patient_sex(self) -> typing.Optional[builtins.str]: ...
+    def patient_sex(self) -> typing.Optional[builtins.str]:
+        r"""
+        "M" or "F", or None if unknown.
+        """
     @property
     def patient_birthdate(self) -> typing.Optional[typing.Any]:
         r"""
         Returns `datetime.date` if parseable, a raw string if anonymized, or `None` if absent.
         """
     @property
-    def patient_additional(self) -> typing.Optional[builtins.str]: ...
+    def patient_additional(self) -> typing.Optional[builtins.str]:
+        r"""
+        Additional patient information, or None.
+        """
     @property
-    def admin_code(self) -> typing.Optional[builtins.str]: ...
+    def admin_code(self) -> typing.Optional[builtins.str]:
+        r"""
+        Hospital administration code, or None.
+        """
     @property
-    def technician(self) -> typing.Optional[builtins.str]: ...
+    def technician(self) -> typing.Optional[builtins.str]:
+        r"""
+        Technician or investigator code, or None.
+        """
     @property
-    def equipment(self) -> typing.Optional[builtins.str]: ...
+    def equipment(self) -> typing.Optional[builtins.str]:
+        r"""
+        Equipment code, or None.
+        """
     @property
-    def recording_additional(self) -> typing.Optional[builtins.str]: ...
+    def recording_additional(self) -> typing.Optional[builtins.str]:
+        r"""
+        Additional recording information, or None.
+        """
     @property
-    def annotations(self) -> builtins.list[Annotation]: ...
+    def annotations(self) -> builtins.list[Annotation]:
+        r"""
+        All non-timekeeping annotations, sorted by onset.
+        """
     @property
-    def warnings(self) -> builtins.list[builtins.str]: ...
+    def warnings(self) -> builtins.list[builtins.str]:
+        r"""
+        Parse warnings accumulated during file open.
+        """
     @property
-    def header(self) -> dict: ...
+    def header(self) -> dict:
+        r"""
+        Dictionary with basic header fields.
+        """
     def __new__(cls, path: builtins.str) -> EdfFile: ...
-    def __enter__(self, slf: EdfFile) -> EdfFile: ...
+    def __enter__(self) -> EdfFile: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
     def __repr__(self) -> builtins.str: ...
     def signal(self, idx_or_label: typing.Any) -> Signal:
@@ -110,27 +164,60 @@ class Signal:
     Proxy view of a single signal, supporting numpy-style indexing.
     """
     @property
-    def label(self) -> builtins.str: ...
+    def label(self) -> builtins.str:
+        r"""
+        Signal label.
+        """
     @property
-    def transducer(self) -> builtins.str: ...
+    def transducer(self) -> builtins.str:
+        r"""
+        Transducer type.
+        """
     @property
-    def physical_dimension(self) -> builtins.str: ...
+    def physical_dimension(self) -> builtins.str:
+        r"""
+        Physical units.
+        """
     @property
-    def prefiltering(self) -> builtins.str: ...
+    def prefiltering(self) -> builtins.str:
+        r"""
+        Prefiltering description.
+        """
     @property
-    def sample_rate(self) -> builtins.float: ...
+    def sample_rate(self) -> builtins.float:
+        r"""
+        Sample frequency in Hz.
+        """
     @property
-    def samples_per_record(self) -> builtins.int: ...
+    def samples_per_record(self) -> builtins.int:
+        r"""
+        Number of samples per data record.
+        """
     @property
-    def physical_min(self) -> builtins.float: ...
+    def physical_min(self) -> builtins.float:
+        r"""
+        Physical minimum value.
+        """
     @property
-    def physical_max(self) -> builtins.float: ...
+    def physical_max(self) -> builtins.float:
+        r"""
+        Physical maximum value.
+        """
     @property
-    def digital_min(self) -> builtins.int: ...
+    def digital_min(self) -> builtins.int:
+        r"""
+        Digital minimum value.
+        """
     @property
-    def digital_max(self) -> builtins.int: ...
+    def digital_max(self) -> builtins.int:
+        r"""
+        Digital maximum value.
+        """
     @property
-    def num_samples(self) -> builtins.int: ...
+    def num_samples(self) -> builtins.int:
+        r"""
+        Total number of samples.
+        """
     def __len__(self) -> builtins.int: ...
     def __repr__(self) -> builtins.str: ...
     def __getitem__(self, key: typing.Any) -> typing.Any:

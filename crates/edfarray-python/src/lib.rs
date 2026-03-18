@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<file::PyEdfFile>()?;
+    m.add_class::<signal::PySignal>()?;
     m.add_class::<annotations::PyAnnotation>()?;
     Ok(())
 }

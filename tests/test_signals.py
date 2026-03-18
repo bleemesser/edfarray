@@ -165,6 +165,64 @@ class TestErrorHandling:
             sig[len(sig)]
 
 
+class TestBulkReads:
+    def test_read_page_returns_list_of_arrays(self, fixture):
+        edf, ref = fixture
+        if edf.duration < 1.0:
+            pytest.skip("too short")
+        pages = edf.read_page(0.0, 1.0)
+        assert isinstance(pages, list)
+        assert all(isinstance(p, np.ndarray) for p in pages)
+        assert all(p.dtype == np.float64 for p in pages)
+
+    def test_read_page_digital_returns_int16(self, fixture):
+        edf, ref = fixture
+        if edf.duration < 1.0:
+            pytest.skip("too short")
+        pages = edf.read_page_digital(0.0, 1.0)
+        assert isinstance(pages, list)
+        assert all(p.dtype == np.int16 for p in pages)
+
+    def test_read_page_matches_single_signal(self):
+        edf, _ = load_fixture("short_psg")
+        indices = edf.ordinary_signal_indices()
+        pages = edf.read_page(0.0, 1.0, signal_indices=indices[:1])
+        sig = edf.signal(indices[0])
+        n = int(sig.sample_rate * 1.0)
+        expected = sig[0:n]
+        np.testing.assert_allclose(pages[0], expected, rtol=1e-10)
+
+    def test_read_page_default_excludes_annotations(self):
+        edf, _ = load_fixture("test_generator_2")
+        pages = edf.read_page(0.0, 1.0)
+        ordinary = edf.ordinary_signal_indices()
+        assert len(pages) == len(ordinary)
+
+    def test_ordinary_signal_indices(self):
+        edf, _ = load_fixture("test_generator_2")
+        indices = edf.ordinary_signal_indices()
+        for i in indices:
+            assert edf.signal(i).label != "EDF Annotations"
+
+
+class TestEdgeCases:
+    def test_empty_slice(self):
+        edf, _ = load_fixture("short_psg")
+        arr = edf.signal(0)[0:0]
+        assert isinstance(arr, np.ndarray)
+        assert len(arr) == 0
+
+    def test_full_negative_index(self):
+        edf, _ = load_fixture("short_psg")
+        sig = edf.signal(0)
+        assert sig[-len(sig)] == sig[0]
+
+    def test_signal_type_error(self):
+        edf, _ = load_fixture("short_psg")
+        with pytest.raises(TypeError):
+            edf.signal(3.14)
+
+
 class TestContextManager:
     def test_with_statement(self):
         path = str(FIXTURES / "short_psg.edf")

@@ -24,56 +24,67 @@ impl PySignal {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PySignal {
+    /// Signal label.
     #[getter]
     fn label(&self) -> &str {
         &self.proxy.header().label
     }
 
+    /// Transducer type.
     #[getter]
     fn transducer(&self) -> &str {
         &self.proxy.header().transducer
     }
 
+    /// Physical units.
     #[getter]
     fn physical_dimension(&self) -> &str {
         &self.proxy.header().physical_dimension
     }
 
+    /// Prefiltering description.
     #[getter]
     fn prefiltering(&self) -> &str {
         &self.proxy.header().prefiltering
     }
 
+    /// Sample frequency in Hz.
     #[getter]
     fn sample_rate(&self) -> f64 {
         self.proxy.sample_rate()
     }
 
+    /// Number of samples per data record.
     #[getter]
     fn samples_per_record(&self) -> usize {
         self.proxy.header().num_samples
     }
 
+    /// Physical minimum value.
     #[getter]
     fn physical_min(&self) -> f64 {
         self.proxy.header().physical_min
     }
 
+    /// Physical maximum value.
     #[getter]
     fn physical_max(&self) -> f64 {
         self.proxy.header().physical_max
     }
 
+    /// Digital minimum value.
     #[getter]
     fn digital_min(&self) -> i16 {
         self.proxy.header().digital_min
     }
 
+    /// Digital maximum value.
     #[getter]
     fn digital_max(&self) -> i16 {
         self.proxy.header().digital_max
     }
 
+    /// Total number of samples.
     #[getter]
     fn num_samples(&self) -> usize {
         self.proxy.len()

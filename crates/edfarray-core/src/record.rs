@@ -51,16 +51,20 @@ impl RecordLayout {
         let byte_count = self.signal_sample_counts[signal_idx] * 2;
         record_data
             .get(start..start + byte_count)
-            .ok_or(EdfError::RecordOutOfRange {
-                index: 0,
-                count: 0,
+            .ok_or(EdfError::InvalidSignalField {
+                index: signal_idx,
+                field: "samples",
+                reason: format!(
+                    "record data too short: need {} bytes at offset {}",
+                    byte_count, start
+                ),
             })
     }
 
     /// Decode raw little-endian i16 bytes into physical f64 values.
     ///
     /// Uses a two-pass approach to help the compiler autovectorize:
-    /// first widen i16→f64, then apply gain and offset as a uniform f64 pass.
+    /// first widen i16 to f64, then apply gain and offset as a uniform f64 pass.
     pub fn decode_physical(raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
         for (i, chunk) in raw.chunks_exact(2).enumerate() {
             out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;

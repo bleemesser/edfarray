@@ -98,7 +98,7 @@ def main():
                 gaps.append((times[i - 1], times[i], dt))
         print(f"Time gaps found in first 100k samples: {len(gaps)}")
         for t_before, t_after, gap in gaps[:5]:
-            print(f"  Gap at {t_before:.3f}s → {t_after:.3f}s ({gap:.3f}s)")
+            print(f"  Gap at {t_before:.3f}s -> {t_after:.3f}s ({gap:.3f}s)")
 
     # Anonymized dates
     print()

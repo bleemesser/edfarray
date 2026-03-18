@@ -20,7 +20,7 @@ NUM_RANDOM_SEEKS = 100
 
 
 def bench_edfarray_paging(path, page_duration=PAGE_DURATION_SEC):
-    """Benchmark using the bulk read_page() API — single call for all channels."""
+    """Benchmark using the bulk read_page() API -- single call for all channels."""
     import edfarray
 
     results = {}
@@ -213,7 +213,7 @@ def main():
             continue
 
         size_mb = path.stat().st_size / (1024 * 1024)
-        print(f"\n{'─' * 78}")
+        print(f"\n{'-' * 78}")
         print(f"File: {name} ({size_mb:.1f} MB)")
 
         ours = bench_edfarray_paging(path)
@@ -223,7 +223,7 @@ def main():
         print(f"Channels: {ours['num_channels']}, "
               f"Duration: {ours['total_duration']:.1f}s, "
               f"Page: {ours['page_duration']}s")
-        print(f"{'─' * 78}")
+        print(f"{'-' * 78}")
 
         try:
             theirs = bench_pyedflib_paging(path)

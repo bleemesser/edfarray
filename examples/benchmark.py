@@ -164,9 +164,9 @@ def main():
     print("=" * 80)
 
     for name, sig_idx, path, size_mb in available:
-        print(f"\n{'─' * 80}")
+        print(f"\n{'-' * 80}")
         print(f"File: {name} ({size_mb:.1f} MB)")
-        print(f"{'─' * 80}")
+        print(f"{'-' * 80}")
 
         ours = bench_edfarray(path, sig_idx)
 

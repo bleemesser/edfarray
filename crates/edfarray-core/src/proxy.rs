@@ -19,6 +19,7 @@ pub struct SignalProxy {
 }
 
 impl SignalProxy {
+    /// Create a proxy for the signal at the given index.
     pub fn new(file: Arc<MappedFile>, signal_idx: usize) -> Result<Self> {
         if signal_idx >= file.header.num_signals {
             return Err(EdfError::SignalOutOfRange {
@@ -43,6 +44,7 @@ impl SignalProxy {
         self.total_samples
     }
 
+    /// Returns true if this signal has zero samples.
     pub fn is_empty(&self) -> bool {
         self.total_samples == 0
     }

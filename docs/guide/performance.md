@@ -2,7 +2,7 @@
 
 ## Bulk reads with `read_page()`
 
-The fastest way to load multi-channel data is `read_page()`. It reads all requested signals for a time window in a single call, parallelizing the decode across CPU cores using rayon.
+The recommended way to load multi-channel data is `read_page()`. It reads all requested signals for a time window in a single call, parallelizing the decode across CPU cores using rayon.
 
 ```python
 f = edfarray.EdfFile("recording.edf")

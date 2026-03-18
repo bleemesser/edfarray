@@ -26,7 +26,7 @@ impl PyEdfFile {
         Ok(PyEdfFile { inner })
     }
 
-    fn __enter__(slf: Py<Self>) -> Py<Self> {
+    fn __enter__<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
         slf
     }
 
@@ -43,36 +43,43 @@ impl PyEdfFile {
         )
     }
 
+    /// Total number of signals, including annotation channels.
     #[getter]
     fn num_signals(&self) -> usize {
         self.inner.num_signals()
     }
 
+    /// Number of data records.
     #[getter]
     fn num_records(&self) -> usize {
         self.inner.num_records()
     }
 
+    /// Duration of each data record in seconds.
     #[getter]
     fn record_duration(&self) -> f64 {
         self.inner.record_duration()
     }
 
+    /// Total recording duration in seconds.
     #[getter]
     fn duration(&self) -> f64 {
         self.inner.duration()
     }
 
+    /// File variant: "EDF", "EDF+C", or "EDF+D".
     #[getter]
     fn variant(&self) -> String {
         self.inner.variant().to_string()
     }
 
+    /// Raw 80-byte patient identification field.
     #[getter]
     fn patient_id(&self) -> &str {
         &self.inner.header().patient_id
     }
 
+    /// Raw 80-byte recording identification field.
     #[getter]
     fn recording_id(&self) -> &str {
         &self.inner.header().recording_id
@@ -104,16 +111,19 @@ impl PyEdfFile {
         }
     }
 
+    /// Patient name parsed from the identification field, or None.
     #[getter]
     fn patient_name(&self) -> Option<&str> {
         self.inner.patient().name.as_deref()
     }
 
+    /// Hospital patient code, or None.
     #[getter]
     fn patient_code(&self) -> Option<&str> {
         self.inner.patient().code.as_deref()
     }
 
+    /// "M" or "F", or None if unknown.
     #[getter]
     fn patient_sex(&self) -> Option<&str> {
         self.inner.patient().sex.map(|s| match s {
@@ -144,41 +154,49 @@ impl PyEdfFile {
         }
     }
 
+    /// Additional patient information, or None.
     #[getter]
     fn patient_additional(&self) -> Option<&str> {
         self.inner.patient().additional.as_deref()
     }
 
+    /// Hospital administration code, or None.
     #[getter]
     fn admin_code(&self) -> Option<&str> {
         self.inner.recording().admin_code.as_deref()
     }
 
+    /// Technician or investigator code, or None.
     #[getter]
     fn technician(&self) -> Option<&str> {
         self.inner.recording().technician.as_deref()
     }
 
+    /// Equipment code, or None.
     #[getter]
     fn equipment(&self) -> Option<&str> {
         self.inner.recording().equipment.as_deref()
     }
 
+    /// Additional recording information, or None.
     #[getter]
     fn recording_additional(&self) -> Option<&str> {
         self.inner.recording().additional.as_deref()
     }
 
+    /// All non-timekeeping annotations, sorted by onset.
     #[getter]
     fn annotations(&self) -> Vec<PyAnnotation> {
         self.inner.annotations().iter().map(PyAnnotation::from).collect()
     }
 
+    /// Parse warnings accumulated during file open.
     #[getter]
     fn warnings(&self) -> Vec<String> {
         self.inner.warnings()
     }
 
+    /// Dictionary with basic header fields.
     #[getter]
     fn header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
