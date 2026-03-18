@@ -13,6 +13,7 @@ manifest-path = "crates/edfarray-python/Cargo.toml"
 module-name = "edfarray._core"
 python-source = "."
 python-packages = ["edfarray"]
+include = ["edfarray/_core/*.pyi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

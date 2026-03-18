@@ -11,3 +11,10 @@ dist/
 .venv/
 *.DS_Store
 .pytest_cache/
+
+# edfarray Python package — ignore generated build artifacts, keep source and stubs
+edfarray/*
+!edfarray/__init__.py
+!edfarray/_core/
+edfarray/_core/*
+!edfarray/_core/__init__.pyi
