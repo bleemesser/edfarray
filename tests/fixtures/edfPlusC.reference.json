@@ -1,0 +1,324 @@
+{
+  "header": {
+    "filename": "edfPlusC.edf",
+    "num_signals": 11,
+    "num_records": 20,
+    "file_duration_seconds": 20.0,
+    "filetype": 1,
+    "patient_id": "b''",
+    "recording_id": "b''",
+    "patient_name": null,
+    "patientcode": null,
+    "sex": null,
+    "birthdate": null,
+    "startdate_year": 2009,
+    "startdate_month": 12,
+    "startdate_day": 10,
+    "starttime_hour": 12,
+    "starttime_minute": 44,
+    "starttime_second": 2,
+    "starttime_subsecond": 0,
+    "admincode": null,
+    "technician": null,
+    "equipment": "b'test generator'"
+  },
+  "signals": [
+    {
+      "index": 0,
+      "label": "squarewave",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 1,
+      "label": "ramp",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 2,
+      "label": "pulse",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 3,
+      "label": "ECG",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 4,
+      "label": "noise",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 5,
+      "label": "sine 1 Hz",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 6,
+      "label": "sine 8 Hz",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 7,
+      "label": "sine 8.5 Hz",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 8,
+      "label": "sine 15 Hz",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 9,
+      "label": "sine 17 Hz",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    },
+    {
+      "index": 10,
+      "label": "sine 50 Hz",
+      "transducer": "",
+      "physical_dimension": "uV",
+      "physical_min": -1000.0,
+      "physical_max": 1000.0,
+      "digital_min": -32768,
+      "digital_max": 32767,
+      "prefiltering": "",
+      "samples_per_data_record": 200.0,
+      "sample_frequency": 200.0
+    }
+  ],
+  "annotations": [
+    {
+      "onset": 0.0,
+      "duration": -1.0,
+      "text": "RECORD START"
+    },
+    {
+      "onset": 600.0,
+      "duration": -1.0,
+      "text": "REC STOP"
+    }
+  ],
+  "sample_snippets": [
+    {
+      "signal_index": 0,
+      "label": "squarewave",
+      "physical_first_10": [
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165
+      ],
+      "digital_first_10": [
+        3276,
+        3276,
+        3276,
+        3276,
+        3276,
+        3276,
+        3276,
+        3276,
+        3276,
+        3276
+      ]
+    },
+    {
+      "signal_index": 1,
+      "label": "ramp",
+      "physical_first_10": [
+        -99.96185244525826,
+        -98.9547570000763,
+        -97.97817959868772,
+        -96.97108415350576,
+        -95.9639887083238,
+        -94.95689326314184,
+        -93.98031586175325,
+        -92.9732204165713,
+        -91.96612497138933,
+        -90.95902952620737
+      ],
+      "digital_first_10": [
+        -3276,
+        -3243,
+        -3211,
+        -3178,
+        -3145,
+        -3112,
+        -3080,
+        -3047,
+        -3014,
+        -2981
+      ]
+    },
+    {
+      "signal_index": 2,
+      "label": "pulse",
+      "physical_first_10": [
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        99.99237048905165,
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421
+      ],
+      "digital_first_10": [
+        3276,
+        3276,
+        3276,
+        3276,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "signal_index": 3,
+      "label": "ECG",
+      "physical_first_10": [
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421,
+        0.015259021896696421,
+        31.41832608529793,
+        49.24086366063935,
+        58.21316853589685,
+        61.47859922178988,
+        29.739833676661327
+      ],
+      "digital_first_10": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1029,
+        1613,
+        1907,
+        2014,
+        974
+      ]
+    },
+    {
+      "signal_index": 4,
+      "label": "noise",
+      "physical_first_10": [
+        84.0009155413138,
+        38.986800946059354,
+        77.9888609140154,
+        78.99595635919738,
+        90.98954757000077,
+        18.997482261387045,
+        33.00526436255436,
+        76.00518806744488,
+        26.99320973525597,
+        55.0087739375906
+      ],
+      "digital_first_10": [
+        2752,
+        1277,
+        2555,
+        2588,
+        2981,
+        622,
+        1081,
+        2490,
+        884,
+        1802
+      ]
+    }
+  ]
+}

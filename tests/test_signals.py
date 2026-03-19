@@ -100,18 +100,18 @@ class TestSignalData:
             np.testing.assert_array_equal(actual, expected)
 
     def test_single_sample_returns_float(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         assert isinstance(edf.signal(0)[0], float)
 
     def test_slice_returns_numpy(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         arr = edf.signal(0)[0:10]
         assert isinstance(arr, np.ndarray)
         assert arr.dtype == np.float64
         assert len(arr) == 10
 
     def test_strided_slice(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         sig = edf.signal(0)
         arr = sig[0:10:2]
         assert len(arr) == 5
@@ -119,7 +119,7 @@ class TestSignalData:
             assert abs(arr[i] - sig[idx]) < 1e-10
 
     def test_negative_indexing(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         sig = edf.signal(0)
         assert sig[-1] == sig[len(sig) - 1]
 
@@ -132,34 +132,34 @@ class TestSignalData:
         assert len(arr) == len(sig)
 
     def test_to_digital_dtype(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         arr = edf.signal(0).to_digital()
         assert arr.dtype == np.int16
 
     def test_times_monotonic(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         times = edf.signal(0).times()
         assert np.all(np.diff(times) >= 0)
 
     def test_times_start_at_zero(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         times = edf.signal(0).times()
         assert abs(times[0]) < 1e-10
 
 
 class TestErrorHandling:
     def test_signal_not_found(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         with pytest.raises(KeyError):
             edf.signal("NONEXISTENT")
 
     def test_signal_index_out_of_range(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         with pytest.raises(IndexError):
             edf.signal(9999)
 
     def test_sample_index_out_of_range(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         sig = edf.signal(0)
         with pytest.raises(IndexError):
             sig[len(sig)]
@@ -184,7 +184,7 @@ class TestBulkReads:
         assert all(p.dtype == np.int16 for p in pages)
 
     def test_read_page_matches_single_signal(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         indices = edf.ordinary_signal_indices()
         pages = edf.read_page(0.0, 1.0, signal_indices=indices[:1])
         sig = edf.signal(indices[0])
@@ -207,25 +207,25 @@ class TestBulkReads:
 
 class TestEdgeCases:
     def test_empty_slice(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         arr = edf.signal(0)[0:0]
         assert isinstance(arr, np.ndarray)
         assert len(arr) == 0
 
     def test_full_negative_index(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         sig = edf.signal(0)
         assert sig[-len(sig)] == sig[0]
 
     def test_signal_type_error(self):
-        edf, _ = load_fixture("short_psg")
+        edf, _ = load_fixture("test_generator")
         with pytest.raises(TypeError):
             edf.signal(3.14)
 
 
 class TestContextManager:
     def test_with_statement(self):
-        path = str(FIXTURES / "short_psg.edf")
+        path = str(FIXTURES / "test_generator.edf")
         with edfarray.EdfFile(path) as f:
-            assert f.num_signals == 7
+            assert f.num_signals == 16
             assert len(f.signal(0)) > 0

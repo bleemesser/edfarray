@@ -141,11 +141,10 @@ def format_time(seconds):
 def main():
     # Use a few different file sizes
     test_files = [
-        ("short_psg.edf", 0),
+        ("test_generator.edf", 0),
         ("test_generator_2.edf", 0),
-        ("tuh_00000115_s07_a00.edf", 0),
-        ("natus-sample-edf.edf", 0),
-        ("edf+C_sample.edf", 0),
+        ("edfPlusC.edf", 0),
+        ("S001R01.edf", 0),
     ]
 
     available = []

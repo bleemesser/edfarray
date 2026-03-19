@@ -9,8 +9,8 @@ FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 
 def main():
-    # Open a file using the context manager
-    with edfarray.EdfFile(str(FIXTURES / "short_psg.edf")) as f:
+    # Open a plain EDF file using the context manager
+    with edfarray.EdfFile(str(FIXTURES / "test_generator.edf")) as f:
         print(f"=== {f.variant} file ===")
         print(f"Signals: {f.num_signals}")
         print(f"Records: {f.num_records}")
@@ -19,20 +19,18 @@ def main():
         print(f"Start: {f.start_datetime}")
         print()
 
-        # Patient metadata (parsed from EDF+ header subfields)
+        # Patient metadata (parsed from header subfields)
         print(f"Patient name: {f.patient_name}")
         print(f"Patient sex: {f.patient_sex}")
         print(f"Patient birthdate: {f.patient_birthdate}")
         print()
 
-        # Recording metadata
-        print(f"Admin code: {f.admin_code}")
-        print(f"Technician: {f.technician}")
-        print(f"Equipment: {f.equipment}")
+        # Signal labels
+        print(f"Labels: {f.signal_labels()}")
         print()
 
         # Signal metadata
-        for i in range(f.num_signals):
+        for i in range(min(f.num_signals, 5)):
             sig = f.signal(i)
             print(
                 f"  [{i}] {sig.label:20s}  "
@@ -44,31 +42,31 @@ def main():
         print()
 
         # Access by label
-        eeg = f.signal("EEG Fpz-Cz")
-        print(f"EEG Fpz-Cz: {len(eeg)} samples at {eeg.sample_rate} Hz")
+        sig = f.signal("F4")
+        print(f"F4: {len(sig)} samples at {sig.sample_rate} Hz")
 
         # Single sample
-        print(f"  First sample: {eeg[0]:.4f} {eeg.physical_dimension}")
+        print(f"  First sample: {sig[0]:.4f} {sig.physical_dimension}")
 
         # Slice
-        chunk = eeg[0:5]
+        chunk = sig[0:5]
         print(f"  First 5 samples: {chunk}")
 
         # Strided access (every 10th sample = 10x downsample)
-        downsampled = eeg[::10]
+        downsampled = sig[::10]
         print(f"  Downsampled 10x: {len(downsampled)} samples")
 
         # Full signal as numpy array
-        all_data = eeg.to_numpy()
+        all_data = sig.to_numpy()
         print(f"  Full signal: shape={all_data.shape}, dtype={all_data.dtype}")
 
         # Raw digital values
-        digital = eeg.to_digital()
+        digital = sig.to_digital()
         print(f"  Digital: shape={digital.shape}, dtype={digital.dtype}, "
               f"range=[{digital.min()}, {digital.max()}]")
 
         # Timestamps
-        times = eeg.times()
+        times = sig.times()
         print(f"  Time range: {times[0]:.3f}s to {times[-1]:.3f}s")
 
     # EDF+ files with annotations
@@ -82,7 +80,7 @@ def main():
 
     # EDF+D (discontinuous) files
     print()
-    with edfarray.EdfFile(str(FIXTURES / "edf+D_sample.edf")) as f:
+    with edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf")) as f:
         print(f"=== {f.variant} (discontinuous) ===")
         print(f"Signals: {f.num_signals}")
         print(f"Annotations: {len(f.annotations)}")
@@ -100,12 +98,18 @@ def main():
         for t_before, t_after, gap in gaps[:5]:
             print(f"  Gap at {t_before:.3f}s -> {t_after:.3f}s ({gap:.3f}s)")
 
-    # Anonymized dates
+    # Multi-channel EEG (64 channels)
     print()
-    with edfarray.EdfFile(str(FIXTURES / "edf+c_sample_short_future.edf")) as f:
-        print(f"=== Anonymized date handling ===")
-        print(f"start_datetime type: {type(f.start_datetime).__name__}")
-        print(f"start_datetime value: {f.start_datetime}")
+    with edfarray.EdfFile(str(FIXTURES / "S001R01.edf")) as f:
+        print(f"=== Multi-channel EEG ({f.variant}) ===")
+        ordinary = f.ordinary_signal_indices()
+        print(f"Ordinary signals: {len(ordinary)}")
+        print(f"Total signals: {f.num_signals}")
+
+        # Bulk read all channels for 1 second
+        pages = f.read_page(0.0, 1.0)
+        print(f"read_page(0, 1): {len(pages)} arrays, "
+              f"first has {len(pages[0])} samples")
 
 
 if __name__ == "__main__":

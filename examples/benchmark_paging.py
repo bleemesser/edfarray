@@ -197,9 +197,9 @@ def print_results(ours, theirs=None):
 
 def main():
     test_files = [
-        "natus-sample-edf.edf",
-        "edf+C_sample.edf",
-        "tuh_00000115_s07_a00.edf",
+        "test_generator.edf",
+        "test_generator_2.edf",
+        "S001R01.edf",
     ]
 
     print("=" * 78)

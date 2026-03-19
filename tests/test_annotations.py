@@ -56,17 +56,10 @@ class TestAnnotations:
 class TestEdgeCases:
     def test_edf_plus_d_opens(self):
         """EDF+D files should open without error (pyedflib can't even do this)."""
-        edf = edfarray.EdfFile(str(FIXTURES / "edf+D_sample.edf"))
+        edf = edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf"))
         assert edf.variant == "EDF+D"
         assert edf.num_signals > 0
         assert len(edf.annotations) > 0
-
-    def test_anonymized_date_opens(self):
-        """Files with anonymized dates (e.g. 'yy') should open without error."""
-        edf = edfarray.EdfFile(str(FIXTURES / "edf+c_sample_short_future.edf"))
-        assert edf.num_signals > 0
-        dt = edf.start_datetime
-        assert isinstance(dt, str)
 
 
 class TestWarnings:

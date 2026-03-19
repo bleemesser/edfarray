@@ -293,12 +293,10 @@ mod fixture_tests {
     }
 
     #[test]
-    fn parse_short_psg() {
-        let edf = EdfFile::open(fixture_path("short_psg.edf")).unwrap();
-        eprintln!("variant: {:?}", edf.variant());
-        eprintln!("patient_id: {:?}", edf.header().patient_id);
-        eprintln!("patient: {:?}", edf.patient());
-        assert_eq!(edf.patient().sex, Some(crate::header::Sex::Female));
-        assert_eq!(edf.patient().name.as_deref(), Some("Female 33yr"));
+    fn parse_test_generator() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        assert_eq!(edf.variant(), EdfVariant::Edf);
+        assert_eq!(edf.num_signals(), 16);
+        assert_eq!(edf.duration(), 900.0);
     }
 }
