@@ -1,4 +1,5 @@
 mod annotations;
+mod array_proxy;
 mod errors;
 mod file;
 mod signal;
@@ -10,6 +11,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<file::PyEdfFile>()?;
     m.add_class::<signal::PySignal>()?;
     m.add_class::<annotations::PyAnnotation>()?;
+    m.add_class::<array_proxy::PyArrayProxy>()?;
     Ok(())
 }
 

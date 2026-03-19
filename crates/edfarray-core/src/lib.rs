@@ -1,4 +1,5 @@
 pub mod annotation;
+pub mod array_proxy;
 pub mod error;
 pub mod file;
 pub mod header;

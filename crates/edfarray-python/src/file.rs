@@ -7,6 +7,7 @@ use edfarray_core::file::EdfFile;
 use edfarray_core::header::Sex;
 
 use crate::annotations::PyAnnotation;
+use crate::array_proxy::PyArrayProxy;
 use crate::errors::to_py_err;
 use crate::signal::PySignal;
 
@@ -259,6 +260,46 @@ impl PyEdfFile {
             arrays.push(array);
         }
         Ok(arrays)
+    }
+
+    /// Whether the background annotation scan has completed.
+    #[getter]
+    fn annotations_ready(&self) -> bool {
+        self.inner.annotations_ready()
+    }
+
+    /// Progress of the background annotation scan: (records_scanned, total_records).
+    #[getter]
+    fn scan_progress(&self) -> (usize, usize) {
+        self.inner.scan_progress()
+    }
+
+    /// Create a 2D array proxy for numpy-style indexing.
+    ///
+    /// All selected signals must have the same sample rate.
+    /// If `signal_indices` is None, uses all ordinary (non-annotation) signals.
+    #[pyo3(signature = (signal_indices=None))]
+    fn array_proxy(&self, signal_indices: Option<Vec<usize>>) -> PyResult<PyArrayProxy> {
+        let proxy = self
+            .inner
+            .array_proxy(signal_indices.as_deref())
+            .map_err(to_py_err)?;
+        Ok(PyArrayProxy::new(proxy))
+    }
+
+    /// Group ordinary signal indices by sample rate.
+    ///
+    /// Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
+    fn signal_indices_by_rate<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let map = self.inner.signal_indices_by_rate();
+        let dict = PyDict::new(py);
+        for (rate, indices) in map {
+            dict.set_item(rate, indices)?;
+        }
+        Ok(dict)
     }
 
     /// Read a page of digital (raw int16) data for multiple signals over a time range.

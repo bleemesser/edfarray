@@ -33,12 +33,36 @@ When you call `read_page()` without specifying `signal_indices`, it defaults to 
 
 edfarray uses memory-mapped I/O via `memmap2`. The file is mapped into the process's address space on open, and the OS page cache handles bringing data in and out of physical RAM. This means:
 
-- Opening large files is near-instant. The only upfront work is parsing the header and scanning for annotations.
+- Opening large files is near-instant. The header is parsed synchronously (fixed-size, fast), and the annotation scan runs in a background thread.
+- Signal reads work immediately after open, without waiting for the annotation scan.
 - Sequential reads (paging forward) benefit from OS readahead.
 - Random seeks (jumping to a timestamp) only fault in the pages you touch.
 - Multiple signals reading from the same data records share cached pages.
 
-On open, edfarray does one sequential scan of the file to parse the header and build the annotation index. After that, it switches to random-access mode and uses `madvise(MADV_WILLNEED)` hints before bulk reads.
+On open, edfarray parses the header and record layout synchronously (microseconds), then spawns a background thread to build the annotation index by scanning the file's TAL data. `madvise(MADV_WILLNEED)` hints are used before bulk reads to prime the page cache.
+
+## Async annotation scan
+
+For large files (e.g. a 24-hour EEG at ~12 GB), the annotation scan can take noticeable time. edfarray runs it in the background so you can start reading signal data immediately:
+
+```python
+f = edfarray.EdfFile("large_recording.edf")
+
+# These work right away, no waiting:
+sig = f.signal(0)
+data = sig[0:10000]
+pages = f.read_page(0.0, 10.0)
+
+# Check scan status without blocking:
+f.annotations_ready   # True/False
+f.scan_progress       # (records_scanned, total_records)
+
+# These block until the scan finishes:
+f.annotations         # waits, then returns the annotation list
+f.warnings            # waits, then returns warnings including annotation parse issues
+```
+
+For plain EDF files (no annotation signals), there is no scan at all -- record onsets are computed directly from the header. For EDF+C files, signal reads never block because record onsets are uniform. Only EDF+D files need the scan results for correct time mapping via `sample_time()` / `times()`.
 
 ## Why it's fast
 

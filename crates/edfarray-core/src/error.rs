@@ -45,19 +45,6 @@ pub enum EdfError {
     #[error("signal {index} has physical_min ({min}) == physical_max ({max})")]
     InvalidPhysicalRange { index: usize, min: f64, max: f64 },
 
-    #[error("invalid TAL at record {record}, byte offset {offset}: {reason}")]
-    InvalidTal {
-        record: usize,
-        offset: usize,
-        reason: String,
-    },
-
-    #[error("annotation onset is not valid UTF-8 at record {record}")]
-    InvalidAnnotationEncoding { record: usize },
-
-    #[error("missing time-keeping annotation in record {record}")]
-    MissingTimekeepingAnnotation { record: usize },
-
     #[error("record index {index} out of range (file has {count} records)")]
     RecordOutOfRange { index: usize, count: usize },
 
@@ -69,6 +56,9 @@ pub enum EdfError {
 
     #[error("no signal with label `{label}`")]
     SignalNotFound { label: String },
+
+    #[error("mixed sample rates: {reason}")]
+    MixedSampleRates { reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, EdfError>;

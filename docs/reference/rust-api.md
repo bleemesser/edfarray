@@ -15,9 +15,10 @@ edfarray-core = { git = "https://github.com/bleemesser/edfarray.git" }
 - `header` -- `EdfHeader`, `EdfVariant`, `PatientInfo`, `RecordingInfo`, `MaybeDateTime`, `MaybeDate`, `Sex`.
 - `signal` -- `SignalHeader`, per-signal metadata and gain/offset conversion.
 - `proxy` -- `SignalProxy`, array-like view for reading samples from a single signal.
+- `array_proxy` -- `ArrayProxy`, 2D view over multiple same-rate signals.
 - `annotation` -- `Annotation`, `AnnotationIndex`, TAL parsing.
 - `record` -- `RecordLayout`, data record byte layout and sample decoding.
-- `mmap` -- `MappedFile`, memory-mapped file with parsed header and annotation index.
+- `mmap` -- `MappedFile`, memory-mapped file with deferred annotation scan.
 - `error` -- `EdfError`, the error type used throughout the crate.
 
 ## Usage
@@ -45,10 +46,21 @@ fn main() -> edfarray_core::error::Result<()> {
         println!("signal {}: {} samples", indices[i], page.len());
     }
 
-    // Annotations.
+    // 2D array proxy for multi-channel access.
+    let by_rate = edf.signal_indices_by_rate();
+    for (rate, group) in &by_rate {
+        let proxy = edf.array_proxy(Some(group))?;
+        println!("{}Hz group: {} signals x {} samples",
+                 rate, proxy.shape().0, proxy.shape().1);
+    }
+
+    // Annotations (blocks until background scan completes).
     for ann in edf.annotations() {
         println!("{:.2}s: {}", ann.onset, ann.text);
     }
+
+    // Check scan status without blocking.
+    println!("scan ready: {}", edf.annotations_ready());
 
     Ok(())
 }
@@ -77,6 +89,8 @@ See the `error` module for the full list of variants.
 `EdfFile` -- Main entry point. Owns an `Arc<MappedFile>` and provides all public API methods.
 
 `SignalProxy` -- Lightweight view of one signal. Holds an `Arc` reference to the underlying `MappedFile`. Created by `EdfFile::signal()`. Translates global sample indices to record byte offsets and decodes on the fly.
+
+`ArrayProxy` -- 2D view over multiple signals with the same sample rate. Created by `EdfFile::array_proxy()`. Reads are parallelized with rayon. Key methods: `shape()`, `sample_rate()`, `get()`, `read_physical()`, `read_slice()`, `read_digital()`.
 
 `EdfHeader` -- The complete parsed header, including signal headers, patient info, and recording info. Accessible via `EdfFile::header()`.
 

@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use rayon::prelude::*;
 
 use crate::annotation::Annotation;
+use crate::array_proxy::ArrayProxy;
 use crate::error::{EdfError, Result};
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
 use crate::mmap::MappedFile;
@@ -66,15 +68,30 @@ impl EdfFile {
     }
 
     /// All non-timekeeping annotations, sorted by onset.
-    pub fn annotations(&self) -> &[Annotation] {
-        &self.file.annotations.annotations
+    /// Blocks until the annotation scan is complete.
+    pub fn annotations(&self) -> Vec<Annotation> {
+        self.file
+            .with_annotations(|idx| idx.annotations.clone())
     }
 
     /// Parse warnings accumulated during file open (malformed TALs, etc.).
+    /// Blocks until the annotation scan is complete.
     pub fn warnings(&self) -> Vec<String> {
         let mut w = self.file.header.warnings.clone();
-        w.extend(self.file.annotations.warnings.iter().cloned());
+        self.file.with_annotations(|idx| {
+            w.extend(idx.warnings.iter().cloned());
+        });
         w
+    }
+
+    /// Progress of the background annotation scan: (records_scanned, total_records).
+    pub fn scan_progress(&self) -> (usize, usize) {
+        self.file.scan_progress()
+    }
+
+    /// Whether the background annotation scan has completed.
+    pub fn annotations_ready(&self) -> bool {
+        self.file.annotations_ready()
     }
 
     /// Get a signal proxy by index.
@@ -109,6 +126,11 @@ impl EdfFile {
     /// Returns a vec of f64 buffers, one per signal index. Each buffer contains
     /// the physical samples for that signal in the time range `[start_sec, end_sec)`.
     /// Signals may have different sample rates, so buffers may have different lengths.
+    ///
+    /// **EDF+D note:** time parameters are converted to flat sample indices
+    /// (`(time * sample_rate) as usize`), not physical time. For discontinuous
+    /// recordings, use `SignalProxy::sample_time()` or `read_times()` to map
+    /// between sample indices and physical time.
     pub fn read_page(
         &self,
         signal_indices: &[usize],
@@ -122,8 +144,8 @@ impl EdfFile {
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
                 let sr = proxy.sample_rate();
-                let s_start = (start_sec * sr) as usize;
-                let s_end = ((end_sec * sr) as usize).min(proxy.len());
+                let s_start = (start_sec.max(0.0) * sr) as usize;
+                let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
                 if s_start >= proxy.len() || s_start >= s_end {
                     return Ok(Vec::new());
                 }
@@ -149,8 +171,8 @@ impl EdfFile {
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
                 let sr = proxy.sample_rate();
-                let s_start = (start_sec * sr) as usize;
-                let s_end = ((end_sec * sr) as usize).min(proxy.len());
+                let s_start = (start_sec.max(0.0) * sr) as usize;
+                let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
                 if s_start >= proxy.len() || s_start >= s_end {
                     return Ok(Vec::new());
                 }
@@ -176,6 +198,37 @@ impl EdfFile {
 
     #[cfg(not(unix))]
     fn advise_time_range(&self, _start_sec: f64, _end_sec: f64) {}
+
+    /// Create a 2D array proxy over the given signal indices (or all ordinary signals).
+    ///
+    /// All signals must have the same sample rate. Returns an error if rates differ.
+    pub fn array_proxy(&self, signal_indices: Option<&[usize]>) -> Result<ArrayProxy> {
+        let indices = match signal_indices {
+            Some(idx) => idx.to_vec(),
+            None => self.ordinary_signal_indices(),
+        };
+        ArrayProxy::new(Arc::clone(&self.file), &indices)
+    }
+
+    /// Group ordinary signal indices by sample rate (Hz, rounded to integer).
+    ///
+    /// Returns a map from rate to signal indices. Useful for creating `ArrayProxy`
+    /// instances when the file has mixed sample rates.
+    pub fn signal_indices_by_rate(&self) -> HashMap<u64, Vec<usize>> {
+        let mut map: HashMap<u64, Vec<usize>> = HashMap::new();
+        for idx in self.ordinary_signal_indices() {
+            let rate = self.file.header.signals[idx]
+                .sample_rate(self.file.header.record_duration_secs);
+            let key = rate.to_bits();
+            map.entry(key).or_default().push(idx);
+        }
+        map.into_iter()
+            .map(|(bits, indices)| (f64::from_bits(bits).round() as u64, indices))
+            .fold(HashMap::new(), |mut acc, (rate, indices)| {
+                acc.entry(rate).or_default().extend(indices);
+                acc
+            })
+    }
 
     /// Get a signal proxy by label (first match).
     pub fn signal_by_label(&self, label: &str) -> Result<SignalProxy> {
@@ -214,6 +267,66 @@ mod tests {
 
         let val = sig.get_physical(0).unwrap();
         assert!((val - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn array_proxy_single_signal() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        let proxy = edf.array_proxy(None).unwrap();
+        assert_eq!(proxy.shape(), (1, 8));
+        assert_eq!(proxy.sample_rate(), 4.0);
+        let val = proxy.get(0, 3).unwrap();
+        assert!((val - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn array_proxy_explicit_indices() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        let proxy = edf.array_proxy(Some(&[0])).unwrap();
+        assert_eq!(proxy.shape(), (1, 8));
+    }
+
+    #[test]
+    fn signal_indices_by_rate_groups() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        let by_rate = edf.signal_indices_by_rate();
+        assert_eq!(by_rate.len(), 1);
+        let indices: Vec<usize> = by_rate.values().next().unwrap().clone();
+        assert_eq!(indices, vec![0]);
+    }
+
+    #[test]
+    fn annotations_ready_plain_edf() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert!(edf.annotations_ready());
+    }
+
+    #[test]
+    fn scan_progress_plain_edf() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        let (done, total) = edf.scan_progress();
+        assert_eq!(done, total);
+    }
+
+    #[test]
+    fn annotations_returns_vec() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        let anns = edf.annotations();
+        assert!(anns.is_empty());
+    }
+
+    #[test]
+    fn warnings_includes_header_and_annotation_warnings() {
+        let file = build_test_file();
+        let edf = EdfFile::open(file.path()).unwrap();
+        let w = edf.warnings();
+        assert!(w.is_empty());
     }
 
     #[test]
@@ -298,5 +411,58 @@ mod fixture_tests {
         assert_eq!(edf.variant(), EdfVariant::Edf);
         assert_eq!(edf.num_signals(), 16);
         assert_eq!(edf.duration(), 900.0);
+    }
+
+    #[test]
+    fn annotations_ready_after_access() {
+        let edf = EdfFile::open(fixture_path("test_generator_2.edf")).unwrap();
+        let _ = edf.annotations();
+        assert!(edf.annotations_ready());
+    }
+
+    #[test]
+    fn async_scan_edf_plus_c() {
+        let edf = EdfFile::open(fixture_path("test_generator_2.edf")).unwrap();
+        assert_eq!(edf.variant(), EdfVariant::EdfPlusC);
+        let anns = edf.annotations();
+        assert!(!anns.is_empty());
+        let (done, total) = edf.scan_progress();
+        assert_eq!(done, total);
+    }
+
+    #[test]
+    fn async_scan_edf_plus_d() {
+        let edf = EdfFile::open(fixture_path("edfPlusD.edf")).unwrap();
+        assert_eq!(edf.variant(), EdfVariant::EdfPlusD);
+        let anns = edf.annotations();
+        let _ = anns;
+        let (done, total) = edf.scan_progress();
+        assert_eq!(done, total);
+    }
+
+    #[test]
+    fn signal_indices_by_rate_mixed() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let by_rate = edf.signal_indices_by_rate();
+        assert!(by_rate.len() >= 1);
+        let total: usize = by_rate.values().map(|v| v.len()).sum();
+        assert_eq!(total, edf.ordinary_signal_indices().len());
+    }
+
+    #[test]
+    fn array_proxy_mixed_rates_error() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let result = edf.array_proxy(None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn array_proxy_same_rate_group() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let by_rate = edf.signal_indices_by_rate();
+        let group = by_rate.values().next().unwrap();
+        let proxy = edf.array_proxy(Some(group)).unwrap();
+        assert_eq!(proxy.shape().0, group.len());
+        assert!(proxy.shape().1 > 0);
     }
 }

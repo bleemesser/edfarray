@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::error::Result;
 use crate::header::{EdfHeader, EdfVariant};
 use crate::record::RecordLayout;
@@ -35,11 +37,21 @@ pub struct AnnotationIndex {
 }
 
 impl AnnotationIndex {
-    /// Build the annotation index by scanning all data records in the provided byte slice.
-    ///
-    /// `data` is the full file contents (or mmap). The header and layout describe
-    /// where to find annotation signals within each data record.
     pub fn build(data: &[u8], header: &EdfHeader, layout: &RecordLayout) -> Result<Self> {
+        Self::build_with_progress(data, header, layout, &AtomicUsize::new(0))
+    }
+
+    /// Build the annotation index, updating `progress` atomically after each record.
+    ///
+    /// This is the workhorse called by the background scan thread. `progress` is
+    /// incremented after each record is processed, allowing non-blocking progress
+    /// polling from the main thread.
+    pub fn build_with_progress(
+        data: &[u8],
+        header: &EdfHeader,
+        layout: &RecordLayout,
+        progress: &AtomicUsize,
+    ) -> Result<Self> {
         let mut annotations = Vec::new();
         let mut record_onsets = Vec::new();
         let mut warnings = Vec::new();
@@ -107,6 +119,8 @@ impl AnnotationIndex {
                 }
                 record_onsets.push(rec_idx as f64 * header.record_duration_secs);
             }
+
+            progress.store(rec_idx + 1, Ordering::Relaxed);
         }
 
         // The first time-keeping annotation's onset encodes the subsecond

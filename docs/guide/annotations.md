@@ -61,7 +61,37 @@ for idx in gaps:
           f"({times[idx+1] - times[idx]:.3f}s)")
 ```
 
-The `read_page()` bulk access method also works correctly with discontinuous files. The returned data corresponds to the samples that fall within the requested time window, with gaps reflected in the timestamps.
+### `read_page` and `ArrayProxy` use flat sample indices
+
+`read_page()`, `Signal` indexing, and `ArrayProxy` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, it means the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` — it does not account for gaps.
+
+For example, if a file has records at t=0s, t=1s, then a gap, then t=5s:
+
+```python
+# WRONG for EDF+D: assumes 0-10s maps to the first 10s of physical time.
+# Actually returns samples from records 0..N by flat index, which may
+# span well beyond 10s of physical time due to gaps.
+pages = f.read_page(0.0, 10.0)
+```
+
+The correct way to get data within a physical time window for EDF+D is to use `times()` to identify which samples fall in your range:
+
+```python
+# CORRECT for EDF+D: use timestamps to select the right samples.
+sig = f.signal(0)
+all_data = sig.to_numpy()
+all_times = sig.times()
+
+t_start, t_end = 0.0, 10.0
+mask = (all_times >= t_start) & (all_times < t_end)
+data_in_window = all_data[mask]
+times_in_window = all_times[mask]
+
+# data_in_window will have fewer samples than (t_end - t_start) * sample_rate
+# because the gaps contain no recorded data.
+```
+
+This is the same behavior as pyedflib's `readSignal(start, n)` — flat sample indices are the standard convention. The `times()` method is what makes EDF+D usable: it gives you the true physical timestamp for every sample so you can map between sample space and time space yourself.
 
 ## Time-keeping annotations
 

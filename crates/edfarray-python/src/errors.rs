@@ -16,9 +16,7 @@ pub fn to_py_err(e: EdfError) -> PyErr {
         | EdfError::InvalidSignalField { .. }
         | EdfError::InvalidDigitalRange { .. }
         | EdfError::InvalidPhysicalRange { .. }
-        | EdfError::InvalidTal { .. }
-        | EdfError::InvalidAnnotationEncoding { .. }
-        | EdfError::MissingTimekeepingAnnotation { .. } => PyValueError::new_err(e.to_string()),
+        | EdfError::MixedSampleRates { .. } => PyValueError::new_err(e.to_string()),
 
         EdfError::RecordOutOfRange { .. }
         | EdfError::SignalOutOfRange { .. }

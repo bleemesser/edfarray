@@ -93,6 +93,38 @@ pages = f.read_page(0.0, 10.0)
 # pages[5].shape == (10,)    for a 1 Hz channel
 ```
 
+## 2D array proxy
+
+For multi-channel analysis, the `ArrayProxy` gives numpy-style 2D indexing across signals and samples:
+
+```python
+proxy = f.array_proxy()  # all ordinary signals (must share the same sample rate)
+proxy.shape               # (num_signals, total_samples)
+proxy.sample_rate         # common sample rate in Hz
+
+proxy[3, 1000]            # single float
+proxy[3, 1000:2000]       # 1D numpy array (1000 samples from signal 3)
+proxy[:, 1000:2000]       # 2D numpy array (all signals x 1000 samples)
+proxy[0:5, 1000:2000]     # 2D numpy array (5 signals x 1000 samples)
+proxy[[0, 3, 7], 0:500]   # fancy indexing on the signal axis
+```
+
+All signals in an `ArrayProxy` must have the same sample rate. If the file has mixed rates, pass specific indices:
+
+```python
+proxy = f.array_proxy([0, 1, 2])  # just these three signals
+```
+
+For files with mixed sample rates, use `signal_indices_by_rate()` to discover groups:
+
+```python
+by_rate = f.signal_indices_by_rate()  # {256: [0, 1, 2, ...], 1: [10, 11]}
+eeg_proxy = f.array_proxy(by_rate[256])
+resp_proxy = f.array_proxy(by_rate[1])
+```
+
+The array proxy reads data on demand from the memory-mapped file, just like `Signal`. It holds no sample data itself. Multi-signal reads are parallelized with rayon.
+
 ## Annotation signals
 
 EDF+ files include one or more "EDF Annotations" signals that carry timing and event data. These are included in `num_signals` and can be accessed like any signal, but their "samples" are raw annotation bytes, not meaningful as signal data.

@@ -24,6 +24,8 @@ with edfarray.EdfFile("recording.edf") as f:
 ## What it does
 
 - Memory-mapped I/O. Files are never loaded into RAM.
+- Async annotation scan. Files open instantly; the annotation index builds in a background thread.
+- 2D array proxy. `proxy[0:5, 1000:2000]` gives a numpy array across multiple channels.
 - Multi-channel page read acceleration.
 - Full EDF+D support, including discontinuous recordings with time gaps.
 - Lenient parsing. Malformed annotations and anonymized dates produce warnings, not errors.

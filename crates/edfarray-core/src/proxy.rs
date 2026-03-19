@@ -128,16 +128,11 @@ impl SignalProxy {
     /// Physical time in seconds for the sample at the given global index.
     ///
     /// For EDF+D files, this accounts for gaps between records using the
-    /// record onset times from the annotation index.
+    /// record onset times from the annotation index (blocks until scan completes).
+    /// For EDF and EDF+C, record onsets are computed directly without waiting.
     pub fn sample_time(&self, idx: usize) -> f64 {
         let (rec_idx, offset) = self.resolve_index(idx);
-        let record_onset = self
-            .file
-            .annotations
-            .record_onsets
-            .get(rec_idx)
-            .copied()
-            .unwrap_or(rec_idx as f64 * self.file.header.record_duration_secs);
+        let record_onset = self.file.record_onset(rec_idx);
         let sample_offset = offset as f64 / self.sample_rate();
         record_onset + sample_offset
     }

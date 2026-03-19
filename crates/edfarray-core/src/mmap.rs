@@ -1,23 +1,39 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::thread;
 
 use memmap2::Mmap;
 
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
-use crate::header::EdfHeader;
+use crate::header::{EdfHeader, EdfVariant};
 use crate::record::RecordLayout;
 
-/// A memory-mapped EDF file with parsed header, record layout, and annotation index.
+/// Internal state machine for the background annotation scan.
+enum AnnotationState {
+    NotStarted,
+    Scanning {
+        progress: Arc<AtomicUsize>,
+        total: usize,
+    },
+    Complete(AnnotationIndex),
+}
+
+/// A memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
 ///
-/// On open, the file is mapped into memory and scanned sequentially to parse
-/// the header and build the annotation index. The mmap remains alive for the
-/// lifetime of this struct, backing all data access through the proxy layer.
+/// On open, the file is mapped into memory and the header and record layout are parsed
+/// synchronously (fast, fixed-size). For files with annotation signals, the annotation
+/// scan runs in a background thread so the file can be used immediately for signal reads.
+///
+/// For plain EDF files (no annotation signals), the annotation index is trivially
+/// computed at open time (uniform record spacing) with no background work.
 pub struct MappedFile {
     mmap: Mmap,
     pub header: EdfHeader,
     pub layout: RecordLayout,
-    pub annotations: AnnotationIndex,
+    annotations: RwLock<AnnotationState>,
+    scan_done: (Mutex<bool>, Condvar),
 }
 
 impl std::fmt::Debug for MappedFile {
@@ -33,10 +49,9 @@ impl std::fmt::Debug for MappedFile {
 impl MappedFile {
     /// Open and parse an EDF/EDF+ file.
     ///
-    /// This performs a sequential scan of the entire file to build the annotation
-    /// index and record-to-time map. On platforms that support it, madvise hints
-    /// are used to optimize I/O: sequential during the scan, then random for
-    /// subsequent access.
+    /// Parses the header and record layout synchronously, then spawns a background
+    /// thread to build the annotation index (for files with annotation signals).
+    /// Returns immediately — signal data can be read before the scan finishes.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
         let file = std::fs::File::open(path).map_err(|e| EdfError::FileOpen {
             path: path.to_path_buf(),
@@ -48,22 +63,147 @@ impl MappedFile {
             source: e,
         })?;
 
-        #[cfg(unix)]
-        mmap.advise(memmap2::Advice::Sequential).ok();
-
         let header = EdfHeader::parse(&mmap)?;
         let layout = RecordLayout::from_header(&header);
-        let annotations = AnnotationIndex::build(&mmap, &header, &layout)?;
 
-        #[cfg(unix)]
-        mmap.advise(memmap2::Advice::Random).ok();
+        let has_annotations = header.signals.iter().any(|s| s.is_annotation);
 
-        Ok(Arc::new(MappedFile {
+        let initial_state = if !has_annotations {
+            let num_records = header.num_records.max(0) as usize;
+            let record_onsets: Vec<f64> = (0..num_records)
+                .map(|i| i as f64 * header.record_duration_secs)
+                .collect();
+            AnnotationState::Complete(AnnotationIndex {
+                annotations: Vec::new(),
+                record_onsets,
+                starttime_subsecond: 0.0,
+                warnings: Vec::new(),
+            })
+        } else {
+            AnnotationState::NotStarted
+        };
+
+        let mapped = Arc::new(MappedFile {
             mmap,
             header,
             layout,
-            annotations,
-        }))
+            annotations: RwLock::new(initial_state),
+            scan_done: (Mutex::new(!has_annotations), Condvar::new()),
+        });
+
+        if has_annotations {
+            mapped.start_annotation_scan();
+        }
+
+        Ok(mapped)
+    }
+
+    /// Spawn a background thread to scan all data records and build the annotation index.
+    fn start_annotation_scan(self: &Arc<Self>) {
+        let num_records = self.header.num_records.max(0) as usize;
+        let progress = Arc::new(AtomicUsize::new(0));
+
+        {
+            let mut state = self.annotations.write().unwrap();
+            *state = AnnotationState::Scanning {
+                progress: Arc::clone(&progress),
+                total: num_records,
+            };
+        }
+
+        let file = Arc::clone(self);
+        thread::spawn(move || {
+            let index = AnnotationIndex::build_with_progress(
+                &file.mmap,
+                &file.header,
+                &file.layout,
+                &progress,
+            );
+
+            match index {
+                Ok(idx) => {
+                    let mut state = file.annotations.write().unwrap();
+                    *state = AnnotationState::Complete(idx);
+                }
+                Err(e) => {
+                    let mut state = file.annotations.write().unwrap();
+                    *state = AnnotationState::Complete(AnnotationIndex {
+                        annotations: Vec::new(),
+                        record_onsets: (0..num_records)
+                            .map(|i| i as f64 * file.header.record_duration_secs)
+                            .collect(),
+                        starttime_subsecond: 0.0,
+                        warnings: vec![format!("annotation scan failed: {e}")],
+                    });
+                }
+            }
+
+            let (lock, cvar) = &file.scan_done;
+            let mut done = lock.lock().unwrap();
+            *done = true;
+            cvar.notify_all();
+        });
+    }
+
+    /// Block until the background annotation scan has completed.
+    ///
+    /// This is a no-op if the scan is already done (plain EDF, or scan finished).
+    pub fn wait_for_annotations(&self) {
+        let (lock, cvar) = &self.scan_done;
+        let mut done = lock.lock().unwrap();
+        while !*done {
+            done = cvar.wait(done).unwrap();
+        }
+    }
+
+    /// Check whether the annotation scan has completed without blocking.
+    pub fn annotations_ready(&self) -> bool {
+        let done = self.scan_done.0.lock().unwrap();
+        *done
+    }
+
+    /// Returns `(records_scanned, total_records)` for the background annotation scan.
+    ///
+    /// Non-blocking. Can be polled to show progress for large files.
+    pub fn scan_progress(&self) -> (usize, usize) {
+        let state = self.annotations.read().unwrap();
+        match &*state {
+            AnnotationState::NotStarted => (0, 0),
+            AnnotationState::Scanning { progress, total } => {
+                (progress.load(Ordering::Relaxed), *total)
+            }
+            AnnotationState::Complete(idx) => {
+                let n = idx.record_onsets.len();
+                (n, n)
+            }
+        }
+    }
+
+    /// Block until the annotation scan is complete, then call `f` with the index.
+    pub fn with_annotations<T>(&self, f: impl FnOnce(&AnnotationIndex) -> T) -> T {
+        self.wait_for_annotations();
+        let state = self.annotations.read().unwrap();
+        match &*state {
+            AnnotationState::Complete(idx) => f(idx),
+            _ => unreachable!("annotations must be complete after wait"),
+        }
+    }
+
+    /// Onset time (in seconds) for the given data record.
+    ///
+    /// For EDF and EDF+C, this is computed directly as `rec_idx * record_duration`
+    /// without blocking. For EDF+D, this blocks until the annotation scan completes
+    /// to get the actual (potentially non-uniform) onset from the TALs.
+    pub fn record_onset(&self, rec_idx: usize) -> f64 {
+        if self.header.variant != EdfVariant::EdfPlusD {
+            return rec_idx as f64 * self.header.record_duration_secs;
+        }
+        self.with_annotations(|idx| {
+            idx.record_onsets
+                .get(rec_idx)
+                .copied()
+                .unwrap_or(rec_idx as f64 * self.header.record_duration_secs)
+        })
     }
 
     /// Raw bytes of the entire file (the mmap backing).
@@ -95,8 +235,6 @@ impl MappedFile {
         let byte_start = data_offset + start_record * self.layout.record_size;
         let byte_end = data_offset + end_record * self.layout.record_size;
         let byte_end = byte_end.min(self.mmap.len());
-        // Mmap::advise_range is not available on all versions;
-        // fall back to advising the whole region is acceptable.
         if byte_start < byte_end
             && let Some(slice) = self.mmap.get(byte_start..byte_end)
         {
@@ -189,6 +327,53 @@ mod tests {
     fn open_nonexistent_file() {
         let result = MappedFile::open(Path::new("/tmp/nonexistent_edf_file.edf"));
         assert!(matches!(result.unwrap_err(), EdfError::FileOpen { .. }));
+    }
+
+    #[test]
+    fn scan_progress_no_annotations() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        let (done, total) = mapped.scan_progress();
+        assert_eq!(done, total);
+    }
+
+    #[test]
+    fn with_annotations_plain_edf() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        mapped.with_annotations(|idx| {
+            assert!(idx.annotations.is_empty());
+            assert_eq!(idx.record_onsets.len(), 3);
+            assert!((idx.record_onsets[0] - 0.0).abs() < f64::EPSILON);
+            assert!((idx.record_onsets[1] - 1.0).abs() < f64::EPSILON);
+            assert!((idx.record_onsets[2] - 2.0).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn record_onset_plain_edf() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        assert!((mapped.record_onset(0) - 0.0).abs() < f64::EPSILON);
+        assert!((mapped.record_onset(1) - 1.0).abs() < f64::EPSILON);
+        assert!((mapped.record_onset(2) - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn annotations_ready_plain_edf() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        assert!(mapped.annotations_ready());
+    }
+
+    #[test]
+    fn wait_for_annotations_idempotent() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        mapped.wait_for_annotations();
+        mapped.wait_for_annotations();
+        let (done, total) = mapped.scan_progress();
+        assert_eq!(done, total);
     }
 
     fn write_field(buf: &mut [u8], offset: usize, size: usize, value: &str) {

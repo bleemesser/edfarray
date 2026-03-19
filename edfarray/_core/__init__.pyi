@@ -7,6 +7,7 @@ import numpy.typing
 import typing
 __all__ = [
     "Annotation",
+    "ArrayProxy",
     "EdfFile",
     "Signal",
 ]
@@ -23,6 +24,38 @@ class Annotation:
     @property
     def text(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class ArrayProxy:
+    r"""
+    2D array proxy for numpy-style multi-channel signal access.
+    
+    Supports indexing with `proxy[signal, sample]` where each axis accepts
+    int, slice, or list (signal axis only). All signals must share the same
+    sample rate.
+    """
+    @property
+    def shape(self) -> tuple[builtins.int, builtins.int]:
+        r"""
+        Shape of the proxy: (num_signals, total_samples).
+        """
+    @property
+    def sample_rate(self) -> builtins.float:
+        r"""
+        Common sample rate (Hz) of all signals in this proxy.
+        """
+    def __repr__(self) -> builtins.str: ...
+    def __getitem__(self, key: typing.Any) -> typing.Any:
+        r"""
+        Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
+        
+        | signal_spec | sample_spec | Return type |
+        |---|---|---|
+        | int | int | float |
+        | int | slice | 1D ndarray |
+        | slice/list | int | 1D ndarray |
+        | slice/list | slice | 2D ndarray |
+        """
 
 @typing.final
 class EdfFile:
@@ -130,6 +163,16 @@ class EdfFile:
         r"""
         Dictionary with basic header fields.
         """
+    @property
+    def annotations_ready(self) -> builtins.bool:
+        r"""
+        Whether the background annotation scan has completed.
+        """
+    @property
+    def scan_progress(self) -> tuple[builtins.int, builtins.int]:
+        r"""
+        Progress of the background annotation scan: (records_scanned, total_records).
+        """
     def __new__(cls, path: builtins.str) -> EdfFile: ...
     def __enter__(self) -> EdfFile: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
@@ -154,6 +197,19 @@ class EdfFile:
         sample rates will produce arrays of different lengths.
         
         If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+        """
+    def array_proxy(self, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> ArrayProxy:
+        r"""
+        Create a 2D array proxy for numpy-style indexing.
+        
+        All selected signals must have the same sample rate.
+        If `signal_indices` is None, uses all ordinary (non-annotation) signals.
+        """
+    def signal_indices_by_rate(self) -> dict:
+        r"""
+        Group ordinary signal indices by sample rate.
+        
+        Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
         """
     def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
         r"""
