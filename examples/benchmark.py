@@ -38,7 +38,7 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
-        data = sig.to_numpy()
+        _data = sig.to_numpy()
         times.append(time.perf_counter() - t0)
     results["read_full"] = np.median(times)
     results["n_samples"] = n_samples
@@ -94,7 +94,7 @@ def bench_pyedflib(path, signal_idx=0, n_iterations=5):
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
-        data = f.readSignal(signal_idx)
+        _data = f.readSignal(signal_idx)
         times.append(time.perf_counter() - t0)
     results["read_full"] = np.median(times)
     results["n_samples"] = n_samples
@@ -170,17 +170,16 @@ def main():
 
         ours = bench_edfarray(path, sig_idx)
 
+        theirs = None
         try:
             theirs = bench_pyedflib(path, sig_idx)
-            has_pyedflib = True
         except Exception as e:
             print(f"  pyedflib could not open this file: {e}")
-            has_pyedflib = False
 
         print(f"  Samples: {ours['n_samples']:,}")
         print()
         print(f"  {'Operation':<25s} {'edfarray':>12s}", end="")
-        if has_pyedflib:
+        if theirs:
             print(f" {'pyedflib':>12s} {'speedup':>10s}")
         else:
             print()
@@ -194,7 +193,7 @@ def main():
         ]:
             ours_t = format_time(ours[key])
             print(f"  {label:<25s} {ours_t:>12s}", end="")
-            if has_pyedflib:
+            if theirs:
                 theirs_t = format_time(theirs[key])
                 speedup = theirs[key] / ours[key] if ours[key] > 0 else float("inf")
                 print(f" {theirs_t:>12s} {speedup:>9.1f}x")
@@ -202,7 +201,7 @@ def main():
                 print()
 
         print(f"\n  Throughput: {ours['throughput_MSps']:.1f} M samples/s", end="")
-        if has_pyedflib:
+        if theirs:
             print(f" (vs {theirs['throughput_MSps']:.1f} M samples/s)")
         else:
             print()
