@@ -5,8 +5,11 @@ build-backend = "maturin"
 [project]
 name = "edfarray"
 dynamic = ["version"]
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = ["numpy>=1.21"]
+license = "MIT"
+description = "A Rust-backed EDF/EDF+ file parser with numpy-like Python bindings"
+readme = "README.md"
 
 [tool.maturin]
 manifest-path = "crates/edfarray-python/Cargo.toml"

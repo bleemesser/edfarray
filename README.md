@@ -77,4 +77,4 @@ git push && git push origin v0.x.y
 
 ## License
 
-TBD
+[MIT](LICENSE)
