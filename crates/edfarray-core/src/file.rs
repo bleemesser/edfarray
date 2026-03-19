@@ -82,6 +82,16 @@ impl EdfFile {
         SignalProxy::new(Arc::clone(&self.file), idx)
     }
 
+    /// Labels of all signals in the file.
+    pub fn signal_labels(&self) -> Vec<&str> {
+        self.file
+            .header
+            .signals
+            .iter()
+            .map(|s| s.label.as_str())
+            .collect()
+    }
+
     /// Indices of all non-annotation (ordinary) signals.
     pub fn ordinary_signal_indices(&self) -> Vec<usize> {
         self.file

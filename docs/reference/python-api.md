@@ -56,6 +56,8 @@ Supports the context manager protocol (`with` statement).
 
 `signal(idx_or_label: int | str) -> Signal` -- Get a signal by index or label. Raises `IndexError` for out-of-range indices, `KeyError` for unknown labels.
 
+`signal_labels() -> list[str]` -- Labels of all signals in the file.
+
 `ordinary_signal_indices() -> list[int]` -- Indices of all non-annotation signals.
 
 `read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths.

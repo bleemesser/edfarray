@@ -138,6 +138,10 @@ class EdfFile:
         r"""
         Get a signal by index or label.
         """
+    def signal_labels(self) -> builtins.list[builtins.str]:
+        r"""
+        Labels of all signals in the file.
+        """
     def ordinary_signal_indices(self) -> builtins.list[builtins.int]:
         r"""
         Indices of all non-annotation (ordinary) signals.

@@ -224,6 +224,11 @@ impl PyEdfFile {
         }
     }
 
+    /// Labels of all signals in the file.
+    fn signal_labels(&self) -> Vec<&str> {
+        self.inner.signal_labels()
+    }
+
     /// Indices of all non-annotation (ordinary) signals.
     fn ordinary_signal_indices(&self) -> Vec<usize> {
         self.inner.ordinary_signal_indices()
