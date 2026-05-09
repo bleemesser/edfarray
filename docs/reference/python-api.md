@@ -84,6 +84,10 @@ Supports the context manager protocol (`with` statement).
 
 `signal_indices_by_rate() -> dict[int, list[int]]` -- Group ordinary signal indices by sample rate (Hz, rounded to integer). Useful for creating separate `ArrayProxy` instances when the file has mixed sample rates.
 
+`close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal` and `ArrayProxy` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
+
+`closed: bool` -- Whether `close()` has been called.
+
 ---
 
 ## inspect

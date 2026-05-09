@@ -1,7 +1,7 @@
 use chrono::{Datelike, Timelike};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 
 use edfarray_core::file::EdfFile;
 use edfarray_core::header::Sex;
@@ -15,7 +15,15 @@ use crate::signal::PySignal;
 #[gen_stub_pyclass]
 #[pyclass(name = "EdfFile")]
 pub struct PyEdfFile {
-    inner: EdfFile,
+    inner: Option<EdfFile>,
+}
+
+impl PyEdfFile {
+    fn get(&self) -> &EdfFile {
+        self.inner
+            .as_ref()
+            .expect("operation on closed EdfFile")
+    }
 }
 
 #[gen_stub_pymethods]
@@ -24,7 +32,7 @@ impl PyEdfFile {
     #[new]
     fn new(path: &str) -> PyResult<Self> {
         let inner = EdfFile::open(path).map_err(to_py_err)?;
-        Ok(PyEdfFile { inner })
+        Ok(PyEdfFile { inner: Some(inner) })
     }
 
     fn __enter__<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
@@ -32,65 +40,85 @@ impl PyEdfFile {
     }
 
     #[pyo3(signature = (*_args))]
-    fn __exit__(&self, _args: Bound<'_, pyo3::types::PyTuple>) {}
+    fn __exit__(&mut self, _args: Bound<'_, pyo3::types::PyTuple>) {
+        self.inner = None;
+    }
+
+    /// Explicitly release the underlying memory-mapped file.
+    ///
+    /// After calling `close()`, any further method calls on this `EdfFile`
+    /// will raise. Existing `Signal` and `ArrayProxy` objects keep their own
+    /// references and remain usable. Idempotent.
+    fn close(&mut self) {
+        self.inner = None;
+    }
+
+    /// Whether `close()` has been called.
+    #[getter]
+    fn closed(&self) -> bool {
+        self.inner.is_none()
+    }
 
     fn __repr__(&self) -> String {
+        let Some(inner) = self.inner.as_ref() else {
+            return "EdfFile(closed)".to_string();
+        };
         format!(
             "EdfFile(variant={:?}, signals={}, records={}, duration={}s)",
-            self.inner.variant().to_string(),
-            self.inner.num_signals(),
-            self.inner.num_records(),
-            self.inner.duration()
+            inner.variant().to_string(),
+            inner.num_signals(),
+            inner.num_records(),
+            inner.duration()
         )
     }
 
     /// Total number of signals, including annotation channels.
     #[getter]
     fn num_signals(&self) -> usize {
-        self.inner.num_signals()
+        self.get().num_signals()
     }
 
     /// Number of data records.
     #[getter]
     fn num_records(&self) -> usize {
-        self.inner.num_records()
+        self.get().num_records()
     }
 
     /// Duration of each data record in seconds.
     #[getter]
     fn record_duration(&self) -> f64 {
-        self.inner.record_duration()
+        self.get().record_duration()
     }
 
     /// Total recording duration in seconds.
     #[getter]
     fn duration(&self) -> f64 {
-        self.inner.duration()
+        self.get().duration()
     }
 
     /// File variant: "EDF", "EDF+C", or "EDF+D".
     #[getter]
     fn variant(&self) -> String {
-        self.inner.variant().to_string()
+        self.get().variant().to_string()
     }
 
     /// Raw 80-byte patient identification field.
     #[getter]
     fn patient_id(&self) -> &str {
-        &self.inner.header().patient_id
+        &self.get().header().patient_id
     }
 
     /// Raw 80-byte recording identification field.
     #[getter]
     fn recording_id(&self) -> &str {
-        &self.inner.header().recording_id
+        &self.get().header().recording_id
     }
 
     /// Returns `datetime.datetime` if the header date/time could be parsed,
     /// or a string like `"04.04.yy 12.57.02"` if it was anonymized.
     #[getter]
     fn start_datetime<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        let mdt = &self.inner.header().start_datetime;
+        let mdt = &self.get().header().start_datetime;
         match mdt.as_datetime() {
             Some(dt) => {
                 let datetime_mod = py.import("datetime")?;
@@ -115,19 +143,19 @@ impl PyEdfFile {
     /// Patient name parsed from the identification field, or None.
     #[getter]
     fn patient_name(&self) -> Option<&str> {
-        self.inner.patient().name.as_deref()
+        self.get().patient().name.as_deref()
     }
 
     /// Hospital patient code, or None.
     #[getter]
     fn patient_code(&self) -> Option<&str> {
-        self.inner.patient().code.as_deref()
+        self.get().patient().code.as_deref()
     }
 
     /// "M" or "F", or None if unknown.
     #[getter]
     fn patient_sex(&self) -> Option<&str> {
-        self.inner.patient().sex.map(|s| match s {
+        self.get().patient().sex.map(|s| match s {
             Sex::Male => "M",
             Sex::Female => "F",
         })
@@ -137,7 +165,7 @@ impl PyEdfFile {
     #[getter]
     fn patient_birthdate<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
         use edfarray_core::header::MaybeDate;
-        match &self.inner.patient().birthdate {
+        match &self.get().patient().birthdate {
             Some(MaybeDate::Parsed(date)) => {
                 let datetime_mod = py.import("datetime")?;
                 let date_cls = datetime_mod.getattr("date")?;
@@ -152,37 +180,37 @@ impl PyEdfFile {
     /// Additional patient information, or None.
     #[getter]
     fn patient_additional(&self) -> Option<&str> {
-        self.inner.patient().additional.as_deref()
+        self.get().patient().additional.as_deref()
     }
 
     /// Hospital administration code, or None.
     #[getter]
     fn admin_code(&self) -> Option<&str> {
-        self.inner.recording().admin_code.as_deref()
+        self.get().recording().admin_code.as_deref()
     }
 
     /// Technician or investigator code, or None.
     #[getter]
     fn technician(&self) -> Option<&str> {
-        self.inner.recording().technician.as_deref()
+        self.get().recording().technician.as_deref()
     }
 
     /// Equipment code, or None.
     #[getter]
     fn equipment(&self) -> Option<&str> {
-        self.inner.recording().equipment.as_deref()
+        self.get().recording().equipment.as_deref()
     }
 
     /// Additional recording information, or None.
     #[getter]
     fn recording_additional(&self) -> Option<&str> {
-        self.inner.recording().additional.as_deref()
+        self.get().recording().additional.as_deref()
     }
 
     /// All non-timekeeping annotations, sorted by onset.
     #[getter]
     fn annotations(&self) -> Vec<PyAnnotation> {
-        self.inner
+        self.get()
             .annotations()
             .iter()
             .map(PyAnnotation::from)
@@ -192,7 +220,7 @@ impl PyEdfFile {
     /// Annotations with onset strictly before `t`.
     /// Uses binary search for efficiency.
     pub fn annotations_before(&self, t: f64) -> Vec<PyAnnotation> {
-        self.inner
+        self.get()
             .annotations_before(t)
             .iter()
             .map(PyAnnotation::from)
@@ -202,7 +230,7 @@ impl PyEdfFile {
     /// Annotations with onset >= `t`.
     /// Uses binary search for efficiency.
     pub fn annotations_after(&self, t: f64) -> Vec<PyAnnotation> {
-        self.inner
+        self.get()
             .annotations_after(t)
             .iter()
             .map(PyAnnotation::from)
@@ -212,7 +240,7 @@ impl PyEdfFile {
     /// Annotations with onset in [start, end).
     /// Uses binary search for efficiency.
     pub fn annotations_in_range(&self, start: f64, end: f64) -> Vec<PyAnnotation> {
-        self.inner
+        self.get()
             .annotations_in_range(start, end)
             .iter()
             .map(PyAnnotation::from)
@@ -231,7 +259,7 @@ impl PyEdfFile {
     #[pyo3(signature = (query, regex=false))]
     fn filter_annotations(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
         let anns = self
-            .inner
+            .get()
             .filter_annotations(query, regex)
             .map_err(to_py_err)?;
         Ok(anns.iter().map(PyAnnotation::from).collect())
@@ -239,7 +267,7 @@ impl PyEdfFile {
 
     /// Annotations whose text exactly matches `text` (case-sensitive).
     pub fn annotations_by_text(&self, text: &str) -> Vec<PyAnnotation> {
-        self.inner
+        self.get()
             .annotations_by_text(text)
             .iter()
             .map(PyAnnotation::from)
@@ -254,10 +282,10 @@ impl PyEdfFile {
     /// Searches all signals including annotation signals.
     #[pyo3(signature = (label, exact=false))]
     fn find_all_signals(&self, label: &str, exact: bool) -> PyResult<Vec<PySignal>> {
-        let indices = self.inner.find_all_signals(label, exact);
+        let indices = self.get().find_all_signals(label, exact);
         let mut result = Vec::with_capacity(indices.len());
         for idx in indices {
-            let proxy = self.inner.signal(idx).map_err(to_py_err)?;
+            let proxy = self.get().signal(idx).map_err(to_py_err)?;
             result.push(PySignal::new(proxy));
         }
         Ok(result)
@@ -266,31 +294,31 @@ impl PyEdfFile {
     /// Parse warnings accumulated during file open.
     #[getter]
     fn warnings(&self) -> Vec<String> {
-        self.inner.warnings()
+        self.get().warnings()
     }
 
     /// Dictionary with basic header fields.
     #[getter]
     fn header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        dict.set_item("version", &self.inner.header().version)?;
-        dict.set_item("patient_id", &self.inner.header().patient_id)?;
-        dict.set_item("recording_id", &self.inner.header().recording_id)?;
-        dict.set_item("num_signals", self.inner.num_signals())?;
-        dict.set_item("num_records", self.inner.num_records())?;
-        dict.set_item("record_duration", self.inner.record_duration())?;
-        dict.set_item("duration", self.inner.duration())?;
-        dict.set_item("variant", self.inner.variant().to_string())?;
+        dict.set_item("version", &self.get().header().version)?;
+        dict.set_item("patient_id", &self.get().header().patient_id)?;
+        dict.set_item("recording_id", &self.get().header().recording_id)?;
+        dict.set_item("num_signals", self.get().num_signals())?;
+        dict.set_item("num_records", self.get().num_records())?;
+        dict.set_item("record_duration", self.get().record_duration())?;
+        dict.set_item("duration", self.get().duration())?;
+        dict.set_item("variant", self.get().variant().to_string())?;
         Ok(dict)
     }
 
     /// Get a signal by index or label.
     fn signal(&self, idx_or_label: &Bound<'_, PyAny>) -> PyResult<PySignal> {
         if let Ok(idx) = idx_or_label.extract::<usize>() {
-            let proxy = self.inner.signal(idx).map_err(to_py_err)?;
+            let proxy = self.get().signal(idx).map_err(to_py_err)?;
             Ok(PySignal::new(proxy))
         } else if let Ok(label) = idx_or_label.extract::<String>() {
-            let proxy = self.inner.signal_by_label(&label).map_err(to_py_err)?;
+            let proxy = self.get().signal_by_label(&label).map_err(to_py_err)?;
             Ok(PySignal::new(proxy))
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(
@@ -301,12 +329,12 @@ impl PyEdfFile {
 
     /// Labels of all signals in the file.
     fn signal_labels(&self) -> Vec<&str> {
-        self.inner.signal_labels()
+        self.get().signal_labels()
     }
 
     /// Indices of all non-annotation (ordinary) signals.
     fn ordinary_signal_indices(&self) -> Vec<usize> {
-        self.inner.ordinary_signal_indices()
+        self.get().ordinary_signal_indices()
     }
 
     /// Read a page of physical data for multiple signals over a time range.
@@ -328,9 +356,9 @@ impl PyEdfFile {
         signal_indices: Option<Vec<usize>>,
         use_time: bool,
     ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<f64>>>> {
-        let indices = signal_indices.unwrap_or_else(|| self.inner.ordinary_signal_indices());
+        let indices = signal_indices.unwrap_or_else(|| self.get().ordinary_signal_indices());
         let buffers = self
-            .inner
+            .get()
             .read_page(&indices, start_sec, end_sec, use_time)
             .map_err(to_py_err)?;
         let mut arrays = Vec::with_capacity(buffers.len());
@@ -344,13 +372,13 @@ impl PyEdfFile {
     /// Whether the background annotation scan has completed.
     #[getter]
     fn annotations_ready(&self) -> bool {
-        self.inner.annotations_ready()
+        self.get().annotations_ready()
     }
 
     /// Progress of the background annotation scan: (records_scanned, total_records).
     #[getter]
     fn scan_progress(&self) -> (usize, usize) {
-        self.inner.scan_progress()
+        self.get().scan_progress()
     }
 
     /// Create a 2D array proxy for numpy-style indexing.
@@ -360,7 +388,7 @@ impl PyEdfFile {
     #[pyo3(signature = (signal_indices=None))]
     fn array_proxy(&self, signal_indices: Option<Vec<usize>>) -> PyResult<PyArrayProxy> {
         let proxy = self
-            .inner
+            .get()
             .array_proxy(signal_indices.as_deref())
             .map_err(to_py_err)?;
         Ok(PyArrayProxy::new(proxy))
@@ -373,7 +401,7 @@ impl PyEdfFile {
         &self,
         py: Python<'py>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        let map = self.inner.signal_indices_by_rate();
+        let map = self.get().signal_indices_by_rate();
         let dict = PyDict::new(py);
         for (rate, indices) in map {
             dict.set_item(rate, indices)?;
@@ -397,9 +425,9 @@ impl PyEdfFile {
         signal_indices: Option<Vec<usize>>,
         use_time: bool,
     ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<i16>>>> {
-        let indices = signal_indices.unwrap_or_else(|| self.inner.ordinary_signal_indices());
+        let indices = signal_indices.unwrap_or_else(|| self.get().ordinary_signal_indices());
         let buffers = self
-            .inner
+            .get()
             .read_page_digital(&indices, start_sec, end_sec, use_time)
             .map_err(to_py_err)?;
         let mut arrays = Vec::with_capacity(buffers.len());
@@ -417,12 +445,11 @@ impl PyEdfFile {
 /// Returns a dict with keys:
 /// `variant`, `num_signals`, `num_records`, `record_duration`, `duration`,
 /// `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
+#[gen_stub_pyfunction]
 #[pyfunction]
-pub fn inspect<'py>(path: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
-    let path_str = path.extract::<String>()?;
-    let meta = EdfFile::inspect(&path_str).map_err(to_py_err)?;
+pub fn inspect<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
+    let meta = EdfFile::inspect(path).map_err(to_py_err)?;
 
-    let py = path.py();
     let dict = PyDict::new(py);
     dict.set_item("variant", meta.variant.to_string())?;
     dict.set_item("num_signals", meta.num_signals)?;

@@ -64,6 +64,11 @@ class EdfFile:
     An open EDF/EDF+ file.
     """
     @property
+    def closed(self) -> builtins.bool:
+        r"""
+        Whether `close()` has been called.
+        """
+    @property
     def num_signals(self) -> builtins.int:
         r"""
         Total number of signals, including annotation channels.
@@ -154,39 +159,6 @@ class EdfFile:
         r"""
         All non-timekeeping annotations, sorted by onset.
         """
-    def annotations_before(self, t: builtins.float) -> builtins.list[Annotation]:
-        r"""
-        Annotations with onset strictly before `t`.
-        Uses binary search for efficiency.
-        Blocks until the annotation scan is complete.
-        """
-    def annotations_after(self, t: builtins.float) -> builtins.list[Annotation]:
-        r"""
-        Annotations with onset >= `t`.
-        Uses binary search for efficiency.
-        Blocks until the annotation scan is complete.
-        """
-    def annotations_in_range(self, start: builtins.float, end: builtins.float) -> builtins.list[Annotation]:
-        r"""
-        Annotations with onset in [start, end).
-        Uses binary search for efficiency.
-        Blocks until the annotation scan is complete.
-        """
-    def filter_annotations(self, query: builtins.str, regex: builtins.bool = False) -> builtins.list[Annotation]:
-        r"""
-        Filter annotations by text content.
-        
-        If `regex` is False, returns annotations whose text contains the query
-        as a case-insensitive substring.
-        
-        If `regex` is True, returns annotations whose text matches the query
-        as a case-insensitive regex pattern. Raises ValueError for invalid patterns.
-        """
-    def annotations_by_text(self, text: builtins.str) -> builtins.list[Annotation]:
-        r"""
-        Annotations whose text exactly matches `text` (case-sensitive).
-        Blocks until the annotation scan is complete.
-        """
     @property
     def warnings(self) -> builtins.list[builtins.str]:
         r"""
@@ -210,12 +182,47 @@ class EdfFile:
     def __new__(cls, path: builtins.str) -> EdfFile: ...
     def __enter__(self) -> EdfFile: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
-    def __repr__(self) -> builtins.str: ...
-    def signal(self, idx_or_label: typing.Any) -> Signal:
+    def close(self) -> None:
         r"""
-        Get a signal by index or label.
+        Explicitly release the underlying memory-mapped file.
+        
+        After calling `close()`, any further method calls on this `EdfFile`
+        will raise. Existing `Signal` and `ArrayProxy` objects keep their own
+        references and remain usable. Idempotent.
         """
-    def find_all_signals(self, label: builtins.str, exact: builtins.bool = False) -> builtins.list[Signal]:
+    def __repr__(self) -> builtins.str: ...
+    def annotations_before(self, t: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset strictly before `t`.
+        Uses binary search for efficiency.
+        """
+    def annotations_after(self, t: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset >= `t`.
+        Uses binary search for efficiency.
+        """
+    def annotations_in_range(self, start: builtins.float, end: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset in [start, end).
+        Uses binary search for efficiency.
+        """
+    def filter_annotations(self, query: builtins.str, regex: builtins.bool = ...) -> builtins.list[Annotation]:
+        r"""
+        Filter annotations by text content.
+        
+        If `regex` is False, returns annotations whose text contains the query
+        as a case-insensitive substring.
+        
+        If `regex` is True, returns annotations whose text matches the query
+        as a case-insensitive regex pattern.
+        
+        Raises `ValueError` if the regex pattern is invalid.
+        """
+    def annotations_by_text(self, text: builtins.str) -> builtins.list[Annotation]:
+        r"""
+        Annotations whose text exactly matches `text` (case-sensitive).
+        """
+    def find_all_signals(self, label: builtins.str, exact: builtins.bool = ...) -> builtins.list[Signal]:
         r"""
         Return all signals whose label matches `label`.
         
@@ -223,6 +230,10 @@ class EdfFile:
         If `exact` is `True`, performs a case-sensitive exact equality match.
         
         Searches all signals including annotation signals.
+        """
+    def signal(self, idx_or_label: typing.Any) -> Signal:
+        r"""
+        Get a signal by index or label.
         """
     def signal_labels(self) -> builtins.list[builtins.str]:
         r"""
@@ -232,7 +243,7 @@ class EdfFile:
         r"""
         Indices of all non-annotation (ordinary) signals.
         """
-    def read_page(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = False) -> builtins.list[numpy.typing.NDArray[numpy.float64]]:
+    def read_page(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.float64]]:
         r"""
         Read a page of physical data for multiple signals over a time range.
         
@@ -258,7 +269,7 @@ class EdfFile:
         
         Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
         """
-    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = False) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
+    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
         r"""
         Read a page of digital (raw int16) data for multiple signals over a time range.
         
@@ -357,24 +368,13 @@ class Signal:
         i.e. `int(time * sample_rate)`.
         """
 
-
-def inspect(path: builtins.str) -> dict[builtins.str, typing.Any]:
+def inspect(path: builtins.str) -> dict:
     r"""
     Lightweight metadata extracted from an EDF/EDF+ file header without
     scanning data records or building an annotation index.
-
+    
     Returns a dict with keys:
-    - ``variant``: ``"EDF"``, ``"EDF+C"``, or ``"EDF+D"``
-    - ``num_signals``: total number of signals (including annotation channels)
-    - ``num_records``: raw header value (``-1`` for EDF-L unknown length)
-    - ``record_duration``: duration of each data record in seconds
-    - ``duration``: total recording duration in seconds (0 if ``num_records < 0``)
-    - ``patient_id``: raw 80-byte patient identification field
-    - ``recording_id``: raw 80-byte recording identification field
-    - ``signal_labels``: list of signal label strings
-    - ``sample_rates``: list of sample rates in Hz (one per signal)
-
-    Does not memory-map the file, does not spawn background threads,
-    and does not read any data records. Suitable for batch inspection.
+    `variant`, `num_signals`, `num_records`, `record_duration`, `duration`,
+    `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
     """
 
