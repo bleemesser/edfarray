@@ -189,6 +189,63 @@ impl PyEdfFile {
             .collect()
     }
 
+    /// Annotations with onset strictly before `t`.
+    /// Uses binary search for efficiency.
+    pub fn annotations_before(&self, t: f64) -> Vec<PyAnnotation> {
+        self.inner
+            .annotations_before(t)
+            .iter()
+            .map(PyAnnotation::from)
+            .collect()
+    }
+
+    /// Annotations with onset >= `t`.
+    /// Uses binary search for efficiency.
+    pub fn annotations_after(&self, t: f64) -> Vec<PyAnnotation> {
+        self.inner
+            .annotations_after(t)
+            .iter()
+            .map(PyAnnotation::from)
+            .collect()
+    }
+
+    /// Annotations with onset in [start, end).
+    /// Uses binary search for efficiency.
+    pub fn annotations_in_range(&self, start: f64, end: f64) -> Vec<PyAnnotation> {
+        self.inner
+            .annotations_in_range(start, end)
+            .iter()
+            .map(PyAnnotation::from)
+            .collect()
+    }
+
+    /// Filter annotations by text content.
+    ///
+    /// If `regex` is False, returns annotations whose text contains the query
+    /// as a case-insensitive substring.
+    ///
+    /// If `regex` is True, returns annotations whose text matches the query
+    /// as a case-insensitive regex pattern.
+    ///
+    /// Raises `ValueError` if the regex pattern is invalid.
+    #[pyo3(signature = (query, regex=false))]
+    fn filter_annotations(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
+        let anns = self
+            .inner
+            .filter_annotations(query, regex)
+            .map_err(to_py_err)?;
+        Ok(anns.iter().map(PyAnnotation::from).collect())
+    }
+
+    /// Annotations whose text exactly matches `text` (case-sensitive).
+    pub fn annotations_by_text(&self, text: &str) -> Vec<PyAnnotation> {
+        self.inner
+            .annotations_by_text(text)
+            .iter()
+            .map(PyAnnotation::from)
+            .collect()
+    }
+
     /// Parse warnings accumulated during file open.
     #[getter]
     fn warnings(&self) -> Vec<String> {

@@ -153,6 +153,39 @@ class EdfFile:
         r"""
         All non-timekeeping annotations, sorted by onset.
         """
+    def annotations_before(self, t: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset strictly before `t`.
+        Uses binary search for efficiency.
+        Blocks until the annotation scan is complete.
+        """
+    def annotations_after(self, t: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset >= `t`.
+        Uses binary search for efficiency.
+        Blocks until the annotation scan is complete.
+        """
+    def annotations_in_range(self, start: builtins.float, end: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset in [start, end).
+        Uses binary search for efficiency.
+        Blocks until the annotation scan is complete.
+        """
+    def filter_annotations(self, query: builtins.str, regex: builtins.bool = False) -> builtins.list[Annotation]:
+        r"""
+        Filter annotations by text content.
+        
+        If `regex` is False, returns annotations whose text contains the query
+        as a case-insensitive substring.
+        
+        If `regex` is True, returns annotations whose text matches the query
+        as a case-insensitive regex pattern. Raises ValueError for invalid patterns.
+        """
+    def annotations_by_text(self, text: builtins.str) -> builtins.list[Annotation]:
+        r"""
+        Annotations whose text exactly matches `text` (case-sensitive).
+        Blocks until the annotation scan is complete.
+        """
     @property
     def warnings(self) -> builtins.list[builtins.str]:
         r"""

@@ -59,6 +59,9 @@ pub enum EdfError {
 
     #[error("mixed sample rates: {reason}")]
     MixedSampleRates { reason: String },
+
+    #[error("{name}: {reason}")]
+    InvalidArgument { name: &'static str, reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, EdfError>;

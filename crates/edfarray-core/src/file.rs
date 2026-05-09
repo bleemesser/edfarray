@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use regex::RegexBuilder;
 use rayon::prelude::*;
 
 use crate::annotation::Annotation;
@@ -72,6 +73,86 @@ impl EdfFile {
     pub fn annotations(&self) -> Vec<Annotation> {
         self.file
             .with_annotations(|idx| idx.annotations.clone())
+    }
+
+    /// Return annotations with onset strictly before `t`.
+    /// Uses binary search (partition_point) for efficiency.
+    /// Blocks until the annotation scan is complete.
+    pub fn annotations_before(&self, t: f64) -> Vec<Annotation> {
+        self.file.with_annotations(|idx| {
+            let split = idx.annotations.partition_point(|a| a.onset < t);
+            idx.annotations[..split].to_vec()
+        })
+    }
+
+    /// Return annotations with onset greater than or equal to `t`.
+    /// Uses binary search (partition_point) for efficiency.
+    /// Blocks until the annotation scan is complete.
+    pub fn annotations_after(&self, t: f64) -> Vec<Annotation> {
+        self.file.with_annotations(|idx| {
+            let split = idx.annotations.partition_point(|a| a.onset < t);
+            idx.annotations[split..].to_vec()
+        })
+    }
+
+    /// Return annotations with onset in the half-open interval `[start, end)`.
+    /// Uses binary search for efficiency.
+    /// Blocks until the annotation scan is complete.
+    pub fn annotations_in_range(&self, start: f64, end: f64) -> Vec<Annotation> {
+        self.file.with_annotations(|idx| {
+            let lo = idx.annotations.partition_point(|a| a.onset < start);
+            let hi = idx.annotations[lo..].partition_point(|a| a.onset < end) + lo;
+            idx.annotations[lo..hi].to_vec()
+        })
+    }
+
+    /// Filter annotations by text content.
+    ///
+    /// If `regex` is `false`, returns annotations whose text contains the query
+    /// as a case-insensitive substring.
+    ///
+    /// If `regex` is `true`, returns annotations whose text matches the query
+    /// as a case-insensitive regex pattern.
+    ///
+    /// Returns `EdfError::InvalidArgument` if the regex pattern is invalid.
+    /// Blocks until the annotation scan is complete.
+    pub fn filter_annotations(&self, query: &str, regex: bool) -> Result<Vec<Annotation>> {
+        self.file.with_annotations(|idx| {
+            let annotations = &idx.annotations;
+            if regex {
+                let re = RegexBuilder::new(query)
+                    .case_insensitive(true)
+                    .build()
+                    .map_err(|_| EdfError::InvalidArgument {
+                        name: "regex pattern",
+                        reason: format!("invalid regex pattern: {query}"),
+                    })?;
+                Ok(annotations
+                    .iter()
+                    .filter(|a| re.is_match(&a.text))
+                    .cloned()
+                    .collect())
+            } else {
+                let lower = query.to_lowercase();
+                Ok(annotations
+                    .iter()
+                    .filter(|a| a.text.to_lowercase().contains(&lower))
+                    .cloned()
+                    .collect())
+            }
+        })
+    }
+
+    /// Return annotations whose text exactly matches `text` (case-sensitive).
+    /// Blocks until the annotation scan is complete.
+    pub fn annotations_by_text(&self, text: &str) -> Vec<Annotation> {
+        self.file.with_annotations(|idx| {
+            idx.annotations
+                .iter()
+                .filter(|a| a.text == text)
+                .cloned()
+                .collect()
+        })
     }
 
     /// Parse warnings accumulated during file open (malformed TALs, etc.).
@@ -484,5 +565,138 @@ mod fixture_tests {
         let proxy = edf.array_proxy(Some(group)).unwrap();
         assert_eq!(proxy.shape().0, group.len());
         assert!(proxy.shape().1 > 0);
+    }
+
+    #[test]
+    fn annotations_in_range_includes_start_boundary() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let all = edf.annotations();
+        let target = all[0].onset;
+        let anns = edf.annotations_in_range(target, target + 1.0);
+        assert!(
+            anns.iter().any(|a| (a.onset - target).abs() < f64::EPSILON),
+            "annotation at start boundary should be included"
+        );
+    }
+
+    #[test]
+    fn annotations_in_range_excludes_end_boundary() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let all = edf.annotations();
+        let target = all[0].onset;
+        let anns = edf.annotations_in_range(target - 1.0, target);
+        assert!(
+            !anns.iter().any(|a| (a.onset - target).abs() < f64::EPSILON),
+            "annotation at end boundary should be excluded"
+        );
+    }
+
+    #[test]
+    fn annotations_before_excludes_exact_onset() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let all = edf.annotations();
+        let target = all[0].onset;
+        let anns = edf.annotations_before(target);
+        assert!(
+            !anns.iter().any(|a| (a.onset - target).abs() < f64::EPSILON),
+            "annotation at exact onset should be excluded from annotations_before"
+        );
+    }
+
+    #[test]
+    fn annotations_before_includes_all_before_target() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let all = edf.annotations();
+        let target = all[0].onset;
+        let anns = edf.annotations_before(target + 1.0);
+        assert!(
+            anns.iter().any(|a| (a.onset - target).abs() < f64::EPSILON),
+            "annotation just before target+1 should be included"
+        );
+    }
+
+    #[test]
+    fn annotations_after_includes_exact_onset() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let all = edf.annotations();
+        let target = all[0].onset;
+        let anns = edf.annotations_after(target);
+        assert!(
+            anns.iter().any(|a| (a.onset - target).abs() < f64::EPSILON),
+            "annotation at exact onset should be included in annotations_after"
+        );
+    }
+
+    #[test]
+    fn annotations_after_excludes_before_onset() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let all = edf.annotations();
+        let target = all[0].onset;
+        let anns = edf.annotations_after(target + 0.001);
+        assert!(
+            !anns.iter().any(|a| (a.onset - target).abs() < f64::EPSILON),
+            "annotation at target should be excluded when querying after target+0.001"
+        );
+    }
+
+    #[test]
+    fn filter_annotations_regex_case_insensitive() {
+        // Fixture contains "RECORD START" — lowercase pattern must match.
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.filter_annotations("record", true).unwrap();
+        assert!(
+            anns.iter().any(|a| a.text == "RECORD START"),
+            "case-insensitive regex should match uppercase fixture text"
+        );
+    }
+
+    #[test]
+    fn filter_annotations_substring_case_insensitive() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.filter_annotations("record", false).unwrap();
+        assert!(anns.iter().any(|a| a.text == "RECORD START"));
+    }
+
+    #[test]
+    fn filter_annotations_substring_no_match() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.filter_annotations("zzzzz_no_such_text", false).unwrap();
+        assert!(anns.is_empty());
+    }
+
+    #[test]
+    fn filter_annotations_regex_no_match() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.filter_annotations(r"^zzzzz", true).unwrap();
+        assert!(anns.is_empty());
+    }
+
+    #[test]
+    fn annotations_by_text_exact_match() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.annotations_by_text("RECORD START");
+        assert_eq!(anns.len(), 1);
+        assert_eq!(anns[0].text, "RECORD START");
+    }
+
+    #[test]
+    fn annotations_by_text_case_sensitive() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.annotations_by_text("record start");
+        assert!(anns.is_empty(), "exact match should be case-sensitive");
+    }
+
+    #[test]
+    fn annotations_by_text_no_match() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let anns = edf.annotations_by_text("Nonexistent");
+        assert!(anns.is_empty());
+    }
+
+    #[test]
+    fn filter_annotations_invalid_regex_uses_invalid_argument() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let err = edf.filter_annotations("[invalid", true).unwrap_err();
+        assert!(matches!(err, EdfError::InvalidArgument { .. }));
     }
 }

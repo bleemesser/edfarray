@@ -48,6 +48,16 @@ Supports the context manager protocol (`with` statement).
 
 `annotations: list[Annotation]` -- All non-timekeeping annotations from the file, sorted by onset. Empty for plain EDF files. Blocks until the background annotation scan is complete.
 
+`annotations_before(t: float) -> list[Annotation]` -- Annotations with onset strictly before `t`. Uses binary search for efficiency. Blocks until the background annotation scan is complete.
+
+`annotations_after(t: float) -> list[Annotation]` -- Annotations with onset >= `t`. Uses binary search for efficiency. Blocks until the background annotation scan is complete.
+
+`annotations_in_range(start: float, end: float) -> list[Annotation]` -- Annotations with onset in the half-open interval `[start, end)`. Uses binary search for efficiency. Blocks until the background annotation scan is complete.
+
+`filter_annotations(query: str, regex: bool = False) -> list[Annotation]` -- Filter annotations by text content. If `regex` is `False`, returns annotations whose text contains the query as a case-insensitive substring. If `regex` is `True`, returns annotations whose text matches the query as a case-insensitive regex pattern. Raises `ValueError` for invalid regex patterns.
+
+`annotations_by_text(text: str) -> list[Annotation]` -- Annotations whose text exactly matches `text` (case-sensitive). Blocks until the background annotation scan is complete.
+
 `warnings: list[str]` -- Parse warnings accumulated during file open. Empty if the file is well-formed. Blocks until the background annotation scan is complete.
 
 `header: dict` -- Dictionary with basic header fields: `version`, `patient_id`, `recording_id`, `num_signals`, `num_records`, `record_duration`, `duration`, `variant`.
