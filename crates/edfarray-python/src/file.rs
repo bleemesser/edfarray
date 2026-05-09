@@ -396,7 +396,8 @@ impl PyEdfFile {
 
     /// Group ordinary signal indices by sample rate.
     ///
-    /// Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
+    /// Returns a dict mapping sample rate in Hz (float) to a list of signal indices.
+    /// Sub-Hz precision is preserved.
     fn signal_indices_by_rate<'py>(
         &self,
         py: Python<'py>,

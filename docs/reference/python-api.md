@@ -82,7 +82,7 @@ Supports the context manager protocol (`with` statement).
 
 `array_proxy(signal_indices: list[int] | None = None) -> ArrayProxy` -- Create a 2D array proxy for numpy-style multi-channel indexing. All selected signals must have the same sample rate. If `signal_indices` is `None`, uses all ordinary signals. Raises `ValueError` if sample rates differ.
 
-`signal_indices_by_rate() -> dict[int, list[int]]` -- Group ordinary signal indices by sample rate (Hz, rounded to integer). Useful for creating separate `ArrayProxy` instances when the file has mixed sample rates.
+`signal_indices_by_rate() -> dict[float, list[int]]` -- Group ordinary signal indices by sample rate in Hz. Sub-Hz precision is preserved (e.g. 123.4 and 123.5 form distinct groups). Useful for creating separate `ArrayProxy` instances when the file has mixed sample rates.
 
 `close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal` and `ArrayProxy` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
 

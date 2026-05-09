@@ -267,7 +267,8 @@ class EdfFile:
         r"""
         Group ordinary signal indices by sample rate.
         
-        Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
+        Returns a dict mapping sample rate in Hz (float) to a list of signal indices.
+        Sub-Hz precision is preserved.
         """
     def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
         r"""

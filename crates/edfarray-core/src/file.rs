@@ -313,24 +313,21 @@ impl EdfFile {
         ArrayProxy::new(Arc::clone(&self.file), &indices)
     }
 
-    /// Group ordinary signal indices by sample rate (Hz, rounded to integer).
+    /// Group ordinary signal indices by sample rate (Hz).
     ///
-    /// Returns a map from rate to signal indices. Useful for creating `ArrayProxy`
-    /// instances when the file has mixed sample rates.
-    pub fn signal_indices_by_rate(&self) -> HashMap<u64, Vec<usize>> {
+    /// Returns groups as `(rate, indices)` pairs. Sub-Hz precision is preserved
+    /// (signals with rates 123.4 and 123.5 land in different groups). Useful for
+    /// creating `ArrayProxy` instances when the file has mixed sample rates.
+    pub fn signal_indices_by_rate(&self) -> Vec<(f64, Vec<usize>)> {
         let mut map: HashMap<u64, Vec<usize>> = HashMap::new();
         for idx in self.ordinary_signal_indices() {
             let rate = self.file.header.signals[idx]
                 .sample_rate(self.file.header.record_duration_secs);
-            let key = rate.to_bits();
-            map.entry(key).or_default().push(idx);
+            map.entry(rate.to_bits()).or_default().push(idx);
         }
         map.into_iter()
-            .map(|(bits, indices)| (f64::from_bits(bits).round() as u64, indices))
-            .fold(HashMap::new(), |mut acc, (rate, indices)| {
-                acc.entry(rate).or_default().extend(indices);
-                acc
-            })
+            .map(|(bits, indices)| (f64::from_bits(bits), indices))
+            .collect()
     }
 
     /// Get a signal proxy by label (first match).
@@ -515,8 +512,8 @@ mod tests {
         let edf = EdfFile::open(file.path()).unwrap();
         let by_rate = edf.signal_indices_by_rate();
         assert_eq!(by_rate.len(), 1);
-        let indices: Vec<usize> = by_rate.values().next().unwrap().clone();
-        assert_eq!(indices, vec![0]);
+        let (_rate, indices) = &by_rate[0];
+        assert_eq!(indices, &vec![0]);
     }
 
     #[test]
@@ -666,8 +663,11 @@ mod fixture_tests {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
         let by_rate = edf.signal_indices_by_rate();
         assert!(by_rate.len() >= 1);
-        let total: usize = by_rate.values().map(|v| v.len()).sum();
+        let total: usize = by_rate.iter().map(|(_, v)| v.len()).sum();
         assert_eq!(total, edf.ordinary_signal_indices().len());
+        for (rate, _) in &by_rate {
+            assert!(*rate > 0.0);
+        }
     }
 
     #[test]
@@ -681,7 +681,7 @@ mod fixture_tests {
     fn array_proxy_same_rate_group() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
         let by_rate = edf.signal_indices_by_rate();
-        let group = by_rate.values().next().unwrap();
+        let (_, group) = &by_rate[0];
         let proxy = edf.array_proxy(Some(group)).unwrap();
         assert_eq!(proxy.shape().0, group.len());
         assert!(proxy.shape().1 > 0);
