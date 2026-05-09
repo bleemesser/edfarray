@@ -410,3 +410,28 @@ impl PyEdfFile {
         Ok(arrays)
     }
 }
+
+/// Lightweight metadata extracted from an EDF/EDF+ file header without
+/// scanning data records or building an annotation index.
+///
+/// Returns a dict with keys:
+/// `variant`, `num_signals`, `num_records`, `record_duration`, `duration`,
+/// `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
+#[pyfunction]
+pub fn inspect<'py>(path: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    let path_str = path.extract::<String>()?;
+    let meta = EdfFile::inspect(&path_str).map_err(to_py_err)?;
+
+    let py = path.py();
+    let dict = PyDict::new(py);
+    dict.set_item("variant", meta.variant.to_string())?;
+    dict.set_item("num_signals", meta.num_signals)?;
+    dict.set_item("num_records", meta.num_records)?;
+    dict.set_item("record_duration", meta.record_duration)?;
+    dict.set_item("duration", meta.duration)?;
+    dict.set_item("patient_id", meta.patient_id)?;
+    dict.set_item("recording_id", meta.recording_id)?;
+    dict.set_item("signal_labels", meta.signal_labels)?;
+    dict.set_item("sample_rates", meta.sample_rates)?;
+    Ok(dict)
+}

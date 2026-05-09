@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use crate::error::{EdfError, Result};
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
+use crate::signal::SignalHeader;
 
 /// Top-level handle for an open EDF/EDF+ file.
 ///
@@ -367,6 +369,100 @@ impl EdfFile {
             })
             .map(|(i, _)| i)
             .collect()
+    }
+}
+
+fn read_usize(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<usize> {
+    let s = read_field(data, offset, size, name)?;
+    s.parse::<usize>()
+        .map_err(|_| EdfError::InvalidHeaderField {
+            field: name,
+            reason: format!("not a valid unsigned integer: {s:?}"),
+        })
+}
+
+fn read_field(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<String> {
+    let bytes = data
+        .get(offset..offset + size)
+        .ok_or(EdfError::InvalidHeaderField {
+            field: name,
+            reason: "header truncated".to_string(),
+        })?;
+    Ok(String::from_utf8_lossy(bytes).trim().to_string())
+}
+
+/// Lightweight metadata extracted from an EDF/EDF+ file header without
+/// scanning data records or building an annotation index.
+#[derive(Debug, Clone)]
+pub struct EdfMetadata {
+    pub variant: EdfVariant,
+    pub num_signals: usize,
+    pub num_records: i64,
+    pub record_duration: f64,
+    pub duration: f64,
+    pub patient_id: String,
+    pub recording_id: String,
+    pub signal_labels: Vec<String>,
+    pub sample_rates: Vec<f64>,
+}
+
+impl EdfFile {
+    /// Read only the header; no annotation scan, no persistent mmap.
+    ///
+    /// This is a cheap operation suitable for batch inspection of many files.
+    /// It does not memory-map the file, does not spawn background threads,
+    /// and does not read any data records.
+    pub fn inspect(path: impl AsRef<Path>) -> Result<EdfMetadata> {
+        let mut file = std::fs::File::open(path.as_ref()).map_err(|e| EdfError::FileOpen {
+            path: path.as_ref().to_path_buf(),
+            source: e,
+        })?;
+
+        // EDF header = 256 bytes + 256 bytes per signal.
+        // We need to read the main header to know num_signals, then read
+        // enough to get all signal headers.
+        let mut buf = vec![b' '; 256];
+        file.read_exact(&mut buf).map_err(|e| EdfError::FileOpen {
+            path: path.as_ref().to_path_buf(),
+            source: e,
+        })?;
+
+        let num_signals = read_usize(&buf, 252, 4, "num_signals")?;
+        if num_signals == 0 {
+            return Err(EdfError::NoSignals);
+        }
+
+        let expected_header_bytes = 256 + 256 * num_signals;
+        buf.resize(expected_header_bytes, 0);
+        file.read_exact(&mut buf[256..])
+            .map_err(|e| EdfError::FileOpen {
+                path: path.as_ref().to_path_buf(),
+                source: e,
+            })?;
+
+        let header = EdfHeader::parse(&buf)?;
+
+        let signal_labels: Vec<String> =
+            header.signals.iter().map(|s| s.label.clone()).collect();
+        let sample_rates: Vec<f64> = header
+            .signals
+            .iter()
+            .map(|s: &SignalHeader| s.sample_rate(header.record_duration_secs))
+            .collect();
+
+        let duration = (header.num_records.max(0) as f64) * header.record_duration_secs;
+
+        Ok(EdfMetadata {
+            variant: header.variant,
+            num_signals: header.num_signals,
+            num_records: header.num_records,
+            record_duration: header.record_duration_secs,
+            duration,
+            patient_id: header.patient_id,
+            recording_id: header.recording_id,
+            signal_labels,
+            sample_rates,
+        })
     }
 }
 
@@ -764,5 +860,38 @@ mod fixture_tests {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
         let indices = edf.find_all_signals("zzzzz_no_such_label", false);
         assert!(indices.is_empty(), "non-existent label should return empty vec");
+    }
+
+    #[test]
+    fn inspect_returns_metadata_without_scan() {
+        let meta = EdfFile::inspect(fixture_path("edfPlusD.edf")).unwrap();
+        assert_eq!(meta.variant, EdfVariant::EdfPlusD);
+        assert!(meta.num_signals > 0, "should have at least one signal");
+        assert_eq!(meta.signal_labels.len(), meta.num_signals);
+        assert_eq!(meta.sample_rates.len(), meta.num_signals);
+        assert!(meta.signal_labels.iter().any(|l| !l.is_empty()));
+    }
+
+    #[test]
+    fn inspect_plain_edf() {
+        let meta = EdfFile::inspect(fixture_path("test_generator.edf")).unwrap();
+        assert_eq!(meta.variant, EdfVariant::Edf);
+        assert!(meta.num_signals > 0);
+    }
+
+    #[test]
+    fn inspect_nonexistent_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does_not_exist.edf");
+        let err = EdfFile::inspect(&missing).unwrap_err();
+        assert!(matches!(err, EdfError::FileOpen { .. }));
+    }
+
+    #[test]
+    fn inspect_signal_labels_and_rates_align() {
+        let meta = EdfFile::inspect(fixture_path("test_generator.edf")).unwrap();
+        assert_eq!(meta.signal_labels.len(), meta.num_signals);
+        assert_eq!(meta.sample_rates.len(), meta.num_signals);
+        assert_eq!(meta.signal_labels.len(), meta.sample_rates.len());
     }
 }

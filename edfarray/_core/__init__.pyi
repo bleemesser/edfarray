@@ -10,6 +10,7 @@ __all__ = [
     "ArrayProxy",
     "EdfFile",
     "Signal",
+    "inspect",
 ]
 
 @typing.final
@@ -355,4 +356,25 @@ class Signal:
         For EDF and EDF+C, this is equivalent to indexing by flat sample number,
         i.e. `int(time * sample_rate)`.
         """
+
+
+def inspect(path: builtins.str) -> dict[builtins.str, typing.Any]:
+    r"""
+    Lightweight metadata extracted from an EDF/EDF+ file header without
+    scanning data records or building an annotation index.
+
+    Returns a dict with keys:
+    - ``variant``: ``"EDF"``, ``"EDF+C"``, or ``"EDF+D"``
+    - ``num_signals``: total number of signals (including annotation channels)
+    - ``num_records``: raw header value (``-1`` for EDF-L unknown length)
+    - ``record_duration``: duration of each data record in seconds
+    - ``duration``: total recording duration in seconds (0 if ``num_records < 0``)
+    - ``patient_id``: raw 80-byte patient identification field
+    - ``recording_id``: raw 80-byte recording identification field
+    - ``signal_labels``: list of signal label strings
+    - ``sample_rates``: list of sample rates in Hz (one per signal)
+
+    Does not memory-map the file, does not spawn background threads,
+    and does not read any data records. Suitable for batch inspection.
+    """
 

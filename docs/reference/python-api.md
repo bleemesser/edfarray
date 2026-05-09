@@ -86,6 +86,36 @@ Supports the context manager protocol (`with` statement).
 
 ---
 
+## inspect
+
+```python
+edfarray.inspect(path: str | os.PathLike) -> dict
+```
+
+Lightweight metadata extracted from an EDF/EDF+ file header without scanning data records or building an annotation index. Does not memory-map the file, does not spawn background threads, and does not read any data records.
+
+Returns a dict with keys:
+
+`variant: str` -- `"EDF"`, `"EDF+C"`, or `"EDF+D"`.
+
+`num_signals: int` -- Total number of signals in the file, including annotation channels.
+
+`num_records: int` -- Raw header value (`-1` for EDF-L unknown length).
+
+`record_duration: float` -- Duration of each data record in seconds.
+
+`duration: float` -- Total recording duration in seconds (0 if `num_records < 0`).
+
+`patient_id: str` -- Raw 80-byte patient identification field.
+
+`recording_id: str` -- Raw 80-byte recording identification field.
+
+`signal_labels: list[str]` -- Labels of all signals in the file.
+
+`sample_rates: list[float]` -- Sample rates in Hz, one per signal.
+
+---
+
 ## Signal
 
 Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes samples from the memory-mapped file on access.

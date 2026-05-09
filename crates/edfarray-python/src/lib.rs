@@ -12,6 +12,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<signal::PySignal>()?;
     m.add_class::<annotations::PyAnnotation>()?;
     m.add_class::<array_proxy::PyArrayProxy>()?;
+    m.add_function(wrap_pyfunction!(file::inspect, m)?)?;
     Ok(())
 }
 
