@@ -228,6 +228,40 @@ impl EdfHeader {
     pub fn duration_secs(&self) -> f64 {
         self.num_records.max(0) as f64 * self.record_duration_secs
     }
+
+    /// If this header has `num_records == -1` (EDF-L "unknown length"), recover
+    /// the true count from the file size and the record layout. No-op otherwise.
+    ///
+    /// Appends a warning describing the recovery, including any trailing-bytes
+    /// remainder. If the record size is zero (degenerate header) the count is
+    /// left as-is.
+    pub fn recover_num_records_from_file_size(&mut self, file_size: usize) {
+        if self.num_records >= 0 {
+            return;
+        }
+        let record_size = self.record_size();
+        if record_size == 0 {
+            self.warnings
+                .push("EDF-L: cannot recover num_records (record size is zero)".to_string());
+            self.num_records = 0;
+            return;
+        }
+        let header_bytes = self.header_bytes;
+        let data_bytes = file_size.saturating_sub(header_bytes);
+        let recovered = data_bytes / record_size;
+        let trailing = data_bytes % record_size;
+        self.num_records = recovered as i64;
+        if trailing != 0 {
+            self.warnings.push(format!(
+                "EDF-L: recovered num_records={recovered} from file size; \
+                 {trailing} trailing bytes ignored"
+            ));
+        } else {
+            self.warnings.push(format!(
+                "EDF-L: recovered num_records={recovered} from file size"
+            ));
+        }
+    }
 }
 
 fn read_field(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<String> {

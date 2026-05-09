@@ -64,7 +64,8 @@ impl MappedFile {
             source: e,
         })?;
 
-        let header = EdfHeader::parse(&mmap)?;
+        let mut header = EdfHeader::parse(&mmap)?;
+        header.recover_num_records_from_file_size(mmap.len());
         let layout = RecordLayout::from_header(&header);
 
         let has_annotations = header.signals.iter().any(|s| s.is_annotation);

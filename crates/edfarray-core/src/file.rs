@@ -437,7 +437,14 @@ impl EdfFile {
                 source: e,
             })?;
 
-        let header = EdfHeader::parse(&buf)?;
+        let mut header = EdfHeader::parse(&buf)?;
+        if header.num_records < 0 {
+            let file_size = file
+                .metadata()
+                .map(|m| m.len() as usize)
+                .unwrap_or(expected_header_bytes);
+            header.recover_num_records_from_file_size(file_size);
+        }
 
         let signal_labels: Vec<String> =
             header.signals.iter().map(|s| s.label.clone()).collect();
@@ -496,6 +503,47 @@ mod tests {
         assert_eq!(proxy.sample_rate(), 4.0);
         let val = proxy.get(0, 3).unwrap();
         assert!((val - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn edf_l_recovers_num_records_from_file_size() {
+        let file = build_synthetic_file(5, true, 0);
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert_eq!(edf.num_records(), 5);
+        assert_eq!(edf.duration(), 5.0);
+        let sig = edf.signal(0).unwrap();
+        assert_eq!(sig.len(), 20);
+        assert!(edf
+            .warnings()
+            .iter()
+            .any(|w| w.contains("EDF-L") && w.contains("recovered num_records=5")));
+    }
+
+    #[test]
+    fn edf_l_with_trailing_bytes_warns() {
+        let file = build_synthetic_file(3, true, 5);
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert_eq!(edf.num_records(), 3);
+        assert!(edf
+            .warnings()
+            .iter()
+            .any(|w| w.contains("trailing bytes")));
+    }
+
+    #[test]
+    fn edf_l_inspect_recovers() {
+        let file = build_synthetic_file(7, true, 0);
+        let meta = EdfFile::inspect(file.path()).unwrap();
+        assert_eq!(meta.num_records, 7);
+        assert_eq!(meta.duration, 7.0);
+    }
+
+    #[test]
+    fn plain_edf_unaffected_by_recovery() {
+        let file = build_synthetic_file(2, false, 0);
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert_eq!(edf.num_records(), 2);
+        assert!(!edf.warnings().iter().any(|w| w.contains("EDF-L")));
     }
 
     #[test]
@@ -560,10 +608,21 @@ mod tests {
     }
 
     fn build_test_file() -> NamedTempFile {
+        build_synthetic_file(2, false, 0)
+    }
+
+    /// Build a 1-signal EDF file. If `edf_l` is true, write `num_records=-1`
+    /// in the header (still writing `actual_records` worth of data, plus
+    /// `trailing_bytes` of garbage to test trailing-byte handling).
+    fn build_synthetic_file(
+        actual_records: usize,
+        edf_l: bool,
+        trailing_bytes: usize,
+    ) -> NamedTempFile {
         let num_signals = 1;
         let header_bytes = 256 + 256 * num_signals;
         let samples_per_record = 4;
-        let num_records = 2;
+        let header_num_records: i64 = if edf_l { -1 } else { actual_records as i64 };
         let mut buf = vec![b' '; header_bytes];
 
         write_hdr(&mut buf, 0, 8, "0");
@@ -573,7 +632,7 @@ mod tests {
         write_hdr(&mut buf, 176, 8, "00.00.00");
         write_hdr(&mut buf, 184, 8, &header_bytes.to_string());
         write_hdr(&mut buf, 192, 44, "");
-        write_hdr(&mut buf, 236, 8, &num_records.to_string());
+        write_hdr(&mut buf, 236, 8, &header_num_records.to_string());
         write_hdr(&mut buf, 244, 8, "1");
         write_hdr(&mut buf, 252, 4, &num_signals.to_string());
 
@@ -589,9 +648,10 @@ mod tests {
         write_sig(sig, 0, 1, 216, 8, &samples_per_record.to_string());
         write_sig(sig, 0, 1, 224, 32, "");
 
-        for i in 0..(num_records * samples_per_record) {
+        for i in 0..(actual_records * samples_per_record) {
             buf.extend_from_slice(&(i as i16).to_le_bytes());
         }
+        buf.extend(std::iter::repeat(0u8).take(trailing_bytes));
 
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(&buf).unwrap();

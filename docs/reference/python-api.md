@@ -14,7 +14,7 @@ Supports the context manager protocol (`with` statement).
 
 `num_signals: int` -- Total number of signals in the file, including annotation channels.
 
-`num_records: int` -- Number of data records.
+`num_records: int` -- Number of data records. For EDF-L files (header value `-1`, "unknown length") this is recovered from the file size at open time and reflects the true count; a `warnings` entry records the recovery.
 
 `record_duration: float` -- Duration of each data record in seconds.
 
@@ -104,11 +104,11 @@ Returns a dict with keys:
 
 `num_signals: int` -- Total number of signals in the file, including annotation channels.
 
-`num_records: int` -- Raw header value (`-1` for EDF-L unknown length).
+`num_records: int` -- Number of data records. For EDF-L files (header value `-1`, "unknown length") this is recovered from the file size.
 
 `record_duration: float` -- Duration of each data record in seconds.
 
-`duration: float` -- Total recording duration in seconds (0 if `num_records < 0`).
+`duration: float` -- Total recording duration in seconds.
 
 `patient_id: str` -- Raw 80-byte patient identification field.
 
