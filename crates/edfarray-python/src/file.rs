@@ -246,6 +246,23 @@ impl PyEdfFile {
             .collect()
     }
 
+    /// Return all signals whose label matches `label`.
+    ///
+    /// If `exact` is `False` (default), performs a case-insensitive substring match.
+    /// If `exact` is `True`, performs a case-sensitive exact equality match.
+    ///
+    /// Searches all signals including annotation signals.
+    #[pyo3(signature = (label, exact=false))]
+    fn find_all_signals(&self, label: &str, exact: bool) -> PyResult<Vec<PySignal>> {
+        let indices = self.inner.find_all_signals(label, exact);
+        let mut result = Vec::with_capacity(indices.len());
+        for idx in indices {
+            let proxy = self.inner.signal(idx).map_err(to_py_err)?;
+            result.push(PySignal::new(proxy));
+        }
+        Ok(result)
+    }
+
     /// Parse warnings accumulated during file open.
     #[getter]
     fn warnings(&self) -> Vec<String> {

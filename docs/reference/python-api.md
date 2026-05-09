@@ -70,6 +70,8 @@ Supports the context manager protocol (`with` statement).
 
 `signal(idx_or_label: int | str) -> Signal` -- Get a signal by index or label. Raises `IndexError` for out-of-range indices, `KeyError` for unknown labels.
 
+`find_all_signals(label: str, exact: bool = False) -> list[Signal]` -- Return all signals whose label matches `label`. If `exact` is `False` (default), performs a case-insensitive substring match. If `exact` is `True`, performs a case-sensitive exact equality match. Searches all signals including annotation signals. Skips indices that fail to construct a signal proxy.
+
 `signal_labels() -> list[str]` -- Labels of all signals in the file.
 
 `ordinary_signal_indices() -> list[int]` -- Indices of all non-annotation signals.

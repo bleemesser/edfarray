@@ -344,6 +344,30 @@ impl EdfFile {
             })?;
         self.signal(idx)
     }
+
+    /// Return all signal indices whose label matches `label`.
+    ///
+    /// If `exact` is `false` (default), performs a case-insensitive substring match.
+    /// If `exact` is `true`, performs a case-sensitive exact equality match.
+    ///
+    /// Searches all signals including annotation signals.
+    pub fn find_all_signals(&self, label: &str, exact: bool) -> Vec<usize> {
+        let query = label.to_lowercase();
+        self.file
+            .header
+            .signals
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                if exact {
+                    s.label == label
+                } else {
+                    s.label.to_lowercase().contains(&query)
+                }
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -698,5 +722,47 @@ mod fixture_tests {
         let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
         let err = edf.filter_annotations("[invalid", true).unwrap_err();
         assert!(matches!(err, EdfError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn find_all_signals_partial_case_insensitive() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        // "dc" is a substring of DC01, DC04, DC03, DC02 (indices 12, 13, 14, 15)
+        let indices = edf.find_all_signals("dc", false);
+        assert!(indices.len() >= 1, "partial match should find at least one signal");
+        // Verify all returned indices have labels containing "dc" (case-insensitive)
+        for &idx in &indices {
+            let label_lower = edf.header().signals[idx].label.to_lowercase();
+            assert!(
+                label_lower.contains("dc"),
+                "signal index {} label '{}' should contain 'dc' case-insensitively",
+                idx,
+                edf.header().signals[idx].label
+            );
+        }
+        assert_eq!(indices, vec![12, 13, 14, 15]);
+    }
+
+    #[test]
+    fn find_all_signals_exact_match() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        // Exact match for "F4" should return exactly index 0
+        let indices = edf.find_all_signals("F4", true);
+        assert_eq!(indices, vec![0]);
+    }
+
+    #[test]
+    fn find_all_signals_exact_case_sensitive() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        // "f4" (lowercase) should NOT match "F4" with exact=true
+        let indices = edf.find_all_signals("f4", true);
+        assert!(indices.is_empty(), "exact match should be case-sensitive");
+    }
+
+    #[test]
+    fn find_all_signals_no_match() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let indices = edf.find_all_signals("zzzzz_no_such_label", false);
+        assert!(indices.is_empty(), "non-existent label should return empty vec");
     }
 }

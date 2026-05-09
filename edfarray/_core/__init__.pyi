@@ -214,6 +214,15 @@ class EdfFile:
         r"""
         Get a signal by index or label.
         """
+    def find_all_signals(self, label: builtins.str, exact: builtins.bool = False) -> builtins.list[Signal]:
+        r"""
+        Return all signals whose label matches `label`.
+        
+        If `exact` is `False` (default), performs a case-insensitive substring match.
+        If `exact` is `True`, performs a case-sensitive exact equality match.
+        
+        Searches all signals including annotation signals.
+        """
     def signal_labels(self) -> builtins.list[builtins.str]:
         r"""
         Labels of all signals in the file.
