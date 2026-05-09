@@ -11,7 +11,6 @@ Usage:
 import json
 from pathlib import Path
 
-import numpy as np
 import pyedflib
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
@@ -20,9 +19,9 @@ FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 def extract_reference(edf_path: Path) -> dict:
     """Extract header, signal metadata, and sample snippets from an EDF file."""
     try:
-        ef = pyedflib.EdfReader(str(edf_path))
+        ef = pyedflib.EdfReader(str(edf_path)) # type: ignore
     except OSError:
-        ef = pyedflib.EdfReader(str(edf_path), pyedflib.DO_NOT_READ_ANNOTATIONS)
+        ef = pyedflib.EdfReader(str(edf_path), pyedflib.DO_NOT_READ_ANNOTATIONS) # type: ignore
 
     try:
         num_signals = ef.signals_in_file
