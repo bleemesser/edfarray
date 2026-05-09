@@ -7,7 +7,7 @@ use memmap2::Mmap;
 
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
-use crate::header::{EdfHeader, EdfVariant};
+use crate::header::EdfHeader;
 use crate::proxy::SignalProxy;
 use crate::record::RecordLayout;
 
@@ -197,7 +197,7 @@ impl MappedFile {
     /// without blocking. For EDF+D, this blocks until the annotation scan completes
     /// to get the actual (potentially non-uniform) onset from the TALs.
     pub fn record_onset(&self, rec_idx: usize) -> f64 {
-        if self.header.variant != EdfVariant::EdfPlusD {
+        if !self.header.variant.is_plus_d() {
             return rec_idx as f64 * self.header.record_duration_secs;
         }
         self.with_annotations(|idx| {

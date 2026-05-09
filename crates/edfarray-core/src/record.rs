@@ -5,17 +5,19 @@ use crate::header::EdfHeader;
 ///
 /// EDF data records contain all signals sequentially: all samples for signal 0,
 /// then all samples for signal 1, etc. Each sample is a 2-byte little-endian
-/// signed integer.
+/// signed integer. BDF records use 3 bytes per sample.
 #[derive(Debug, Clone)]
 pub struct RecordLayout {
     pub record_size: usize,
     pub signal_offsets: Vec<usize>,
     pub signal_sample_counts: Vec<usize>,
+    pub sample_size_bytes: usize,
 }
 
 impl RecordLayout {
     /// Build the record layout from a parsed header.
     pub fn from_header(header: &EdfHeader) -> Self {
+        let sample_size_bytes = header.variant.sample_size_bytes();
         let mut offsets = Vec::with_capacity(header.num_signals);
         let mut counts = Vec::with_capacity(header.num_signals);
         let mut offset = 0usize;
@@ -23,13 +25,14 @@ impl RecordLayout {
         for sig in &header.signals {
             offsets.push(offset);
             counts.push(sig.num_samples);
-            offset += sig.num_samples * 2;
+            offset += sig.num_samples * sample_size_bytes;
         }
 
         RecordLayout {
             record_size: offset,
             signal_offsets: offsets,
             signal_sample_counts: counts,
+            sample_size_bytes,
         }
     }
 
@@ -44,7 +47,7 @@ impl RecordLayout {
             });
         }
         let start = self.signal_offsets[signal_idx];
-        let byte_count = self.signal_sample_counts[signal_idx] * 2;
+        let byte_count = self.signal_sample_counts[signal_idx] * self.sample_size_bytes;
         record_data
             .get(start..start + byte_count)
             .ok_or(EdfError::InvalidSignalField {
@@ -57,23 +60,47 @@ impl RecordLayout {
             })
     }
 
-    /// Decode raw little-endian i16 bytes into physical f64 values.
+    /// Decode raw little-endian bytes into physical f64 values.
     ///
     /// Uses a two-pass approach to help the compiler autovectorize:
-    /// first widen i16 to f64, then apply gain and offset as a uniform f64 pass.
-    pub fn decode_physical(raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
-        for (i, chunk) in raw.chunks_exact(2).enumerate() {
-            out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+    /// first widen to f64, then apply gain and offset as a uniform f64 pass.
+    pub fn decode_physical(&self, raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
+        match self.sample_size_bytes {
+            2 => {
+                for (i, chunk) in raw.chunks_exact(2).enumerate() {
+                    out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+                }
+            }
+            3 => {
+                for (i, chunk) in raw.chunks_exact(3).enumerate() {
+                    let raw24 = (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
+                    let signed = (raw24 << 8) >> 8;
+                    out[i] = signed as f64;
+                }
+            }
+            _ => unreachable!("invalid sample size"),
         }
         for val in out.iter_mut() {
             *val = *val * gain + offset;
         }
     }
 
-    /// Decode raw little-endian i16 bytes into digital i16 values.
-    pub fn decode_digital(raw: &[u8], out: &mut [i16]) {
-        for (i, chunk) in raw.chunks_exact(2).enumerate() {
-            out[i] = i16::from_le_bytes([chunk[0], chunk[1]]);
+    /// Decode raw little-endian bytes into digital i32 values.
+    pub fn decode_digital(&self, raw: &[u8], out: &mut [i32]) {
+        match self.sample_size_bytes {
+            2 => {
+                for (i, chunk) in raw.chunks_exact(2).enumerate() {
+                    out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
+                }
+            }
+            3 => {
+                for (i, chunk) in raw.chunks_exact(3).enumerate() {
+                    let raw24 = (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
+                    let signed = (raw24 << 8) >> 8;
+                    out[i] = signed;
+                }
+            }
+            _ => unreachable!("invalid sample size"),
         }
     }
 }
@@ -84,6 +111,12 @@ mod tests {
 
     #[test]
     fn decode_physical_values() {
+        let layout = RecordLayout {
+            record_size: 6,
+            signal_offsets: vec![0],
+            signal_sample_counts: vec![3],
+            sample_size_bytes: 2,
+        };
         let raw = [
             0x00, 0x00, // 0
             0xFF, 0x7F, // 32767
@@ -93,7 +126,7 @@ mod tests {
         let offset = -3200.0 - gain * -32768.0;
         let mut out = [0.0f64; 3];
 
-        RecordLayout::decode_physical(&raw, gain, offset, &mut out);
+        layout.decode_physical(&raw, gain, offset, &mut out);
 
         assert!((out[0]).abs() < 0.1);
         assert!((out[1] - 3200.0).abs() < 0.1);
@@ -102,14 +135,62 @@ mod tests {
 
     #[test]
     fn decode_digital_values() {
+        let layout = RecordLayout {
+            record_size: 6,
+            signal_offsets: vec![0],
+            signal_sample_counts: vec![3],
+            sample_size_bytes: 2,
+        };
         let raw = [
             0x00, 0x00, // 0
             0x01, 0x00, // 1
             0xFF, 0xFF, // -1
         ];
-        let mut out = [0i16; 3];
-        RecordLayout::decode_digital(&raw, &mut out);
+        let mut out = [0i32; 3];
+        layout.decode_digital(&raw, &mut out);
         assert_eq!(out, [0, 1, -1]);
+    }
+
+    #[test]
+    fn decode_physical_24bit_sign_extension() {
+        let layout = RecordLayout {
+            record_size: 12,
+            signal_offsets: vec![0],
+            signal_sample_counts: vec![4],
+            sample_size_bytes: 3,
+        };
+        // values: 1, -1, 8388607 (0x7FFFFF), -8388608 (0x800000)
+        let raw = [
+            0x01, 0x00, 0x00,  // 1
+            0xFF, 0xFF, 0xFF,  // -1
+            0xFF, 0xFF, 0x7F,  // 8388607
+            0x00, 0x00, 0x80,  // -8388608
+        ];
+        let mut out = [0.0f64; 4];
+        layout.decode_physical(&raw, 1.0, 0.0, &mut out);
+        assert_eq!(out[0], 1.0);
+        assert_eq!(out[1], -1.0);
+        assert_eq!(out[2], 8388607.0);
+        assert_eq!(out[3], -8388608.0);
+    }
+
+    #[test]
+    fn decode_digital_24bit_sign_extension() {
+        let layout = RecordLayout {
+            record_size: 12,
+            signal_offsets: vec![0],
+            signal_sample_counts: vec![4],
+            sample_size_bytes: 3,
+        };
+        let raw = [
+            0x01, 0x00, 0x00,
+            0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0x7F,
+            0x00, 0x00, 0x80,
+        ];
+        let mut out = [0i32; 4];
+        layout.decode_digital(&raw, &mut out);
+        assert_eq!(out, [1, -1, 8388607, -8388608]);
     }
 
     #[test]

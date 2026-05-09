@@ -11,8 +11,8 @@ pub struct SignalHeader {
     pub physical_dimension: String,
     pub physical_min: f64,
     pub physical_max: f64,
-    pub digital_min: i16,
-    pub digital_max: i16,
+    pub digital_min: i32,
+    pub digital_max: i32,
     pub prefiltering: String,
     pub num_samples: usize,
     pub reserved: String,
@@ -34,8 +34,8 @@ impl SignalHeader {
 
         let physical_min = parse_signal_f64(data, index, num_signals, 104, 8, "physical_min")?;
         let physical_max = parse_signal_f64(data, index, num_signals, 112, 8, "physical_max")?;
-        let digital_min = parse_signal_i16(data, index, num_signals, 120, 8, "digital_min")?;
-        let digital_max = parse_signal_i16(data, index, num_signals, 128, 8, "digital_max")?;
+        let digital_min = parse_signal_i32(data, index, num_signals, 120, 8, "digital_min")?;
+        let digital_max = parse_signal_i32(data, index, num_signals, 128, 8, "digital_max")?;
 
         let prefiltering = read_signal_field(data, index, num_signals, 136, 80)?;
         let num_samples = parse_signal_usize(data, index, num_signals, 216, 8, "num_samples")?;
@@ -79,7 +79,7 @@ impl SignalHeader {
     }
 
     /// Convert a raw digital sample value to its physical value.
-    pub fn digital_to_physical(&self, digital: i16) -> f64 {
+    pub fn digital_to_physical(&self, digital: i32) -> f64 {
         self.gain * digital as f64 + self.offset
     }
 
@@ -132,19 +132,19 @@ fn parse_signal_f64(
     })
 }
 
-fn parse_signal_i16(
+fn parse_signal_i32(
     data: &[u8],
     index: usize,
     num_signals: usize,
     field_offset: usize,
     field_size: usize,
     field_name: &'static str,
-) -> Result<i16> {
+) -> Result<i32> {
     let s = read_signal_field(data, index, num_signals, field_offset, field_size)?;
-    s.parse::<i16>().map_err(|_| EdfError::InvalidSignalField {
+    s.parse::<i32>().map_err(|_| EdfError::InvalidSignalField {
         index,
         field: field_name,
-        reason: format!("not a valid i16: {:?}", s),
+        reason: format!("not a valid i32: {:?}", s),
     })
 }
 

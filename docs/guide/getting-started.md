@@ -35,7 +35,7 @@ with edfarray.EdfFile("recording.edf") as f:
 ```python
 f = edfarray.EdfFile("recording.edf")
 
-f.variant         # "EDF", "EDF+C", or "EDF+D"
+f.variant         # "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", or "BDF+D"
 f.num_signals     # total signals, including annotation channels
 f.num_records     # number of data records
 f.record_duration # seconds per record

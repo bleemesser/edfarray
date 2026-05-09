@@ -270,9 +270,9 @@ class EdfFile:
         Returns a dict mapping sample rate in Hz (float) to a list of signal indices.
         Sub-Hz precision is preserved.
         """
-    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
+    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int32]]:
         r"""
-        Read a page of digital (raw int16) data for multiple signals over a time range.
+        Read a page of digital (raw int32) data for multiple signals over a time range.
         
         If `signal_indices` is None, reads all ordinary (non-annotation) signals.
         
@@ -351,9 +351,9 @@ class Signal:
         r"""
         Return the entire signal as a float64 numpy array.
         """
-    def to_digital(self) -> numpy.typing.NDArray[numpy.int16]:
+    def to_digital(self) -> numpy.typing.NDArray[numpy.int32]:
         r"""
-        Return the entire signal as a raw int16 numpy array.
+        Return the entire signal as a raw int32 numpy array.
         """
     def times(self) -> numpy.typing.NDArray[numpy.float64]:
         r"""

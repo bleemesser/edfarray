@@ -40,7 +40,7 @@ pub enum EdfError {
     },
 
     #[error("signal {index} has digital_min ({min}) >= digital_max ({max})")]
-    InvalidDigitalRange { index: usize, min: i16, max: i16 },
+    InvalidDigitalRange { index: usize, min: i32, max: i32 },
 
     #[error("signal {index} has physical_min ({min}) == physical_max ({max})")]
     InvalidPhysicalRange { index: usize, min: f64, max: f64 },

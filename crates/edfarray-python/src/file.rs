@@ -410,7 +410,7 @@ impl PyEdfFile {
         Ok(dict)
     }
 
-    /// Read a page of digital (raw int16) data for multiple signals over a time range.
+    /// Read a page of digital (raw int32) data for multiple signals over a time range.
     ///
     /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
     ///
@@ -425,7 +425,7 @@ impl PyEdfFile {
         end_sec: f64,
         signal_indices: Option<Vec<usize>>,
         use_time: bool,
-    ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<i16>>>> {
+    ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<i32>>>> {
         let indices = signal_indices.unwrap_or_else(|| self.get().ordinary_signal_indices());
         let buffers = self
             .get()

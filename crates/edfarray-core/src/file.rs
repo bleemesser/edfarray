@@ -247,7 +247,7 @@ impl EdfFile {
         start_sec: f64,
         end_sec: f64,
         use_time: bool,
-    ) -> Result<Vec<Vec<i16>>> {
+    ) -> Result<Vec<Vec<i32>>> {
         self.advise_time_range(start_sec, end_sec);
         let file = &self.file;
         signal_indices
@@ -292,12 +292,12 @@ impl EdfFile {
         Ok(buf)
     }
 
-    fn read_digital_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<i16>> {
+    fn read_digital_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<i32>> {
         if s_start >= proxy.len() || s_start >= s_end {
             return Ok(Vec::new());
         }
         let count = s_end - s_start;
-        let mut buf = vec![0i16; count];
+        let mut buf = vec![0i32; count];
         proxy.read_digital(s_start, s_end, &mut buf)?;
         Ok(buf)
     }
@@ -669,6 +669,108 @@ mod tests {
         let start = fo * ns + fs * index;
         let bytes = value.as_bytes();
         data[start..start + bytes.len().min(fs)].copy_from_slice(&bytes[..bytes.len().min(fs)]);
+    }
+
+    /// Build a 1-signal BDF file (3-byte samples). If `plus_c` is true, write "BDF+C"
+    /// in the reserved field to produce a BDF+C variant.
+    fn build_synthetic_bdf_file(actual_records: usize, plus_c: bool) -> NamedTempFile {
+        let num_signals = 1;
+        let header_bytes = 256 + 256 * num_signals;
+        let samples_per_record = 4;
+        let mut buf = vec![b' '; header_bytes];
+
+        // Version field: 0xFF + "BIOSEMI"
+        buf[0] = 0xFF;
+        buf[1..8].copy_from_slice(b"BIOSEMI");
+
+        write_hdr(&mut buf, 8, 80, "X X X X");
+        write_hdr(&mut buf, 88, 80, "Startdate X X X X");
+        write_hdr(&mut buf, 168, 8, "01.01.00");
+        write_hdr(&mut buf, 176, 8, "00.00.00");
+        write_hdr(&mut buf, 184, 8, &header_bytes.to_string());
+
+        // Reserved field: "BDF+C" or empty/spaces
+        let reserved = if plus_c { "BDF+C" } else { "" };
+        write_hdr(&mut buf, 192, 44, reserved);
+
+        write_hdr(&mut buf, 236, 8, &actual_records.to_string());
+        write_hdr(&mut buf, 244, 8, "1");
+        write_hdr(&mut buf, 252, 4, &num_signals.to_string());
+
+        let sig = &mut buf[256..];
+        // BDF signal header fields at parser offsets:
+        // label=16B@0, transducer=80B@16, physical_dim=8B@96,
+        // physical_min=8B@104, physical_max=8B@112, digital_min=8B@120,
+        // digital_max=8B@128, prefiltering=80B@136, num_samples=8B@216, reserved=32B@224
+        write_sig(sig, 0, 1, 0, 16, "EEG             ");
+        write_sig(sig, 0, 1, 16, 80, "X X X X       ");
+        write_sig(sig, 0, 1, 96, 8, "uV");
+        write_sig(sig, 0, 1, 104, 8, "-1000");
+        write_sig(sig, 0, 1, 112, 8, "1000");
+        write_sig(sig, 0, 1, 120, 8, "-8388608");
+        write_sig(sig, 0, 1, 128, 8, "8388607");
+        write_sig(sig, 0, 1, 136, 80, "");
+        write_sig(sig, 0, 1, 216, 8, &samples_per_record.to_string());
+        write_sig(sig, 0, 1, 224, 32, "");
+
+        let total_samples = actual_records * samples_per_record;
+        for i in 0..total_samples {
+            let v = i as i32;
+            buf.push(v as u8);
+            buf.push((v >> 8) as u8);
+            buf.push((v >> 16) as u8);
+        }
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&buf).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn bdf_open_and_read() {
+        let file = build_synthetic_bdf_file(2, false);
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert_eq!(edf.variant(), EdfVariant::Bdf);
+        assert_eq!(edf.num_signals(), 1);
+        assert_eq!(edf.num_records(), 2);
+
+        let sig = edf.signal(0).unwrap();
+        assert_eq!(sig.len(), 8);
+
+        let digital = sig.get_physical(3).unwrap();
+        assert!(digital.is_finite());
+    }
+
+    #[test]
+    fn bdf_plus_c_detected() {
+        let file = build_synthetic_bdf_file(2, true);
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert_eq!(edf.variant(), EdfVariant::BdfPlusC);
+    }
+
+    #[test]
+    fn bdf_record_size_uses_3_bytes() {
+        let file = build_synthetic_bdf_file(1, false);
+        let edf = EdfFile::open(file.path()).unwrap();
+        // 1 signal * 4 samples_per_record * 3 bytes = 12
+        assert_eq!(edf.header().record_size(), 12);
+    }
+
+    #[test]
+    fn edf_still_2_byte() {
+        let file = build_synthetic_file(1, false, 0);
+        let edf = EdfFile::open(file.path()).unwrap();
+        assert_eq!(edf.header().record_size(), 8);
+    }
+
+    #[test]
+    fn bdf_inspect_returns_variant() {
+        let file = build_synthetic_bdf_file(3, false);
+        let meta = EdfFile::inspect(file.path()).unwrap();
+        assert_eq!(meta.variant, EdfVariant::Bdf);
+        assert_eq!(meta.num_records, 3);
+        assert_eq!(meta.num_signals, 1);
     }
 }
 

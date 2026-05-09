@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use crate::error::{EdfError, Result};
-use crate::header::EdfVariant;
 use crate::mmap::MappedFile;
-use crate::record::RecordLayout;
 use crate::signal::SignalHeader;
 
 /// Array-like view of a single signal across the entire recording.
@@ -75,15 +73,23 @@ impl SignalProxy {
             .file
             .layout
             .signal_bytes(record_data, self.signal_idx)?;
-        let byte_offset = offset * 2;
+        let bytes = self.file.layout.sample_size_bytes;
+        let byte_offset = offset * bytes;
         let raw =
             sig_bytes
-                .get(byte_offset..byte_offset + 2)
+                .get(byte_offset..byte_offset + bytes)
                 .ok_or(EdfError::SampleOutOfRange {
                     index: idx,
                     count: self.total_samples,
                 })?;
-        let digital = i16::from_le_bytes([raw[0], raw[1]]);
+        let digital: i32 = match bytes {
+            2 => i16::from_le_bytes([raw[0], raw[1]]) as i32,
+            3 => {
+                let raw24 = (raw[0] as i32) | ((raw[1] as i32) << 8) | ((raw[2] as i32) << 16);
+                (raw24 << 8) >> 8
+            }
+            _ => unreachable!("invalid sample size"),
+        };
         let h = self.header();
         Ok(h.gain * digital as f64 + h.offset)
     }
@@ -91,16 +97,17 @@ impl SignalProxy {
     /// Read a range of samples as physical (f64) values into a pre-allocated buffer.
     ///
     /// This is the primary hot path. It resolves which data records are needed,
-    /// decodes i16 -> f64 directly from the mmap, and writes into `out`.
+    /// decodes digital -> f64 directly from the mmap, and writes into `out`.
     pub fn read_physical(&self, start: usize, end: usize, out: &mut [f64]) -> Result<()> {
         self.validate_range(start, end, out.len())?;
+        let bytes = self.file.layout.sample_size_bytes;
         self.read_range_inner(
             start,
             end,
-            |sig_bytes, offset, count, out_slice| {
+            move |sig_bytes, offset, count, out_slice| {
                 let h = self.header();
-                RecordLayout::decode_physical(
-                    &sig_bytes[offset * 2..(offset + count) * 2],
+                self.file.layout.decode_physical(
+                    &sig_bytes[offset * bytes..(offset + count) * bytes],
                     h.gain,
                     h.offset,
                     out_slice,
@@ -110,15 +117,16 @@ impl SignalProxy {
         )
     }
 
-    /// Read a range of samples as raw digital (i16) values into a pre-allocated buffer.
-    pub fn read_digital(&self, start: usize, end: usize, out: &mut [i16]) -> Result<()> {
+    /// Read a range of samples as raw digital (i32) values into a pre-allocated buffer.
+    pub fn read_digital(&self, start: usize, end: usize, out: &mut [i32]) -> Result<()> {
         self.validate_range(start, end, out.len())?;
+        let bytes = self.file.layout.sample_size_bytes;
         self.read_range_inner(
             start,
             end,
-            |sig_bytes, offset, count, out_slice| {
-                RecordLayout::decode_digital(
-                    &sig_bytes[offset * 2..(offset + count) * 2],
+            move |sig_bytes, offset, count, out_slice| {
+                self.file.layout.decode_digital(
+                    &sig_bytes[offset * bytes..(offset + count) * bytes],
                     out_slice,
                 );
             },
@@ -154,7 +162,7 @@ impl SignalProxy {
     /// For EDF and EDF+C, this is equivalent to indexing by flat sample number,
     /// i.e. `int(time * sample_rate)`.
     pub fn read_at(&self, start_sec: f64, end_sec: f64) -> Result<Vec<f64>> {
-        let (s_start, s_end) = if self.file.header.variant == EdfVariant::EdfPlusD {
+        let (s_start, s_end) = if self.file.header.variant.is_plus_d() {
             self.file.sample_range_for_time(self, start_sec, end_sec)
         } else {
             let sr = self.sample_rate();
@@ -331,7 +339,7 @@ mod tests {
         let mapped = MappedFile::open(file.path()).unwrap();
         let proxy = SignalProxy::new(mapped, 0).unwrap();
 
-        let mut out = [0i16; 4];
+        let mut out = [0i32; 4];
         proxy.read_digital(2, 6, &mut out).unwrap();
         assert_eq!(out, [2, 3, 4, 5]);
     }

@@ -65,17 +65,52 @@ pub enum EdfVariant {
     Edf,
     EdfPlusC,
     EdfPlusD,
+    Bdf,
+    BdfPlusC,
+    BdfPlusD,
 }
 
 impl EdfVariant {
-    fn parse(reserved: &str) -> Self {
-        if reserved.starts_with("EDF+C") {
+    pub fn parse(version_bytes: &[u8], reserved: &str) -> Self {
+        if version_bytes.len() >= 8 && version_bytes[0] == 0xFF && &version_bytes[1..8] == b"BIOSEMI" {
+            if reserved.starts_with("BDF+C") {
+                EdfVariant::BdfPlusC
+            } else if reserved.starts_with("BDF+D") {
+                EdfVariant::BdfPlusD
+            } else {
+                EdfVariant::Bdf
+            }
+        } else if reserved.starts_with("EDF+C") {
             EdfVariant::EdfPlusC
         } else if reserved.starts_with("EDF+D") {
             EdfVariant::EdfPlusD
         } else {
             EdfVariant::Edf
         }
+    }
+
+    pub fn sample_size_bytes(self) -> usize {
+        match self {
+            EdfVariant::Bdf | EdfVariant::BdfPlusC | EdfVariant::BdfPlusD => 3,
+            _ => 2,
+        }
+    }
+
+    /// True for any `+C`/`+D` variant (EDF+ or BDF+) — i.e. files that carry an
+    /// annotation signal and follow EDF+ patient/recording field conventions.
+    pub fn is_plus(self) -> bool {
+        matches!(
+            self,
+            EdfVariant::EdfPlusC
+                | EdfVariant::EdfPlusD
+                | EdfVariant::BdfPlusC
+                | EdfVariant::BdfPlusD
+        )
+    }
+
+    /// True for the discontinuous variants (`EDF+D` or `BDF+D`).
+    pub fn is_plus_d(self) -> bool {
+        matches!(self, EdfVariant::EdfPlusD | EdfVariant::BdfPlusD)
     }
 }
 
@@ -85,6 +120,9 @@ impl std::fmt::Display for EdfVariant {
             EdfVariant::Edf => write!(f, "EDF"),
             EdfVariant::EdfPlusC => write!(f, "EDF+C"),
             EdfVariant::EdfPlusD => write!(f, "EDF+D"),
+            EdfVariant::Bdf => write!(f, "BDF"),
+            EdfVariant::BdfPlusC => write!(f, "BDF+C"),
+            EdfVariant::BdfPlusD => write!(f, "BDF+D"),
         }
     }
 }
@@ -185,7 +223,7 @@ impl EdfHeader {
             });
         }
 
-        let variant = EdfVariant::parse(&reserved);
+        let variant = EdfVariant::parse(&data[0..8], &reserved);
         let start_datetime = parse_start_datetime(&start_date_str, &start_time_str);
 
         let signal_data = &data[MAIN_HEADER_SIZE..header_bytes];
@@ -221,7 +259,8 @@ impl EdfHeader {
 
     /// Size of one complete data record in bytes.
     pub fn record_size(&self) -> usize {
-        self.signals.iter().map(|s| s.num_samples * 2).sum()
+        let bytes = self.variant.sample_size_bytes();
+        self.signals.iter().map(|s| s.num_samples * bytes).sum()
     }
 
     /// Total duration of the recording in seconds.
@@ -354,7 +393,7 @@ fn try_parse_datetime(date_str: &str, time_str: &str) -> Option<NaiveDateTime> {
 fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> PatientInfo {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 4 {
-        if variant != EdfVariant::Edf {
+        if variant.is_plus() {
             warnings.push(format!(
                 "patient_id has {} subfields (expected at least 4): {:?}",
                 parts.len(),
@@ -370,7 +409,7 @@ fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) 
         "F" => Some(Sex::Female),
         "X" => None,
         other => {
-            if variant != EdfVariant::Edf {
+            if variant.is_plus() {
                 warnings.push(format!("unrecognized sex value: {:?}", other));
             }
             None
@@ -406,7 +445,7 @@ fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) 
 fn parse_recording_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> RecordingInfo {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 5 || !parts[0].eq_ignore_ascii_case("Startdate") {
-        if variant != EdfVariant::Edf {
+        if variant.is_plus() {
             warnings.push(format!(
                 "recording_id does not match EDF+ format: {:?}",
                 raw

@@ -96,7 +96,7 @@ class TestSignalData:
         for snippet in ref.get("sample_snippets", []):
             sig = edf.signal(snippet["signal_index"])
             actual = sig.to_digital()[:len(snippet["digital_first_10"])]
-            expected = np.array(snippet["digital_first_10"], dtype=np.int16)
+            expected = np.array(snippet["digital_first_10"], dtype=np.int32)
             np.testing.assert_array_equal(actual, expected)
 
     def test_single_sample_returns_float(self):
@@ -134,7 +134,7 @@ class TestSignalData:
     def test_to_digital_dtype(self):
         edf, _ = load_fixture("test_generator")
         arr = edf.signal(0).to_digital()
-        assert arr.dtype == np.int16
+        assert arr.dtype == np.int32
 
     def test_times_monotonic(self):
         edf, _ = load_fixture("test_generator")
@@ -175,13 +175,13 @@ class TestBulkReads:
         assert all(isinstance(p, np.ndarray) for p in pages)
         assert all(p.dtype == np.float64 for p in pages)
 
-    def test_read_page_digital_returns_int16(self, fixture):
+    def test_read_page_digital_returns_int32(self, fixture):
         edf, ref = fixture
         if edf.duration < 1.0:
             pytest.skip("too short")
         pages = edf.read_page_digital(0.0, 1.0)
         assert isinstance(pages, list)
-        assert all(p.dtype == np.int16 for p in pages)
+        assert all(p.dtype == np.int32 for p in pages)
 
     def test_read_page_matches_single_signal(self):
         edf, _ = load_fixture("test_generator")

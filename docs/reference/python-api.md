@@ -20,7 +20,7 @@ Supports the context manager protocol (`with` statement).
 
 `duration: float` -- Total recording duration in seconds.
 
-`variant: str` -- `"EDF"`, `"EDF+C"`, or `"EDF+D"`.
+`variant: str` -- `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, or `"BDF+D"`.
 
 `start_datetime: datetime.datetime | str` -- Recording start date and time. Returns a `datetime.datetime` if the header date fields could be parsed, or a raw string like `"04.04.yy 12.57.02"` if the date is anonymized or non-standard. Note: the EDF header only stores integer seconds. EDF+ files encode subsecond precision in the first time-keeping annotation, which is applied to annotation onsets and sample timestamps but not to this property.
 
@@ -78,7 +78,7 @@ Supports the context manager protocol (`with` statement).
 
 `read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-arrayproxy-use-flat-sample-indices) for details.
 
-`read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int16 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
+`read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int32 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
 
 `array_proxy(signal_indices: list[int] | None = None) -> ArrayProxy` -- Create a 2D array proxy for numpy-style multi-channel indexing. All selected signals must have the same sample rate. If `signal_indices` is `None`, uses all ordinary signals. Raises `ValueError` if sample rates differ.
 
@@ -100,7 +100,7 @@ Lightweight metadata extracted from an EDF/EDF+ file header without scanning dat
 
 Returns a dict with keys:
 
-`variant: str` -- `"EDF"`, `"EDF+C"`, or `"EDF+D"`.
+`variant: str` -- `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, or `"BDF+D"`.
 
 `num_signals: int` -- Total number of signals in the file, including annotation channels.
 
@@ -142,9 +142,9 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 `physical_max: float` -- Physical maximum value.
 
-`digital_min: int` -- Digital minimum value (i16).
+`digital_min: int` -- Digital minimum value.
 
-`digital_max: int` -- Digital maximum value (i16).
+`digital_max: int` -- Digital maximum value.
 
 `num_samples: int` -- Total number of samples. Same as `len(sig)`.
 
@@ -160,7 +160,7 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 `to_numpy() -> numpy.ndarray` -- The entire signal as a float64 numpy array.
 
-`to_digital() -> numpy.ndarray` -- The entire signal as an int16 numpy array (raw digital values).
+`to_digital() -> numpy.ndarray` -- The entire signal as an int32 numpy array (raw digital values).
 
 `times() -> numpy.ndarray` -- Timestamp in seconds from recording start for each sample. For EDF+D files, accounts for gaps between data records.
 

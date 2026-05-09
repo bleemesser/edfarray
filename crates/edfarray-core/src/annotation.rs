@@ -112,7 +112,7 @@ impl AnnotationIndex {
             }
 
             if !found_timekeeping {
-                if header.variant != EdfVariant::Edf {
+                if header.variant.is_plus() {
                     warnings.push(format!(
                         "missing time-keeping annotation in record {rec_idx}, using calculated onset"
                     ));
@@ -366,21 +366,21 @@ fn validate_record_onsets(
         let expected = record_duration;
 
         match variant {
-            EdfVariant::EdfPlusC => {
+            EdfVariant::EdfPlusC | EdfVariant::BdfPlusC => {
                 if (gap - expected).abs() > 0.001 {
                     warnings.push(format!(
                         "EDF+C record {i}: expected onset gap {expected}s, got {gap:.6}s"
                     ));
                 }
             }
-            EdfVariant::EdfPlusD => {
+            EdfVariant::EdfPlusD | EdfVariant::BdfPlusD => {
                 if gap < expected - 0.001 {
                     warnings.push(format!(
                         "EDF+D record {i}: onset gap {gap:.6}s is less than record duration {expected}s"
                     ));
                 }
             }
-            EdfVariant::Edf => {}
+            EdfVariant::Edf | EdfVariant::Bdf => {}
         }
     }
 }

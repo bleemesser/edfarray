@@ -74,13 +74,13 @@ impl PySignal {
 
     /// Digital minimum value.
     #[getter]
-    fn digital_min(&self) -> i16 {
+    fn digital_min(&self) -> i32 {
         self.proxy.header().digital_min
     }
 
     /// Digital maximum value.
     #[getter]
-    fn digital_max(&self) -> i16 {
+    fn digital_max(&self) -> i32 {
         self.proxy.header().digital_max
     }
 
@@ -159,10 +159,10 @@ impl PySignal {
         Ok(array)
     }
 
-    /// Return the entire signal as a raw int16 numpy array.
-    fn to_digital<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i16>>> {
+    /// Return the entire signal as a raw int32 numpy array.
+    fn to_digital<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i32>>> {
         let len = self.proxy.len();
-        let array = PyArray1::<i16>::zeros(py, len, false);
+        let array = PyArray1::<i32>::zeros(py, len, false);
         if len > 0 {
             unsafe {
                 let slice = array.as_slice_mut()?;

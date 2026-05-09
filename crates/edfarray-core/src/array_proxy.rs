@@ -146,14 +146,14 @@ impl ArrayProxy {
         self.read_physical(&indices, samples)
     }
 
-    /// Read digital (i16) samples for the given proxy-coordinate signal indices and sample range.
+    /// Read digital (i32) samples for the given proxy-coordinate signal indices and sample range.
     ///
     /// Parallelized across signals with rayon.
     pub fn read_digital(
         &self,
         signal_indices: &[usize],
         samples: Range<usize>,
-    ) -> Result<Vec<Vec<i16>>> {
+    ) -> Result<Vec<Vec<i32>>> {
         let file = &self.file;
         let sample_start = samples.start;
         let sample_end = samples.end;
@@ -166,7 +166,7 @@ impl ArrayProxy {
                 let end = sample_end.min(proxy.len());
                 let start = sample_start.min(end);
                 let count = end - start;
-                let mut buf = vec![0i16; count];
+                let mut buf = vec![0i32; count];
                 if count > 0 {
                     proxy.read_digital(start, end, &mut buf)?;
                 }
@@ -175,12 +175,12 @@ impl ArrayProxy {
             .collect()
     }
 
-    /// Read a rectangular block of raw digital (i16) samples. Parallelized across signals.
+    /// Read a rectangular block of raw digital (i32) samples. Parallelized across signals.
     pub fn read_slice_digital(
         &self,
         signals: Range<usize>,
         samples: Range<usize>,
-    ) -> Result<Vec<Vec<i16>>> {
+    ) -> Result<Vec<Vec<i32>>> {
         let indices: Vec<usize> = signals.collect();
         self.read_digital(&indices, samples)
     }
