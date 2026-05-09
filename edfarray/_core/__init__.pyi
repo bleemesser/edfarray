@@ -189,7 +189,7 @@ class EdfFile:
         r"""
         Indices of all non-annotation (ordinary) signals.
         """
-    def read_page(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> builtins.list[numpy.typing.NDArray[numpy.float64]]:
+    def read_page(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = False) -> builtins.list[numpy.typing.NDArray[numpy.float64]]:
         r"""
         Read a page of physical data for multiple signals over a time range.
         
@@ -197,6 +197,10 @@ class EdfFile:
         sample rates will produce arrays of different lengths.
         
         If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+        
+        When `use_time` is false (default), time parameters are converted to flat
+        sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+        the time range using actual record onset times.
         """
     def array_proxy(self, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> ArrayProxy:
         r"""
@@ -211,11 +215,15 @@ class EdfFile:
         
         Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
         """
-    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
+    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = False) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
         r"""
         Read a page of digital (raw int16) data for multiple signals over a time range.
         
         If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+        
+        When `use_time` is false (default), time parameters are converted to flat
+        sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+        the time range using actual record onset times.
         """
 
 @typing.final
@@ -295,5 +303,14 @@ class Signal:
     def times(self) -> numpy.typing.NDArray[numpy.float64]:
         r"""
         Return timestamps (in seconds) for each sample.
+        """
+    def read_at(self, start_sec: builtins.float, end_sec: builtins.float) -> numpy.typing.NDArray[numpy.float64]:
+        r"""
+        Return physical data for samples whose time falls within `[start_sec, end_sec)`.
+        
+        For EDF+D files, this accounts for gaps between records using the
+        record onset times from the annotation index (blocks until scan completes).
+        For EDF and EDF+C, this is equivalent to indexing by flat sample number,
+        i.e. `int(time * sample_rate)`.
         """
 

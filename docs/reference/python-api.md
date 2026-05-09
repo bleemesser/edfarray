@@ -64,9 +64,9 @@ Supports the context manager protocol (`with` statement).
 
 `ordinary_signal_indices() -> list[int]` -- Indices of all non-annotation signals.
 
-`read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. **Note:** time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, this does not correspond to physical time. See [Annotations & Time](../guide/annotations.md#read_page-and-arrayproxy-use-flat-sample-indices) for the correct EDF+D workflow.
+`read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-arrayproxy-use-flat-sample-indices) for details.
 
-`read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int16 digital values without gain/offset conversion.
+`read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int16 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
 
 `array_proxy(signal_indices: list[int] | None = None) -> ArrayProxy` -- Create a 2D array proxy for numpy-style multi-channel indexing. All selected signals must have the same sample rate. If `signal_indices` is `None`, uses all ordinary signals. Raises `ValueError` if sample rates differ.
 
@@ -117,6 +117,8 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 `to_digital() -> numpy.ndarray` -- The entire signal as an int16 numpy array (raw digital values).
 
 `times() -> numpy.ndarray` -- Timestamp in seconds from recording start for each sample. For EDF+D files, accounts for gaps between data records.
+
+`read_at(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
 
 `__len__() -> int` -- Total number of samples.
 

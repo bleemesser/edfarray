@@ -185,6 +185,24 @@ impl PySignal {
         }
         Ok(array)
     }
+
+    /// Return physical data for samples whose time falls within `[start_sec, end_sec)`.
+    ///
+    /// For EDF+D files, this accounts for gaps between records using the
+    /// record onset times from the annotation index (blocks until scan completes).
+    /// For EDF and EDF+C, this is equivalent to indexing by flat sample number,
+    /// i.e. `int(time * sample_rate)`.
+    fn read_at<'py>(&self, py: Python<'py>, start_sec: f64, end_sec: f64) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let buf = self.proxy.read_at(start_sec, end_sec).map_err(to_py_err)?;
+        let len = buf.len();
+        let array = PyArray1::<f64>::zeros(py, len, false);
+        if len > 0 {
+            unsafe {
+                array.as_slice_mut()?.copy_from_slice(&buf);
+            }
+        }
+        Ok(array)
+    }
 }
 
 impl PySignal {

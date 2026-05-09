@@ -127,15 +127,16 @@ impl EdfFile {
     /// the physical samples for that signal in the time range `[start_sec, end_sec)`.
     /// Signals may have different sample rates, so buffers may have different lengths.
     ///
-    /// **EDF+D note:** time parameters are converted to flat sample indices
-    /// (`(time * sample_rate) as usize`), not physical time. For discontinuous
-    /// recordings, use `SignalProxy::sample_time()` or `read_times()` to map
-    /// between sample indices and physical time.
+    /// **EDF+D note:** when `use_time` is false (default), time parameters are
+    /// converted to flat sample indices (`(time * sample_rate) as usize`), not
+    /// physical time. For discontinuous recordings, set `use_time=true` to resolve
+    /// the time range to actual sample indices using record onset times.
     pub fn read_page(
         &self,
         signal_indices: &[usize],
         start_sec: f64,
         end_sec: f64,
+        use_time: bool,
     ) -> Result<Vec<Vec<f64>>> {
         self.advise_time_range(start_sec, end_sec);
         let file = &self.file;
@@ -143,16 +144,15 @@ impl EdfFile {
             .par_iter()
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
-                let sr = proxy.sample_rate();
-                let s_start = (start_sec.max(0.0) * sr) as usize;
-                let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
-                if s_start >= proxy.len() || s_start >= s_end {
-                    return Ok(Vec::new());
-                }
-                let count = s_end - s_start;
-                let mut buf = vec![0.0f64; count];
-                proxy.read_physical(s_start, s_end, &mut buf)?;
-                Ok(buf)
+                let (s_start, s_end) = if use_time {
+                    self.file.sample_range_for_time(&proxy, start_sec, end_sec)
+                } else {
+                    let sr = proxy.sample_rate();
+                    let s_start = (start_sec.max(0.0) * sr) as usize;
+                    let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
+                    (s_start, s_end)
+                };
+                self.read_samples(&proxy, s_start, s_end)
             })
             .collect()
     }
@@ -163,6 +163,7 @@ impl EdfFile {
         signal_indices: &[usize],
         start_sec: f64,
         end_sec: f64,
+        use_time: bool,
     ) -> Result<Vec<Vec<i16>>> {
         self.advise_time_range(start_sec, end_sec);
         let file = &self.file;
@@ -170,16 +171,15 @@ impl EdfFile {
             .par_iter()
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
-                let sr = proxy.sample_rate();
-                let s_start = (start_sec.max(0.0) * sr) as usize;
-                let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
-                if s_start >= proxy.len() || s_start >= s_end {
-                    return Ok(Vec::new());
-                }
-                let count = s_end - s_start;
-                let mut buf = vec![0i16; count];
-                proxy.read_digital(s_start, s_end, &mut buf)?;
-                Ok(buf)
+                let (s_start, s_end) = if use_time {
+                    self.file.sample_range_for_time(&proxy, start_sec, end_sec)
+                } else {
+                    let sr = proxy.sample_rate();
+                    let s_start = (start_sec.max(0.0) * sr) as usize;
+                    let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
+                    (s_start, s_end)
+                };
+                self.read_digital_samples(&proxy, s_start, s_end)
             })
             .collect()
     }
@@ -198,6 +198,26 @@ impl EdfFile {
 
     #[cfg(not(unix))]
     fn advise_time_range(&self, _start_sec: f64, _end_sec: f64) {}
+
+    fn read_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<f64>> {
+        if s_start >= proxy.len() || s_start >= s_end {
+            return Ok(Vec::new());
+        }
+        let count = s_end - s_start;
+        let mut buf = vec![0.0f64; count];
+        proxy.read_physical(s_start, s_end, &mut buf)?;
+        Ok(buf)
+    }
+
+    fn read_digital_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<i16>> {
+        if s_start >= proxy.len() || s_start >= s_end {
+            return Ok(Vec::new());
+        }
+        let count = s_end - s_start;
+        let mut buf = vec![0i16; count];
+        proxy.read_digital(s_start, s_end, &mut buf)?;
+        Ok(buf)
+    }
 
     /// Create a 2D array proxy over the given signal indices (or all ordinary signals).
     ///

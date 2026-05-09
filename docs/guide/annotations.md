@@ -74,21 +74,21 @@ For example, if a file has records at t=0s, t=1s, then a gap, then t=5s:
 pages = f.read_page(0.0, 10.0)
 ```
 
-The correct way to get data within a physical time window for EDF+D is to use `times()` to identify which samples fall in your range:
+#### Time-aware reading for EDF+D
+
+Use `use_time=True` to resolve the time range to actual sample indices using record onset times:
 
 ```python
-# CORRECT for EDF+D: use timestamps to select the right samples.
+# CORRECT for EDF+D: time-aware page read.
+pages = f.read_page(0.0, 10.0, use_time=True)
+# pages will contain only samples from records that fall within 0-10s physical time.
+```
+
+For single-signal time-aware reading, use `Signal.read_at()`:
+
+```python
 sig = f.signal(0)
-all_data = sig.to_numpy()
-all_times = sig.times()
-
-t_start, t_end = 0.0, 10.0
-mask = (all_times >= t_start) & (all_times < t_end)
-data_in_window = all_data[mask]
-times_in_window = all_times[mask]
-
-# data_in_window will have fewer samples than (t_end - t_start) * sample_rate
-# because the gaps contain no recorded data.
+data = sig.read_at(0.0, 10.0)  # physical data within 0-10s, gaps excluded
 ```
 
 This is the same behavior as pyedflib's `readSignal(start, n)` — flat sample indices are the standard convention. The `times()` method is what makes EDF+D usable: it gives you the true physical timestamp for every sample so you can map between sample space and time space yourself.

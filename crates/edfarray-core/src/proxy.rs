@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::error::{EdfError, Result};
+use crate::header::EdfVariant;
 use crate::mmap::MappedFile;
 use crate::record::RecordLayout;
 use crate::signal::SignalHeader;
@@ -144,6 +145,30 @@ impl SignalProxy {
             out[i] = self.sample_time(idx);
         }
         Ok(())
+    }
+
+    /// Read physical data for samples whose physical time falls within `[start_sec, end_sec)`.
+    ///
+    /// For EDF+D files, this accounts for gaps between records using the
+    /// record onset times from the annotation index (blocks until scan completes).
+    /// For EDF and EDF+C, this is equivalent to indexing by flat sample number,
+    /// i.e. `int(time * sample_rate)`.
+    pub fn read_at(&self, start_sec: f64, end_sec: f64) -> Result<Vec<f64>> {
+        let (s_start, s_end) = if self.file.header.variant == EdfVariant::EdfPlusD {
+            self.file.sample_range_for_time(self, start_sec, end_sec)
+        } else {
+            let sr = self.sample_rate();
+            let s_start = (start_sec.max(0.0) * sr) as usize;
+            let s_end = ((end_sec.max(0.0) * sr) as usize).min(self.total_samples);
+            (s_start, s_end)
+        };
+        if s_start >= s_end {
+            return Ok(Vec::new());
+        }
+        let count = s_end - s_start;
+        let mut buf = vec![0.0f64; count];
+        self.read_physical(s_start, s_end, &mut buf)?;
+        Ok(buf)
     }
 
     fn resolve_index(&self, idx: usize) -> (usize, usize) {

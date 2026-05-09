@@ -241,18 +241,23 @@ impl PyEdfFile {
     /// sample rates will produce arrays of different lengths.
     ///
     /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
-    #[pyo3(signature = (start_sec, end_sec, signal_indices=None))]
+    ///
+    /// When `use_time` is false (default), time parameters are converted to flat
+    /// sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+    /// the time range using actual record onset times.
+    #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
     fn read_page<'py>(
         &self,
         py: Python<'py>,
         start_sec: f64,
         end_sec: f64,
         signal_indices: Option<Vec<usize>>,
+        use_time: bool,
     ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<f64>>>> {
         let indices = signal_indices.unwrap_or_else(|| self.inner.ordinary_signal_indices());
         let buffers = self
             .inner
-            .read_page(&indices, start_sec, end_sec)
+            .read_page(&indices, start_sec, end_sec, use_time)
             .map_err(to_py_err)?;
         let mut arrays = Vec::with_capacity(buffers.len());
         for buf in buffers {
@@ -305,18 +310,23 @@ impl PyEdfFile {
     /// Read a page of digital (raw int16) data for multiple signals over a time range.
     ///
     /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
-    #[pyo3(signature = (start_sec, end_sec, signal_indices=None))]
+    ///
+    /// When `use_time` is false (default), time parameters are converted to flat
+    /// sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+    /// the time range using actual record onset times.
+    #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
     fn read_page_digital<'py>(
         &self,
         py: Python<'py>,
         start_sec: f64,
         end_sec: f64,
         signal_indices: Option<Vec<usize>>,
+        use_time: bool,
     ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<i16>>>> {
         let indices = signal_indices.unwrap_or_else(|| self.inner.ordinary_signal_indices());
         let buffers = self
             .inner
-            .read_page_digital(&indices, start_sec, end_sec)
+            .read_page_digital(&indices, start_sec, end_sec, use_time)
             .map_err(to_py_err)?;
         let mut arrays = Vec::with_capacity(buffers.len());
         for buf in buffers {
