@@ -367,6 +367,107 @@ impl EdfFile {
             .map(|(i, _)| i)
             .collect()
     }
+
+    /// Write a copy of this file to `path`. By default uses the source file's
+    /// variant; override with `variant` to transcode (e.g. `EDF+D` → `EDF+C`).
+    ///
+    /// Reads physical sample data and annotations through the existing memory
+    /// map and re-emits them via the writer. Only ordinary signals are copied;
+    /// the destination's annotation channel is rebuilt from the parsed
+    /// annotations rather than copied verbatim.
+    pub fn write_to(&self, path: impl AsRef<Path>, variant: Option<EdfVariant>) -> Result<()> {
+        use crate::writer::{EdfWriter, WriterSignal, WriterSpec};
+        use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
+        let target_variant = variant.unwrap_or(self.variant());
+        let header = &self.file.header;
+
+        let start_datetime = match header.start_datetime.as_datetime() {
+            Some(dt) => *dt,
+            None => NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            ),
+        };
+
+        let ordinary = self.ordinary_signal_indices();
+        let target_sample_size = target_variant.sample_size_bytes();
+        let mut signals_spec: Vec<WriterSignal> = Vec::with_capacity(ordinary.len());
+        for &idx in &ordinary {
+            let sh = &header.signals[idx];
+            let (dmin, dmax) = match target_sample_size {
+                2 => (i16::MIN as i32, i16::MAX as i32),
+                3 => (-(1i32 << 23), (1i32 << 23) - 1),
+                _ => unreachable!(),
+            };
+            let target_dmin = sh.digital_min.max(dmin);
+            let target_dmax = sh.digital_max.min(dmax);
+            signals_spec.push(WriterSignal {
+                label: sh.label.clone(),
+                transducer: sh.transducer.clone(),
+                physical_dimension: sh.physical_dimension.clone(),
+                physical_min: sh.physical_min,
+                physical_max: sh.physical_max,
+                digital_min: target_dmin,
+                digital_max: target_dmax,
+                prefiltering: sh.prefiltering.clone(),
+                samples_per_record: sh.num_samples,
+                reserved: sh.reserved.clone(),
+            });
+        }
+
+        let spec = WriterSpec {
+            variant: target_variant,
+            patient_id: header.patient_id.clone(),
+            recording_id: header.recording_id.clone(),
+            start_datetime,
+            record_duration_secs: header.record_duration_secs,
+            signals: signals_spec,
+            annotation_bytes_per_record: None,
+        };
+
+        let mut writer = EdfWriter::create(path, spec)?;
+
+        // Pre-fetch annotations and group by record window.
+        let record_dur = header.record_duration_secs;
+        let num_records = self.num_records();
+        let mut by_record: Vec<Vec<Annotation>> =
+            (0..num_records).map(|_| Vec::new()).collect();
+        if target_variant.is_plus() {
+            for ann in self.annotations().into_iter() {
+                let r = (ann.onset / record_dur).floor() as i64;
+                let r = r.max(0) as usize;
+                let r = r.min(num_records.saturating_sub(1));
+                if num_records > 0 {
+                    by_record[r].push(ann);
+                }
+            }
+        }
+
+        // Stream record-by-record so we don't materialize the whole file in RAM.
+        let mut proxies: Vec<SignalProxy> = Vec::with_capacity(ordinary.len());
+        for &idx in &ordinary {
+            proxies.push(self.signal(idx)?);
+        }
+
+        let mut bufs: Vec<Vec<f64>> = proxies
+            .iter()
+            .map(|p| vec![0.0f64; p.header().num_samples])
+            .collect();
+
+        for r in 0..num_records {
+            for (i, p) in proxies.iter().enumerate() {
+                let spr = p.header().num_samples;
+                let start = r * spr;
+                p.read_physical(start, start + spr, &mut bufs[i])?;
+            }
+            let row: Vec<&[f64]> = bufs.iter().map(|b| b.as_slice()).collect();
+            writer.write_record_with_annotations(&row, &by_record[r])?;
+        }
+
+        writer.finish()?;
+        Ok(())
+    }
 }
 
 fn read_usize(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<usize> {

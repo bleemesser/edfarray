@@ -7,3 +7,4 @@ pub mod mmap;
 pub mod proxy;
 pub mod record;
 pub mod signal;
+pub mod writer;

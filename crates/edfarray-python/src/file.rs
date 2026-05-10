@@ -410,6 +410,33 @@ impl PyEdfFile {
         Ok(dict)
     }
 
+    /// Write this file to `path`, optionally transcoding to a different variant.
+    ///
+    /// Annotations and ordinary signals are copied; the destination's annotation
+    /// channel is rebuilt from parsed annotations rather than copied verbatim.
+    /// `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
+    /// if omitted, uses the source variant.
+    #[pyo3(signature = (path, variant=None))]
+    fn write_to(&self, path: &str, variant: Option<&str>) -> PyResult<()> {
+        use edfarray_core::header::EdfVariant;
+        let target = match variant {
+            None => None,
+            Some("EDF") => Some(EdfVariant::Edf),
+            Some("EDF+C") => Some(EdfVariant::EdfPlusC),
+            Some("EDF+D") => Some(EdfVariant::EdfPlusD),
+            Some("BDF") => Some(EdfVariant::Bdf),
+            Some("BDF+C") => Some(EdfVariant::BdfPlusC),
+            Some("BDF+D") => Some(EdfVariant::BdfPlusD),
+            Some(other) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown variant {:?}",
+                    other
+                )));
+            }
+        };
+        self.get().write_to(path, target).map_err(to_py_err)
+    }
+
     /// Read a page of digital (raw int32) data for multiple signals over a time range.
     ///
     /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.

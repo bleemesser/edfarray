@@ -84,6 +84,8 @@ Supports the context manager protocol (`with` statement).
 
 `signal_indices_by_rate() -> dict[float, list[int]]` -- Group ordinary signal indices by sample rate in Hz. Sub-Hz precision is preserved (e.g. 123.4 and 123.5 form distinct groups). Useful for creating separate `ArrayProxy` instances when the file has mixed sample rates.
 
+`write_to(path: str, variant: str | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations.
+
 `close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal` and `ArrayProxy` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
 
 `closed: bool` -- Whether `close()` has been called.
@@ -195,6 +197,75 @@ Returned by `EdfFile.array_proxy()`. A 2D view over multiple signals with the sa
 `proxy[list, slice]` -- Fancy indexing on the signal axis. The list contains proxy-coordinate signal indices.
 
 Step values other than 1 are not supported in slices.
+
+---
+
+## Writing files
+
+See [Writing EDF/BDF files](../guide/writing.md) for a full guide.
+
+### `edfarray.write_edf`
+
+```python
+edfarray.write_edf(
+    path: str,
+    *,
+    variant: str,
+    record_duration: float,
+    signals: list[WriterSignal],
+    data: list[numpy.ndarray],
+    annotations: list[Annotation] | None = None,
+    start_datetime: datetime.datetime | None = None,
+    patient_id: str | None = None,
+    recording_id: str | None = None,
+    annotation_bytes_per_record: int | None = None,
+) -> None
+```
+
+One-shot writer. `data[i]` must have length `num_records * signals[i].samples_per_record`. `variant` is one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`. The annotation channel is added automatically for `+` variants; do not include it in `signals`.
+
+### `edfarray.EdfWriter`
+
+```python
+edfarray.EdfWriter(
+    path: str,
+    *,
+    variant: str,
+    record_duration: float,
+    signals: list[WriterSignal],
+    start_datetime: datetime.datetime | None = None,
+    patient_id: str | None = None,
+    recording_id: str | None = None,
+    annotation_bytes_per_record: int | None = None,
+)
+```
+
+Streaming writer. Supports the context manager protocol (`with` block calls `finish()` on exit).
+
+`write_record(physical: list[numpy.ndarray], annotations: list[Annotation] | None = None) -> None` -- Encode and append one record. `physical[i]` must be a 1D float64 array of length `signals[i].samples_per_record`. Optional `annotations` are embedded in this record's annotation channel along with any pending ones queued via `add_annotation`.
+
+`add_annotation(annotation: Annotation) -> None` -- Queue an annotation to be embedded with the next `write_record` call.
+
+`finish() -> None` -- Flush, then seek back and patch `num_records` in the header. Idempotent. Called automatically by `__exit__`.
+
+### `edfarray.WriterSignal`
+
+```python
+edfarray.WriterSignal(
+    label: str,
+    physical_dimension: str,
+    physical_min: float,
+    physical_max: float,
+    digital_min: int,
+    digital_max: int,
+    samples_per_record: int,
+    transducer: str = "",
+    prefiltering: str = "",
+    reserved: str = "",
+)
+```
+
+Per-signal description. `samples_per_record` combined with the writer's `record_duration` gives the sample rate. For BDF/BDF+ files, `digital_min`/`digital_max` may use the full 24-bit signed range (±2²³).
 
 ---
 

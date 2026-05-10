@@ -39,6 +39,7 @@ with edfarray.EdfFile("recording.edf") as f:
 - [Working with Signals](guide/signals.md) -- indexing, slicing, physical vs digital
 - [Annotations & Time](guide/annotations.md) -- EDF+ annotations, discontinuous recordings
 - [Performance](guide/performance.md) -- bulk reads, architecture
+- [Writing Files](guide/writing.md) -- create EDF/BDF files from scratch
 
 ## Reference
 

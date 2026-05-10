@@ -9,8 +9,11 @@ __all__ = [
     "Annotation",
     "ArrayProxy",
     "EdfFile",
+    "EdfWriter",
     "Signal",
+    "WriterSignal",
     "inspect",
+    "write_edf",
 ]
 
 @typing.final
@@ -24,6 +27,7 @@ class Annotation:
     def duration(self) -> typing.Optional[builtins.float]: ...
     @property
     def text(self) -> builtins.str: ...
+    def __new__(cls, onset: builtins.float, text: builtins.str, duration: typing.Optional[builtins.float] = None) -> Annotation: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -270,6 +274,15 @@ class EdfFile:
         Returns a dict mapping sample rate in Hz (float) to a list of signal indices.
         Sub-Hz precision is preserved.
         """
+    def write_to(self, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> None:
+        r"""
+        Write this file to `path`, optionally transcoding to a different variant.
+        
+        Annotations and ordinary signals are copied; the destination's annotation
+        channel is rebuilt from parsed annotations rather than copied verbatim.
+        `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
+        if omitted, uses the source variant.
+        """
     def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int32]]:
         r"""
         Read a page of digital (raw int32) data for multiple signals over a time range.
@@ -280,6 +293,37 @@ class EdfFile:
         sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
         the time range using actual record onset times.
         """
+
+@typing.final
+class EdfWriter:
+    r"""
+    Streaming EDF/BDF writer.
+    
+    Use as a context manager (`with edfarray.EdfWriter(...) as w:`) or call
+    `.finish()` explicitly. `__exit__` calls `finish()` automatically.
+    """
+    def __new__(cls, path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None) -> EdfWriter: ...
+    def __enter__(self) -> EdfWriter: ...
+    def __exit__(self, *_args: typing.Any) -> None: ...
+    def add_annotation(self, annotation: Annotation) -> None:
+        r"""
+        Queue an annotation to be embedded in the next written record.
+        """
+    def write_record(self, physical: typing.Sequence[numpy.typing.NDArray[numpy.float64]], annotations: typing.Optional[typing.Sequence[Annotation]] = None) -> None:
+        r"""
+        Write one data record from physical (float) values.
+        
+        `physical` is a list of 1D float64 numpy arrays (one per user signal),
+        each of length `samples_per_record`. `annotations` is an optional list
+        of annotations to embed in this record's annotation channel (only valid
+        for `+C`/`+D` variants).
+        """
+    def finish(self) -> None:
+        r"""
+        Finalize the file: flush buffers and patch `num_records` in the header.
+        After calling, the writer is no longer usable.
+        """
+    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class Signal:
@@ -377,6 +421,17 @@ class Signal:
         `EdfFile.signal()` starts fresh.
         """
 
+@typing.final
+class WriterSignal:
+    r"""
+    Per-signal description used by [`EdfWriter`] and [`write_edf`].
+    
+    `physical_min`/`physical_max` define the unit range. `digital_min`/`digital_max`
+    define the integer range used in the binary file (16-bit for EDF, 24-bit for BDF).
+    """
+    def __new__(cls, label: builtins.str, physical_dimension: builtins.str, physical_min: builtins.float, physical_max: builtins.float, digital_min: builtins.int, digital_max: builtins.int, samples_per_record: builtins.int, transducer: builtins.str = ..., prefiltering: builtins.str = ..., reserved: builtins.str = ...) -> WriterSignal: ...
+    def __repr__(self) -> builtins.str: ...
+
 def inspect(path: builtins.str) -> dict:
     r"""
     Lightweight metadata extracted from an EDF/EDF+ file header without
@@ -385,5 +440,14 @@ def inspect(path: builtins.str) -> dict:
     Returns a dict with keys:
     `variant`, `num_signals`, `num_records`, `record_duration`, `duration`,
     `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
+    """
+
+def write_edf(path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], data: typing.Sequence[numpy.typing.NDArray[numpy.float64]], annotations: typing.Optional[typing.Sequence[Annotation]] = None, start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None) -> None:
+    r"""
+    Write a complete EDF/BDF file in one call.
+    
+    `data` is a list of 1D float64 numpy arrays, one per user signal. Each
+    array's length must be `num_records * samples_per_record` and consistent
+    across signals.
     """
 

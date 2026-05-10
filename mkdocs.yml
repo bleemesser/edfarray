@@ -36,6 +36,7 @@ nav:
     - Working with Signals: guide/signals.md
     - Annotations & Time: guide/annotations.md
     - Performance: guide/performance.md
+    - Writing Files: guide/writing.md
   - Reference:
     - Python API: reference/python-api.md
     - Rust Crate: reference/rust-api.md
