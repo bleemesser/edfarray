@@ -166,6 +166,8 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 `read_at(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
 
+`with_cache(capacity: int) -> None` -- Enable an LRU cache of decoded physical record data. `capacity` is the number of records to cache. A capacity of 0 disables the cache (default). The cache is per-Signal-instance; cloning or re-fetching from `EdfFile.signal()` starts fresh.
+
 `__len__() -> int` -- Total number of samples.
 
 ---

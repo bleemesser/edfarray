@@ -368,6 +368,14 @@ class Signal:
         For EDF and EDF+C, this is equivalent to indexing by flat sample number,
         i.e. `int(time * sample_rate)`.
         """
+    def with_cache(self, capacity: builtins.int) -> None:
+        r"""
+        Enable an LRU cache for decoded physical record data.
+        
+        `capacity` is the number of records to cache. A capacity of 0 disables
+        the cache. The cache is per-Signal-instance; cloning or re-fetching from
+        `EdfFile.signal()` starts fresh.
+        """
 
 def inspect(path: builtins.str) -> dict:
     r"""

@@ -203,6 +203,15 @@ impl PySignal {
         }
         Ok(array)
     }
+
+    /// Enable an LRU cache for decoded physical record data.
+    ///
+    /// `capacity` is the number of records to cache. A capacity of 0 disables
+    /// the cache. The cache is per-Signal-instance; cloning or re-fetching from
+    /// `EdfFile.signal()` starts fresh.
+    fn with_cache(&mut self, capacity: usize) {
+        self.proxy.with_cache_mut(capacity);
+    }
 }
 
 impl PySignal {
