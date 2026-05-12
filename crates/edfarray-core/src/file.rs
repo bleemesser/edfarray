@@ -177,6 +177,13 @@ impl EdfFile {
         self.file.annotations_ready()
     }
 
+    /// Block the current thread until the background annotation scan completes.
+    ///
+    /// Idempotent: returns immediately if the scan is already done.
+    pub fn wait_for_annotations(&self) {
+        self.file.wait_for_annotations();
+    }
+
     /// Get a signal proxy by index.
     pub fn signal(&self, idx: usize) -> Result<SignalProxy> {
         SignalProxy::new(Arc::clone(&self.file), idx)
