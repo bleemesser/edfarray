@@ -180,7 +180,7 @@ impl EdfWriter {
         if spec.signals.is_empty() {
             return Err(EdfError::NoSignals);
         }
-        if !(spec.record_duration_secs > 0.0) {
+        if !(spec.record_duration_secs > 0.0) || !spec.record_duration_secs.is_finite() {
             return Err(EdfError::InvalidArgument {
                 name: "record_duration_secs",
                 reason: format!("must be > 0, got {}", spec.record_duration_secs),
@@ -211,7 +211,7 @@ impl EdfWriter {
         };
 
         let start_subsecond = {
-            let nanos = spec.start_datetime.and_utc().timestamp_subsec_nanos();
+            let nanos = spec.start_datetime.nanosecond();
             (nanos as f64) / 1_000_000_000.0
         };
 
