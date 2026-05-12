@@ -11,6 +11,8 @@ use edfarray_core::header::Sex;
 use crate::annotations::PyAnnotation;
 use crate::errors::to_py_err;
 
+use numpy::{PyArray1, PyArray2, PyArrayMethods};
+
 #[pyclass(name = "EdfFile", module = "edfarray._core.aio")]
 pub struct PyAsyncEdfFile {
     inner: Option<Arc<EdfFile>>,
@@ -305,6 +307,424 @@ impl PyAsyncEdfFile {
             Ok(())
         })
     }
+
+    /// Read a page of physical (f64) data for multiple signals over a time range.
+    ///
+    /// Returns a list of numpy arrays, one per signal. Signals with different
+    /// sample rates produce arrays of different lengths.
+    ///
+    /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+    ///
+    /// When `use_time` is false (default), time params are converted to flat
+    /// sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+    /// the time range using actual record onset times.
+    #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
+    fn read_page<'py>(
+        &self,
+        py: Python<'py>,
+        start_sec: f64,
+        end_sec: f64,
+        signal_indices: Option<Vec<usize>>,
+        use_time: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.get()?.clone();
+        let indices = signal_indices.unwrap_or_else(|| inner.ordinary_signal_indices());
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buffers = tokio::task::spawn_blocking(move || {
+                inner.read_page(&indices, start_sec, end_sec, use_time)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<pyo3::types::PyList>> {
+                let list = pyo3::types::PyList::empty(py);
+                for buf in buffers {
+                    list.append(PyArray1::from_vec(py, buf))?;
+                }
+                Ok(list.unbind())
+            })
+        })
+    }
+
+    /// Read a page of digital (raw int32) data for multiple signals over a time range.
+    ///
+    /// Same parameters as `read_page` but returns int32 arrays of the raw digital values.
+    #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
+    fn read_page_digital<'py>(
+        &self,
+        py: Python<'py>,
+        start_sec: f64,
+        end_sec: f64,
+        signal_indices: Option<Vec<usize>>,
+        use_time: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.get()?.clone();
+        let indices = signal_indices.unwrap_or_else(|| inner.ordinary_signal_indices());
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buffers = tokio::task::spawn_blocking(move || {
+                inner.read_page_digital(&indices, start_sec, end_sec, use_time)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<pyo3::types::PyList>> {
+                let list = pyo3::types::PyList::empty(py);
+                for buf in buffers {
+                    list.append(PyArray1::from_vec(py, buf))?;
+                }
+                Ok(list.unbind())
+            })
+        })
+    }
+
+    #[pyo3(signature = (idx_or_label, cache_capacity=0))]
+    fn signal(&self, idx_or_label: &Bound<'_, PyAny>, cache_capacity: usize) -> PyResult<PyAsyncSignal> {
+        let inner = self.get()?;
+        let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
+            inner.signal(idx).map_err(to_py_err)?
+        } else if let Ok(label) = idx_or_label.extract::<String>() {
+            inner.signal_by_label(&label).map_err(to_py_err)?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "signal() argument must be int or str",
+            ));
+        };
+        let proxy = if cache_capacity > 0 { proxy.with_cache(cache_capacity) } else { proxy };
+        Ok(PyAsyncSignal::new(proxy))
+    }
+
+    #[pyo3(signature = (signal_indices=None))]
+    fn array_proxy(&self, signal_indices: Option<Vec<usize>>) -> PyResult<PyAsyncArrayProxy> {
+        let inner = self.get()?;
+        let proxy = inner.array_proxy(signal_indices.as_deref()).map_err(to_py_err)?;
+        Ok(PyAsyncArrayProxy::new(proxy))
+    }
+}
+
+#[pyclass(name = "Signal", module = "edfarray._core.aio")]
+pub struct PyAsyncSignal {
+    inner: Arc<edfarray_core::proxy::SignalProxy>,
+}
+
+impl PyAsyncSignal {
+    pub fn new(proxy: edfarray_core::proxy::SignalProxy) -> Self {
+        PyAsyncSignal { inner: Arc::new(proxy) }
+    }
+}
+
+#[pymethods]
+impl PyAsyncSignal {
+    #[getter]
+    fn label(&self) -> String {
+        self.inner.header().label.clone()
+    }
+
+    #[getter]
+    fn transducer(&self) -> String {
+        self.inner.header().transducer.clone()
+    }
+
+    #[getter]
+    fn physical_dimension(&self) -> String {
+        self.inner.header().physical_dimension.clone()
+    }
+
+    #[getter]
+    fn prefiltering(&self) -> String {
+        self.inner.header().prefiltering.clone()
+    }
+
+    #[getter]
+    fn sample_rate(&self) -> f64 {
+        self.inner.sample_rate()
+    }
+
+    #[getter]
+    fn samples_per_record(&self) -> usize {
+        self.inner.header().num_samples
+    }
+
+    #[getter]
+    fn physical_min(&self) -> f64 {
+        self.inner.header().physical_min
+    }
+
+    #[getter]
+    fn physical_max(&self) -> f64 {
+        self.inner.header().physical_max
+    }
+
+    #[getter]
+    fn digital_min(&self) -> i32 {
+        self.inner.header().digital_min
+    }
+
+    #[getter]
+    fn digital_max(&self) -> i32 {
+        self.inner.header().digital_max
+    }
+
+    #[getter]
+    fn num_samples(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "<edfarray.aio.Signal label={:?} samples={} rate={}Hz>",
+            self.inner.header().label,
+            self.inner.len(),
+            self.inner.sample_rate()
+        )
+    }
+
+    fn read_physical<'py>(&self, py: Python<'py>, start: usize, stop: usize) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buf: Vec<f64> = tokio::task::spawn_blocking(move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                let count = stop.saturating_sub(start);
+                let mut buf = vec![0.0; count];
+                if count > 0 {
+                    proxy.read_physical(start, stop, &mut buf)?;
+                }
+                Ok(buf)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<f64>>> {
+                Ok(PyArray1::from_vec(py, buf).unbind())
+            })
+        })
+    }
+
+    fn read_digital<'py>(&self, py: Python<'py>, start: usize, stop: usize) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buf: Vec<i32> = tokio::task::spawn_blocking(move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
+                let count = stop.saturating_sub(start);
+                let mut buf = vec![0i32; count];
+                if count > 0 {
+                    proxy.read_digital(start, stop, &mut buf)?;
+                }
+                Ok(buf)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<i32>>> {
+                Ok(PyArray1::from_vec(py, buf).unbind())
+            })
+        })
+    }
+
+    fn read_at<'py>(&self, py: Python<'py>, start_sec: f64, end_sec: f64) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buf = tokio::task::spawn_blocking(move || proxy.read_at(start_sec, end_sec))
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+                .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<f64>>> {
+                Ok(PyArray1::from_vec(py, buf).unbind())
+            })
+        })
+    }
+
+    fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        let len = self.inner.len();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                let mut buf = vec![0.0; len];
+                if len > 0 {
+                    proxy.read_physical(0, len, &mut buf)?;
+                }
+                Ok(buf)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<f64>>> {
+                Ok(PyArray1::from_vec(py, buf).unbind())
+            })
+        })
+    }
+
+    fn to_digital<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        let len = self.inner.len();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
+                let mut buf = vec![0i32; len];
+                if len > 0 {
+                    proxy.read_digital(0, len, &mut buf)?;
+                }
+                Ok(buf)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<i32>>> {
+                Ok(PyArray1::from_vec(py, buf).unbind())
+            })
+        })
+    }
+
+    fn times<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        let len = self.inner.len();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                let mut buf = vec![0.0; len];
+                if len > 0 {
+                    proxy.read_times(0, len, &mut buf)?;
+                }
+                Ok(buf)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<f64>>> {
+                Ok(PyArray1::from_vec(py, buf).unbind())
+            })
+        })
+    }
+}
+
+#[pyclass(name = "ArrayProxy", module = "edfarray._core.aio")]
+pub struct PyAsyncArrayProxy {
+    inner: Arc<edfarray_core::array_proxy::ArrayProxy>,
+}
+
+impl PyAsyncArrayProxy {
+    pub fn new(proxy: edfarray_core::array_proxy::ArrayProxy) -> Self {
+        PyAsyncArrayProxy { inner: Arc::new(proxy) }
+    }
+}
+
+#[pymethods]
+impl PyAsyncArrayProxy {
+    #[getter]
+    fn shape(&self) -> (usize, usize) {
+        self.inner.shape()
+    }
+
+    #[getter]
+    fn sample_rate(&self) -> f64 {
+        self.inner.sample_rate()
+    }
+
+    #[getter]
+    fn signal_indices(&self) -> Vec<usize> {
+        self.inner.signal_indices().to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        let (r, c) = self.inner.shape();
+        format!("<edfarray.aio.ArrayProxy shape=({}, {}) rate={}Hz>", r, c, self.inner.sample_rate())
+    }
+
+    #[pyo3(signature = (sample_start, sample_stop, signal_indices=None))]
+    fn read_physical<'py>(
+        &self,
+        py: Python<'py>,
+        sample_start: usize,
+        sample_stop: usize,
+        signal_indices: Option<Vec<usize>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        let indices = signal_indices.unwrap_or_else(|| proxy.signal_indices().to_vec());
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let data = tokio::task::spawn_blocking(move || {
+                proxy.read_physical(&indices, sample_start..sample_stop)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            let n_sig = data.len();
+            let n_samp = if n_sig > 0 { data[0].len() } else { 0 };
+            Python::attach(|py| -> PyResult<Py<PyArray2<f64>>> {
+                let array = PyArray2::<f64>::zeros(py, (n_sig, n_samp), false);
+                unsafe {
+                    let slice = array.as_slice_mut()?;
+                    for (i, row) in data.iter().enumerate() {
+                        slice[i * n_samp..i * n_samp + row.len()].copy_from_slice(row);
+                    }
+                }
+                Ok(array.unbind())
+            })
+        })
+    }
+
+    #[pyo3(signature = (sample_start, sample_stop, signal_indices=None))]
+    fn read_digital<'py>(
+        &self,
+        py: Python<'py>,
+        sample_start: usize,
+        sample_stop: usize,
+        signal_indices: Option<Vec<usize>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        let indices = signal_indices.unwrap_or_else(|| proxy.signal_indices().to_vec());
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let data = tokio::task::spawn_blocking(move || {
+                proxy.read_digital(&indices, sample_start..sample_stop)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            let n_sig = data.len();
+            let n_samp = if n_sig > 0 { data[0].len() } else { 0 };
+            Python::attach(|py| -> PyResult<Py<PyArray2<i32>>> {
+                let array = PyArray2::<i32>::zeros(py, (n_sig, n_samp), false);
+                unsafe {
+                    let slice = array.as_slice_mut()?;
+                    for (i, row) in data.iter().enumerate() {
+                        slice[i * n_samp..i * n_samp + row.len()].copy_from_slice(row);
+                    }
+                }
+                Ok(array.unbind())
+            })
+        })
+    }
+
+    fn get<'py>(&self, py: Python<'py>, signal_idx: usize, sample_idx: usize) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let val = tokio::task::spawn_blocking(move || proxy.get(signal_idx, sample_idx))
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+                .map_err(to_py_err)?;
+            Ok(val)
+        })
+    }
+
+    #[pyo3(signature = (sample_idx, signal_indices=None))]
+    fn read_signals_at_sample<'py>(
+        &self,
+        py: Python<'py>,
+        sample_idx: usize,
+        signal_indices: Option<Vec<usize>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let proxy = self.inner.clone();
+        let indices = signal_indices.unwrap_or_else(|| proxy.signal_indices().to_vec());
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let data = tokio::task::spawn_blocking(move || {
+                proxy.read_signals_at_sample(&indices, sample_idx)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
+            Python::attach(|py| -> PyResult<Py<PyArray1<f64>>> {
+                Ok(PyArray1::from_vec(py, data).unbind())
+            })
+        })
+    }
 }
 
 #[pyfunction]
@@ -347,6 +767,8 @@ pub fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let aio = PyModule::new(py, "aio")?;
     aio.add_class::<PyAsyncEdfFile>()?;
+    aio.add_class::<PyAsyncSignal>()?;
+    aio.add_class::<PyAsyncArrayProxy>()?;
     aio.add_function(wrap_pyfunction!(open_async, &aio)?)?;
     aio.add_function(wrap_pyfunction!(inspect_async, &aio)?)?;
     parent.add_submodule(&aio)?;

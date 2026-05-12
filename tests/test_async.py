@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import edfarray
@@ -79,3 +80,282 @@ async def test_closed_file_raises():
     f.close()
     with pytest.raises(RuntimeError, match="closed"):
         await f.wait_for_annotations()
+
+
+async def test_read_page_matches_sync():
+    path = _pick_fixture()
+    sync_f = edfarray.EdfFile(str(path))
+    async_f = await aio.open(str(path))
+    try:
+        sync_arrays = sync_f.read_page(0.0, 1.0)
+        async_arrays = await async_f.read_page(0.0, 1.0)
+        assert len(sync_arrays) == len(async_arrays)
+        for s, a in zip(sync_arrays, async_arrays):
+            np.testing.assert_array_equal(s, a)
+            assert a.dtype == np.float64
+    finally:
+        async_f.close()
+
+
+async def test_read_page_digital_matches_sync():
+    path = _pick_fixture()
+    sync_f = edfarray.EdfFile(str(path))
+    async_f = await aio.open(str(path))
+    try:
+        sync_arrays = sync_f.read_page_digital(0.0, 1.0)
+        async_arrays = await async_f.read_page_digital(0.0, 1.0)
+        assert len(sync_arrays) == len(async_arrays)
+        for s, a in zip(sync_arrays, async_arrays):
+            np.testing.assert_array_equal(s, a)
+            assert a.dtype == np.int32
+    finally:
+        async_f.close()
+
+
+async def test_read_page_signal_indices_subset():
+    path = _pick_fixture()
+    f = await aio.open(str(path))
+    try:
+        ordinary = f.ordinary_signal_indices()
+        if len(ordinary) < 2:
+            pytest.skip("need at least 2 ordinary signals")
+        subset = ordinary[:2]
+        arrays = await f.read_page(0.0, 1.0, signal_indices=subset)
+        assert len(arrays) == 2
+    finally:
+        f.close()
+
+
+async def test_read_page_concurrent_gather_works():
+    """Concurrent reads via asyncio.gather should all complete with correct
+    results. This is a correctness smoke test, not a perf benchmark."""
+    path = _pick_fixture()
+    f = await aio.open(str(path))
+    try:
+        results = await asyncio.gather(*[f.read_page(0.0, 1.0) for _ in range(4)])
+        assert len(results) == 4
+        for arrays in results:
+            assert len(arrays) > 0
+            assert all(a.dtype == np.float64 for a in arrays)
+        for arrays in results[1:]:
+            for a, b in zip(results[0], arrays):
+                np.testing.assert_array_equal(a, b)
+    finally:
+        f.close()
+
+
+async def test_read_page_releases_gil():
+    """A Python thread should make progress while an async read is in flight.
+    If the GIL is held during decode, the busy thread is starved and its
+    counter barely moves.
+
+    Directly observes GIL release rather than inferring from wall-clock,
+    which is unreliable on tiny fixtures where overhead dominates decode."""
+    import threading
+
+    path = _pick_fixture()
+    f = await aio.open(str(path))
+    try:
+        counter = [0]
+        stop = threading.Event()
+
+        def busy():
+            while not stop.is_set():
+                counter[0] += 1
+
+        await f.read_page(0.0, f.duration)
+
+        t = threading.Thread(target=busy)
+        t.start()
+        try:
+            start = counter[0]
+            await asyncio.gather(*[f.read_page(0.0, f.duration) for _ in range(8)])
+            ticks = counter[0] - start
+        finally:
+            stop.set()
+            t.join()
+
+        assert ticks > 10_000, (
+            f"python thread only advanced {ticks} ticks during 8 concurrent "
+            f"reads — GIL likely held throughout decode"
+        )
+    finally:
+        f.close()
+
+
+async def test_read_page_closed_file_raises():
+    path = _pick_fixture()
+    f = await aio.open(str(path))
+    f.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        await f.read_page(0.0, 1.0)
+
+
+async def test_signal_metadata_matches_sync():
+    path = _pick_fixture()
+    sync_f = edfarray.EdfFile(str(path))
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        sync_sig = sync_f.signal(idx)
+        async_sig = async_f.signal(idx)
+        assert async_sig.label == sync_sig.label
+        assert async_sig.sample_rate == sync_sig.sample_rate
+        assert async_sig.num_samples == sync_sig.num_samples
+        assert async_sig.physical_min == sync_sig.physical_min
+        assert async_sig.physical_max == sync_sig.physical_max
+        assert len(async_sig) == len(sync_sig)
+    finally:
+        async_f.close()
+
+
+async def test_signal_read_physical_matches_sync():
+    path = _pick_fixture()
+    sync_f = edfarray.EdfFile(str(path))
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        n = min(async_f.signal(idx).num_samples, 1000)
+        sync_data = sync_f.signal(idx)[0:n]
+        async_data = await async_f.signal(idx).read_physical(0, n)
+        np.testing.assert_array_equal(sync_data, async_data)
+        assert async_data.dtype == np.float64
+    finally:
+        async_f.close()
+
+
+async def test_signal_to_numpy_and_to_digital():
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        sig = async_f.signal(idx)
+        phys = await sig.to_numpy()
+        dig = await sig.to_digital()
+        assert phys.dtype == np.float64
+        assert dig.dtype == np.int32
+        assert phys.shape == dig.shape == (sig.num_samples,)
+    finally:
+        async_f.close()
+
+
+async def test_signal_times():
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        sig = async_f.signal(idx)
+        t = await sig.times()
+        assert t.dtype == np.float64
+        assert t.shape == (sig.num_samples,)
+        assert (np.diff(t) >= 0).all()
+    finally:
+        async_f.close()
+
+
+async def test_signal_by_label():
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        labels = async_f.signal_labels()
+        first_label = labels[0]
+        sig = async_f.signal(first_label)
+        assert sig.label == first_label
+    finally:
+        async_f.close()
+
+
+async def test_signal_with_cache():
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        cached = async_f.signal(idx, cache_capacity=8)
+        uncached = async_f.signal(idx)
+        n = min(cached.num_samples, 500)
+        a = await cached.read_physical(0, n)
+        b = await uncached.read_physical(0, n)
+        np.testing.assert_array_equal(a, b)
+    finally:
+        async_f.close()
+
+
+async def test_array_proxy_shape_and_read():
+    path = _pick_fixture()
+    sync_f = edfarray.EdfFile(str(path))
+    async_f = await aio.open(str(path))
+    try:
+        sync_ap = sync_f.array_proxy()
+        async_ap = async_f.array_proxy()
+        assert async_ap.shape == sync_ap.shape
+        assert async_ap.sample_rate == sync_ap.sample_rate
+
+        n_samp = min(async_ap.shape[1], 500)
+        async_data = await async_ap.read_physical(0, n_samp)
+        sync_data = sync_ap[:, 0:n_samp]
+        assert async_data.shape == sync_data.shape
+        np.testing.assert_array_equal(async_data, sync_data)
+    finally:
+        async_f.close()
+
+
+async def test_array_proxy_get_and_signals_at_sample():
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        ap = async_f.array_proxy()
+        val = await ap.get(0, 0)
+        assert isinstance(val, float)
+        row = await ap.read_signals_at_sample(0)
+        assert row.dtype == np.float64
+        assert row.shape == (ap.shape[0],)
+    finally:
+        async_f.close()
+
+
+async def test_array_proxy_subset_signals():
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        ordinary = async_f.ordinary_signal_indices()
+        if len(ordinary) < 2:
+            pytest.skip("need at least 2 ordinary signals")
+        ap = async_f.array_proxy(signal_indices=ordinary[:2])
+        assert ap.shape[0] == 2
+        data = await ap.read_physical(0, min(ap.shape[1], 200))
+        assert data.shape[0] == 2
+    finally:
+        async_f.close()
+
+
+async def test_signal_concurrent_reads_release_gil():
+    """Concurrent Signal reads should release the GIL during decode."""
+    import threading
+
+    path = _pick_fixture()
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        sig = async_f.signal(idx)
+
+        counter = [0]
+        stop = threading.Event()
+        def busy():
+            while not stop.is_set():
+                counter[0] += 1
+
+        await sig.to_numpy()
+
+        t = threading.Thread(target=busy)
+        t.start()
+        try:
+            start = counter[0]
+            await asyncio.gather(*[sig.to_numpy() for _ in range(8)])
+            ticks = counter[0] - start
+        finally:
+            stop.set()
+            t.join()
+
+        assert ticks > 10_000, f"python thread only advanced {ticks} ticks"
+    finally:
+        async_f.close()
