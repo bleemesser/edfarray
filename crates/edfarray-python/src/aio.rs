@@ -1,17 +1,77 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use chrono::{Datelike, Timelike};
 use pyo3::prelude::*;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::types::PyDict;
 
+use edfarray_core::annotation::Annotation as CoreAnnotation;
 use edfarray_core::file::EdfFile;
 use edfarray_core::header::Sex;
+use edfarray_core::writer::{EdfWriter, write_edf};
 
 use crate::annotations::PyAnnotation;
 use crate::errors::to_py_err;
+use crate::writer::{parse_variant, build_spec, anns_to_core};
 
-use numpy::{PyArray1, PyArray2, PyArrayMethods};
+use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1};
+
+#[pyclass(name = "WriterSignal", module = "edfarray._core.aio", from_py_object)]
+#[derive(Clone)]
+pub struct PyAsyncWriterSignal {
+    inner: edfarray_core::writer::WriterSignal,
+}
+
+#[pymethods]
+impl PyAsyncWriterSignal {
+    #[new]
+    #[pyo3(signature = (
+        label,
+        physical_dimension,
+        physical_min,
+        physical_max,
+        digital_min,
+        digital_max,
+        samples_per_record,
+        transducer = String::new(),
+        prefiltering = String::new(),
+        reserved = String::new(),
+    ))]
+    fn new(
+        label: String,
+        physical_dimension: String,
+        physical_min: f64,
+        physical_max: f64,
+        digital_min: i32,
+        digital_max: i32,
+        samples_per_record: usize,
+        transducer: String,
+        prefiltering: String,
+        reserved: String,
+    ) -> Self {
+        Self {
+            inner: edfarray_core::writer::WriterSignal {
+                label,
+                transducer,
+                physical_dimension,
+                physical_min,
+                physical_max,
+                digital_min,
+                digital_max,
+                prefiltering,
+                samples_per_record,
+                reserved,
+            },
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "<edfarray.aio.WriterSignal label={:?} samples_per_record={}>",
+            self.inner.label, self.inner.samples_per_record
+        )
+    }
+}
 
 #[pyclass(name = "EdfFile", module = "edfarray._core.aio")]
 pub struct PyAsyncEdfFile {
@@ -377,6 +437,28 @@ impl PyAsyncEdfFile {
         })
     }
 
+    /// Write this file to `path`, optionally transcoding to a different variant.
+    #[pyo3(signature = (path, variant=None))]
+    fn write_to<'py>(
+        &self,
+        py: Python<'py>,
+        path: String,
+        variant: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.get()?.clone();
+        let target = match variant.as_deref() {
+            None => None,
+            Some(s) => Some(parse_variant(s)?),
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            tokio::task::spawn_blocking(move || inner.write_to(&path, target))
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+                .map_err(to_py_err)?;
+            Ok(())
+        })
+    }
+
     #[pyo3(signature = (idx_or_label, cache_capacity=0))]
     fn signal(&self, idx_or_label: &Bound<'_, PyAny>, cache_capacity: usize) -> PyResult<PyAsyncSignal> {
         let inner = self.get()?;
@@ -727,6 +809,210 @@ impl PyAsyncArrayProxy {
     }
 }
 
+#[pyclass(name = "EdfWriter", module = "edfarray._core.aio")]
+pub struct PyAsyncEdfWriter {
+    inner: Arc<StdMutex<Option<EdfWriter>>>,
+}
+
+#[pymethods]
+impl PyAsyncEdfWriter {
+    #[classmethod]
+    #[pyo3(signature = (
+        path,
+        *,
+        variant,
+        record_duration,
+        signals,
+        start_datetime = None,
+        patient_id = None,
+        recording_id = None,
+        annotation_bytes_per_record = None,
+    ))]
+    fn create<'py>(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        py: Python<'py>,
+        path: String,
+        variant: String,
+        record_duration: f64,
+        signals: Vec<PyAsyncWriterSignal>,
+        start_datetime: Option<&Bound<'_, PyAny>>,
+        patient_id: Option<String>,
+        recording_id: Option<String>,
+        annotation_bytes_per_record: Option<usize>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let spec = build_spec(
+            &variant,
+            record_duration,
+            signals.into_iter().map(|s| s.inner).collect(),
+            start_datetime,
+            patient_id,
+            recording_id,
+            annotation_bytes_per_record,
+        )?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let writer = tokio::task::spawn_blocking(move || EdfWriter::create(&path, spec))
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+                .map_err(to_py_err)?;
+            Python::attach(|py| {
+                Py::new(py, PyAsyncEdfWriter {
+                    inner: Arc::new(StdMutex::new(Some(writer))),
+                })
+            })
+        })
+    }
+
+    fn add_annotation(&self, annotation: PyAnnotation) -> PyResult<()> {
+        let mut guard = self.inner.lock().unwrap();
+        let w = guard
+            .as_mut()
+            .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
+        w.add_annotation(CoreAnnotation {
+            onset: annotation.onset,
+            duration: annotation.duration,
+            text: annotation.text,
+        });
+        Ok(())
+    }
+
+    #[pyo3(signature = (physical, annotations=None))]
+    fn write_record<'py>(
+        &self,
+        py: Python<'py>,
+        physical: Vec<PyReadonlyArray1<f64>>,
+        annotations: Option<Vec<PyAnnotation>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let owned: Vec<Vec<f64>> = physical
+            .iter()
+            .map(|arr| arr.as_slice().map(|s| s.to_vec()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("physical arrays must be contiguous: {e}")))?;
+        let anns_owned: Vec<CoreAnnotation> = annotations
+            .map(|a| anns_to_core(&a))
+            .unwrap_or_default();
+        let writer = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            tokio::task::spawn_blocking(move || -> PyResult<()> {
+                let mut guard = writer.lock().unwrap();
+                let w = guard
+                    .as_mut()
+                    .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
+                let slices: Vec<&[f64]> = owned.iter().map(|v| v.as_slice()).collect();
+                w.write_record_with_annotations(&slices, &anns_owned)
+                    .map_err(to_py_err)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
+            Ok(())
+        })
+    }
+
+    fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            tokio::task::spawn_blocking(move || -> PyResult<()> {
+                let mut guard = writer.lock().unwrap();
+                let w = guard
+                    .take()
+                    .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
+                w.finish().map_err(to_py_err)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
+            Ok(())
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        if self.inner.lock().unwrap().is_some() {
+            "<edfarray.aio.EdfWriter open>".to_string()
+        } else {
+            "<edfarray.aio.EdfWriter finished>".to_string()
+        }
+    }
+
+    fn __aenter__<'py>(slf: Py<Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(slf) })
+    }
+
+    #[pyo3(signature = (*_args))]
+    fn __aexit__<'py>(
+        &self,
+        py: Python<'py>,
+        _args: Bound<'_, pyo3::types::PyTuple>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            tokio::task::spawn_blocking(move || -> PyResult<()> {
+                let mut guard = writer.lock().unwrap();
+                if let Some(w) = guard.take() {
+                    w.finish().map_err(to_py_err)?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
+            Ok(())
+        })
+    }
+}
+
+#[pyfunction]
+#[pyo3(name = "write_edf", signature = (
+    path,
+    *,
+    variant,
+    record_duration,
+    signals,
+    data,
+    annotations = None,
+    start_datetime = None,
+    patient_id = None,
+    recording_id = None,
+    annotation_bytes_per_record = None,
+))]
+#[allow(clippy::too_many_arguments)]
+fn write_edf_async<'py>(
+    py: Python<'py>,
+    path: String,
+    variant: String,
+    record_duration: f64,
+    signals: Vec<PyAsyncWriterSignal>,
+    data: Vec<PyReadonlyArray1<f64>>,
+    annotations: Option<Vec<PyAnnotation>>,
+    start_datetime: Option<&Bound<'_, PyAny>>,
+    patient_id: Option<String>,
+    recording_id: Option<String>,
+    annotation_bytes_per_record: Option<usize>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let spec = build_spec(
+        &variant,
+        record_duration,
+        signals.into_iter().map(|s| s.inner).collect(),
+        start_datetime,
+        patient_id,
+        recording_id,
+        annotation_bytes_per_record,
+    )?;
+    let owned: Vec<Vec<f64>> = data
+        .iter()
+        .map(|arr| arr.as_slice().map(|s| s.to_vec()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("data arrays must be contiguous: {e}")))?;
+    let anns_owned: Vec<CoreAnnotation> = annotations
+        .map(|a| anns_to_core(&a))
+        .unwrap_or_default();
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        tokio::task::spawn_blocking(move || -> PyResult<()> {
+            let slices: Vec<&[f64]> = owned.iter().map(|v| v.as_slice()).collect();
+            write_edf(&path, spec, &slices, &anns_owned).map_err(to_py_err)
+        })
+        .await
+        .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
+        Ok(())
+    })
+}
+
 #[pyfunction]
 #[pyo3(name = "open")]
 fn open_async<'py>(py: Python<'py>, path: String) -> PyResult<Bound<'py, PyAny>> {
@@ -766,11 +1052,14 @@ fn inspect_async<'py>(py: Python<'py>, path: String) -> PyResult<Bound<'py, PyAn
 pub fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let aio = PyModule::new(py, "aio")?;
+    aio.add_class::<PyAsyncWriterSignal>()?;
     aio.add_class::<PyAsyncEdfFile>()?;
     aio.add_class::<PyAsyncSignal>()?;
     aio.add_class::<PyAsyncArrayProxy>()?;
+    aio.add_class::<PyAsyncEdfWriter>()?;
     aio.add_function(wrap_pyfunction!(open_async, &aio)?)?;
     aio.add_function(wrap_pyfunction!(inspect_async, &aio)?)?;
+    aio.add_function(wrap_pyfunction!(write_edf_async, &aio)?)?;
     parent.add_submodule(&aio)?;
     py.import("sys")?
         .getattr("modules")?

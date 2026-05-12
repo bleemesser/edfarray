@@ -359,3 +359,149 @@ async def test_signal_concurrent_reads_release_gil():
         assert ticks > 10_000, f"python thread only advanced {ticks} ticks"
     finally:
         async_f.close()
+
+
+async def test_write_edf_async_roundtrip(tmp_path):
+    out = tmp_path / "out.edf"
+    sig = aio.WriterSignal(
+        label="EEG Fz",
+        physical_dimension="uV",
+        physical_min=-100.0,
+        physical_max=100.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=256,
+    )
+    data = np.linspace(-50.0, 50.0, 256 * 4).astype(np.float64)
+    await aio.write_edf(
+        str(out),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+        data=[data],
+    )
+    f = await aio.open(str(out))
+    try:
+        assert f.num_signals == 1
+        assert f.num_records == 4
+        s = f.signal(0)
+        assert s.label.startswith("EEG Fz")
+        read = await s.to_numpy()
+        np.testing.assert_allclose(read, data, atol=0.01)
+    finally:
+        f.close()
+
+
+async def test_streaming_async_writer(tmp_path):
+    out = tmp_path / "stream.edf"
+    sig = aio.WriterSignal(
+        label="ch1",
+        physical_dimension="uV",
+        physical_min=-1.0,
+        physical_max=1.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=10,
+    )
+    w = await aio.EdfWriter.create(
+        str(out),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+    )
+    for i in range(3):
+        rec = np.full(10, float(i) * 0.1, dtype=np.float64)
+        await w.write_record([rec])
+    await w.finish()
+
+    f = await aio.open(str(out))
+    try:
+        assert f.num_records == 3
+        data = await f.signal(0).to_numpy()
+        assert len(data) == 30
+    finally:
+        f.close()
+
+
+async def test_async_writer_context_manager(tmp_path):
+    out = tmp_path / "ctx.edf"
+    sig = aio.WriterSignal(
+        label="ch1",
+        physical_dimension="uV",
+        physical_min=-1.0,
+        physical_max=1.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=10,
+    )
+    async with await aio.EdfWriter.create(
+        str(out),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+    ) as w:
+        rec = np.zeros(10, dtype=np.float64)
+        await w.write_record([rec])
+    f = await aio.open(str(out))
+    try:
+        assert f.num_records == 1
+    finally:
+        f.close()
+
+
+async def test_async_writer_finish_idempotent_error(tmp_path):
+    out = tmp_path / "double.edf"
+    sig = aio.WriterSignal(
+        label="ch1",
+        physical_dimension="uV",
+        physical_min=-1.0,
+        physical_max=1.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=10,
+    )
+    w = await aio.EdfWriter.create(
+        str(out),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+    )
+    await w.write_record([np.zeros(10, dtype=np.float64)])
+    await w.finish()
+    with pytest.raises(ValueError, match="finished"):
+        await w.finish()
+
+
+async def test_write_to_async_roundtrip(tmp_path):
+    src_path = _pick_fixture()
+    dst_path = tmp_path / "copy.edf"
+    f = await aio.open(str(src_path))
+    try:
+        await f.write_to(str(dst_path))
+    finally:
+        f.close()
+
+    f2 = await aio.open(str(dst_path))
+    try:
+        assert f2.num_signals > 0
+        assert f2.num_records > 0
+    finally:
+        f2.close()
+
+
+async def test_write_to_async_transcode(tmp_path):
+    src_path = _pick_fixture()
+    dst_path = tmp_path / "transcoded.edf"
+    f = await aio.open(str(src_path))
+    src_variant = f.variant
+    try:
+        target = "EDF+C" if src_variant != "EDF+C" else "EDF"
+        await f.write_to(str(dst_path), variant=target)
+    finally:
+        f.close()
+
+    f2 = await aio.open(str(dst_path))
+    try:
+        assert f2.variant == ("EDF+C" if src_variant != "EDF+C" else "EDF")
+    finally:
+        f2.close()

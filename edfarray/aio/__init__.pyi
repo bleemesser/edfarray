@@ -11,6 +11,23 @@ import numpy.typing as npt
 from edfarray._core import Annotation
 
 
+class WriterSignal:
+    def __init__(
+        self,
+        label: str,
+        physical_dimension: str,
+        physical_min: float,
+        physical_max: float,
+        digital_min: int,
+        digital_max: int,
+        samples_per_record: int,
+        transducer: str = "",
+        prefiltering: str = "",
+        reserved: str = "",
+    ) -> None: ...
+    def __repr__(self) -> str: ...
+
+
 class EdfFile:
     @property
     def num_signals(self) -> int: ...
@@ -86,6 +103,7 @@ class EdfFile:
     ) -> Awaitable[list[npt.NDArray[np.int32]]]: ...
     def signal(self, idx_or_label: int | str, cache_capacity: int = 0) -> Signal: ...
     def array_proxy(self, signal_indices: list[int] | None = None) -> ArrayProxy: ...
+    def write_to(self, path: str, variant: str | None = None) -> Awaitable[None]: ...
 
     async def __aenter__(self) -> EdfFile: ...
     async def __aexit__(self, *args: Any) -> None: ...
@@ -158,3 +176,44 @@ class ArrayProxy:
 
 async def open(path: str) -> EdfFile: ...
 async def inspect(path: str) -> dict[str, Any]: ...
+
+
+class EdfWriter:
+    @classmethod
+    async def create(
+        cls,
+        path: str,
+        *,
+        variant: str,
+        record_duration: float,
+        signals: list[WriterSignal],
+        start_datetime: datetime.datetime | None = None,
+        patient_id: str | None = None,
+        recording_id: str | None = None,
+        annotation_bytes_per_record: int | None = None,
+    ) -> EdfWriter: ...
+
+    def add_annotation(self, annotation: Annotation) -> None: ...
+    def write_record(
+        self,
+        physical: list[npt.NDArray[np.float64]],
+        annotations: list[Annotation] | None = None,
+    ) -> Awaitable[None]: ...
+    def finish(self) -> Awaitable[None]: ...
+    async def __aenter__(self) -> EdfWriter: ...
+    async def __aexit__(self, *args: Any) -> None: ...
+
+
+async def write_edf(
+    path: str,
+    *,
+    variant: str,
+    record_duration: float,
+    signals: list[WriterSignal],
+    data: list[npt.NDArray[np.float64]],
+    annotations: list[Annotation] | None = None,
+    start_datetime: datetime.datetime | None = None,
+    patient_id: str | None = None,
+    recording_id: str | None = None,
+    annotation_bytes_per_record: int | None = None,
+) -> None: ...

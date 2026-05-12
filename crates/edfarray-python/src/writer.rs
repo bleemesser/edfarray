@@ -23,6 +23,12 @@ pub struct PyWriterSignal {
     inner: WriterSignal,
 }
 
+impl PyWriterSignal {
+    pub(crate) fn into_inner(self) -> WriterSignal {
+        self.inner
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyWriterSignal {
@@ -80,7 +86,7 @@ impl PyWriterSignal {
     }
 }
 
-fn parse_variant(s: &str) -> PyResult<EdfVariant> {
+pub(crate) fn parse_variant(s: &str) -> PyResult<EdfVariant> {
     match s {
         "EDF" => Ok(EdfVariant::Edf),
         "EDF+C" => Ok(EdfVariant::EdfPlusC),
@@ -95,7 +101,7 @@ fn parse_variant(s: &str) -> PyResult<EdfVariant> {
     }
 }
 
-fn parse_start_datetime(obj: Option<&Bound<'_, PyAny>>) -> PyResult<NaiveDateTime> {
+pub(crate) fn parse_start_datetime(obj: Option<&Bound<'_, PyAny>>) -> PyResult<NaiveDateTime> {
     let Some(obj) = obj else {
         // Default: epoch start (the writer encodes integer seconds; sub-second
         // precision is not preserved in the header anyway).
@@ -132,10 +138,10 @@ fn parse_start_datetime(obj: Option<&Bound<'_, PyAny>>) -> PyResult<NaiveDateTim
     Ok(NaiveDateTime::new(date, time))
 }
 
-fn build_spec(
+pub(crate) fn build_spec(
     variant: &str,
     record_duration: f64,
-    signals: Vec<PyWriterSignal>,
+    signals: Vec<WriterSignal>,
     start_datetime: Option<&Bound<'_, PyAny>>,
     patient_id: Option<String>,
     recording_id: Option<String>,
@@ -147,12 +153,12 @@ fn build_spec(
         recording_id: recording_id.unwrap_or_else(|| "Startdate X X X X".into()),
         start_datetime: parse_start_datetime(start_datetime)?,
         record_duration_secs: record_duration,
-        signals: signals.into_iter().map(|s| s.inner).collect(),
+        signals,
         annotation_bytes_per_record,
     })
 }
 
-fn anns_to_core(anns: &[PyAnnotation]) -> Vec<Annotation> {
+pub(crate) fn anns_to_core(anns: &[PyAnnotation]) -> Vec<Annotation> {
     anns.iter()
         .map(|a| Annotation {
             onset: a.onset,
@@ -200,7 +206,7 @@ impl PyEdfWriter {
         let spec = build_spec(
             variant,
             record_duration,
-            signals,
+            signals.into_iter().map(PyWriterSignal::into_inner).collect(),
             start_datetime,
             patient_id,
             recording_id,
@@ -316,7 +322,7 @@ pub fn write_edf_py(
     let spec = build_spec(
         variant,
         record_duration,
-        signals,
+        signals.into_iter().map(PyWriterSignal::into_inner).collect(),
         start_datetime,
         patient_id,
         recording_id,
