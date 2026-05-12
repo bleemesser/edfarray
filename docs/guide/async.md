@@ -207,6 +207,79 @@ await f.write_to("output.edf", variant="EDF+C")
 Only ordinary signals are copied. Annotations are re-encoded from the parsed
 index rather than copied verbatim.
 
+## Performance and when to choose async
+
+The async API is not universally faster than the sync API — it trades a small
+per-call overhead for the ability to run decodes in parallel and to keep the
+event loop responsive. The benchmarks under `examples/` quantify this on a
+4 MB fixture (`test_generator.edf`, 180 000 samples @ 200 Hz). Numbers will
+vary by file size and machine, but the shape of the result is what matters.
+
+### Parallel decode scales near-linearly up to core count
+
+`benchmark_async_parallel_decode.py` compares N sequential awaits against
+`asyncio.gather` of N concurrent reads on the same file:
+
+| N | sequential | gather  | speedup | efficiency |
+| - | ---------- | ------- | ------- | ---------- |
+| 1 | 5.15 ms    | 5.18 ms | 0.99x   | 99%        |
+| 2 | 10.47 ms   | 5.67 ms | 1.85x   | 92%        |
+| 4 | 20.79 ms   | 5.70 ms | 3.65x   | 91%        |
+| 8 | 41.11 ms   | 9.43 ms | 4.36x   | 55%        |
+
+Speedup tracks N up to the available core count, then plateaus.
+
+### The event loop stays responsive under load
+
+`benchmark_async_gil_release.py` runs a busy Python thread alongside 10 full
+decodes. Both APIs drop the GIL during decode (the busy thread runs at ~95%
+of its free-running tick rate either way), but the wall-clock time for the
+decodes themselves is dramatically different:
+
+| API   | Wall time (10 decodes, busy thread) |
+| ----- | ----------------------------------- |
+| sync  | 4296 ms                             |
+| async | 325 ms (~13x faster)                |
+
+Sync runs decode on the calling thread, which then contends with the busy
+thread for the GIL and the CPU. Async dispatches to a tokio worker on a
+separate OS thread, so the Python side does only event-loop work.
+
+### Single-shot overhead is small for bulk reads, noticeable for tiny ones
+
+`benchmark_async_vs_sync.py` runs the same operations through both APIs
+serially (concurrency = 1):
+
+| Operation             | sync     | async    | overhead |
+| --------------------- | -------- | -------- | -------- |
+| `open`                | 158 µs   | 237 µs   | +50%     |
+| full read (physical)  | 6.34 ms  | 6.07 ms  | ≈ 0      |
+| full read (digital)   | 4.46 ms  | 4.53 ms  | +1.5%    |
+| 1-second slice        | 11 µs    | 107 µs   | +880%    |
+
+The fixed ~100 µs cost of a tokio dispatch + event-loop hop disappears into
+a multi-ms decode but dominates a microsecond-scale slice.
+
+### Recommendations
+
+Use **async** (`edfarray.aio`) when:
+
+- you read multiple files or multiple regions concurrently and want true
+  parallel decode (`asyncio.gather`, multi-client server, etc.);
+- you serve a UI or other event loop and cannot afford to stall it during
+  long decodes;
+- you are already inside an asyncio application.
+
+Use **sync** (`edfarray.EdfFile`) when:
+
+- you are doing a serial pipeline of small reads (sub-millisecond) where the
+  ~100 µs per-call overhead matters;
+- the program is not otherwise async and you don't need concurrency;
+- you are writing a one-off script — the sync API is simpler.
+
+Both APIs share the same Rust decode path, so for a single bulk read they
+finish in essentially the same wall time.
+
 ## GIL release and parallelism
 
 The async runtime is a multi-threaded tokio executor. Every async method that

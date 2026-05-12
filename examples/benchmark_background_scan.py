@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Benchmark the async annotation scan.
+"""Benchmark the background annotation scan in the sync API.
+
+This measures the background-thread annotation scanner used by the *sync*
+`edfarray.EdfFile`. It does not exercise `edfarray.aio` — see
+`benchmark_async_parallel_decode.py`, `benchmark_async_gil_release.py`, and
+`benchmark_async_vs_sync.py` for the async API.
 
 Measures:
 - Time to open (header parse only, returns immediately)
@@ -93,7 +98,7 @@ def bench_file(name, sig_idx=0):
 
 def main():
     print("=" * 70)
-    print("Async Annotation Scan Benchmark")
+    print("Background Annotation Scan Benchmark (sync API)")
     print("=" * 70)
     print()
     print("The annotation scan now runs in a background thread.")
