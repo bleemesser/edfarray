@@ -1,3 +1,4 @@
+mod aio;
 mod annotations;
 mod array_proxy;
 mod errors;
@@ -17,6 +18,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<writer::PyWriterSignal>()?;
     m.add_function(wrap_pyfunction!(file::inspect, m)?)?;
     m.add_function(wrap_pyfunction!(writer::write_edf_py, m)?)?;
+    aio::register(m)?;
     Ok(())
 }
 
