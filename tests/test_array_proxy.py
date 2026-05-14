@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from edfarray import EdfFile, ArrayProxy
+from edfarray import EdfFile, Proxy2D
 from conftest import FIXTURES
 
 
@@ -9,14 +9,13 @@ def open_edf(name: str) -> EdfFile:
     return EdfFile(str(FIXTURES / f"{name}.edf"))
 
 
-def get_same_rate_proxy(f: EdfFile) -> tuple[ArrayProxy, list[int]]:
-    """Get an array proxy using the largest group of same-rate signals."""
+def get_same_rate_proxy(f: EdfFile) -> tuple[Proxy2D, list[int]]:
+    """Get a 2D proxy using the largest group of same-rate signals."""
     groups = f.signal_groups()
     if not groups:
         pytest.skip("no ordinary signals")
     largest = max(groups, key=len)
-    indices = largest.indices
-    return f.array_proxy(indices), indices
+    return f.proxy_2d(largest), largest.indices
 
 
 class TestArrayProxy:
@@ -82,12 +81,13 @@ class TestArrayProxy:
     def test_repr(self):
         f = open_edf("test_generator")
         proxy, _ = get_same_rate_proxy(f)
-        assert "ArrayProxy" in repr(proxy)
+        assert "Proxy2D" in repr(proxy)
 
     def test_specific_signal_indices(self):
         f = open_edf("test_generator")
         indices = f.ordinary_signal_indices()
-        proxy = f.array_proxy([indices[0]])
+        group = f.signal_group([indices[0]])
+        proxy = f.proxy_2d(group)
         assert proxy.shape[0] == 1
 
     def test_edf_plus_c(self):
@@ -123,15 +123,18 @@ class TestArrayProxy:
         assert arr.ndim == 2
         assert arr.shape == (len(indices), 10)
 
-    def test_empty_proxy(self):
+    def test_empty_group_rejected(self):
         f = open_edf("test_generator")
-        proxy = f.array_proxy([])
-        assert proxy.shape == (0, 0)
+        with pytest.raises(ValueError):
+            f.signal_group([])
 
-    def test_mixed_rates_error(self):
+    def test_open_group_accepted_with_pad(self):
         f = open_edf("test_generator")
-        with pytest.raises(ValueError, match="mixed sample rates"):
-            f.array_proxy()
+        group = f.signal_group(f.ordinary_signal_indices())
+        # Mixed rates → kind == "open"; Proxy2D accepts with a pad mode.
+        assert group.kind == "open"
+        proxy = f.proxy_2d(group, pad_mode="nan")
+        assert proxy.sample_rate is None
 
     def test_requires_two_indices(self):
         f = open_edf("test_generator")

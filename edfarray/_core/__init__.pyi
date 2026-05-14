@@ -7,9 +7,9 @@ import numpy.typing
 import typing
 __all__ = [
     "Annotation",
-    "ArrayProxy",
     "EdfFile",
     "EdfWriter",
+    "Proxy2D",
     "Signal",
     "SignalGroup",
     "WriterSignal",
@@ -30,38 +30,6 @@ class Annotation:
     def text(self) -> builtins.str: ...
     def __new__(cls, onset: builtins.float, text: builtins.str, duration: typing.Optional[builtins.float] = None) -> Annotation: ...
     def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class ArrayProxy:
-    r"""
-    2D array proxy for numpy-style multi-channel signal access.
-    
-    Supports indexing with `proxy[signal, sample]` where each axis accepts
-    int, slice, or list (signal axis only). All signals must share the same
-    sample rate.
-    """
-    @property
-    def shape(self) -> tuple[builtins.int, builtins.int]:
-        r"""
-        Shape of the proxy: (num_signals, total_samples).
-        """
-    @property
-    def sample_rate(self) -> builtins.float:
-        r"""
-        Common sample rate (Hz) of all signals in this proxy.
-        """
-    def __repr__(self) -> builtins.str: ...
-    def __getitem__(self, key: typing.Any) -> typing.Any:
-        r"""
-        Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
-        
-        | signal_spec | sample_spec | Return type |
-        |---|---|---|
-        | int | int | float |
-        | int | slice | 1D ndarray |
-        | slice/list | int | 1D ndarray |
-        | slice/list | slice | 2D ndarray |
-        """
 
 @typing.final
 class EdfFile:
@@ -261,12 +229,20 @@ class EdfFile:
         sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
         the time range using actual record onset times.
         """
-    def array_proxy(self, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> ArrayProxy:
+    def proxy_2d(self, group: SignalGroup, pad_mode: typing.Optional[typing.Any] = None) -> Proxy2D:
         r"""
-        Create a 2D array proxy for numpy-style indexing.
+        Build a 2D proxy from a `SignalGroup`.
         
-        All selected signals must have the same sample rate.
-        If `signal_indices` is None, uses all ordinary (non-annotation) signals.
+        `pad_mode` controls reads past a channel's valid length when the group
+        is `"open"` (mixed sample rates). Accepts the string `"raise"` (default),
+        `"nan"`, `"zero"`, `"edge"`, or a numeric scalar (interpreted as
+        `Value(x)`). `None` is treated as `"raise"`.
+        """
+    def signal_group(self, indices: typing.Sequence[builtins.int]) -> SignalGroup:
+        r"""
+        Classify an arbitrary list of file-level signal indices into a
+        `SignalGroup`. Use this when you want a group that's a subset of (or
+        crosses) the file's natural rate-based groupings.
         """
     def signal_groups(self) -> builtins.list[SignalGroup]:
         r"""
@@ -326,6 +302,48 @@ class EdfWriter:
         After calling, the writer is no longer usable.
         """
     def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class Proxy2D:
+    r"""
+    2D array proxy for numpy-style multi-channel signal access.
+    
+    Supports indexing with `proxy[signal, sample]` where each axis accepts
+    int, slice, or list (signal axis only). All signals must share the same
+    sample rate.
+    """
+    @property
+    def shape(self) -> tuple[builtins.int, builtins.int]:
+        r"""
+        Shape of the proxy: (num_signals, total_samples).
+        """
+    @property
+    def sample_rate(self) -> typing.Optional[builtins.float]:
+        r"""
+        Common sample rate (Hz), or `None` if the underlying group has mixed rates.
+        """
+    @property
+    def valid_lengths(self) -> builtins.list[builtins.int]:
+        r"""
+        Per-channel valid sample counts, in proxy-coordinate order.
+        """
+    @property
+    def pad_mode(self) -> builtins.str:
+        r"""
+        Pad-mode policy as a string: "raise", "nan", "zero", "value", or "edge".
+        """
+    def __repr__(self) -> builtins.str: ...
+    def __getitem__(self, key: typing.Any) -> typing.Any:
+        r"""
+        Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
+        
+        | signal_spec | sample_spec | Return type |
+        |---|---|---|
+        | int | int | float |
+        | int | slice | 1D ndarray |
+        | slice/list | int | 1D ndarray |
+        | slice/list | slice | 2D ndarray |
+        """
 
 @typing.final
 class Signal:

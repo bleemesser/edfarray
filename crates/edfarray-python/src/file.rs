@@ -7,9 +7,9 @@ use edfarray_core::file::EdfFile;
 use edfarray_core::header::Sex;
 
 use crate::annotations::PyAnnotation;
-use crate::array_proxy::PyArrayProxy;
 use crate::errors::to_py_err;
 use crate::group::PySignalGroup;
+use crate::proxy_2d::{PyProxy2D, parse_pad_mode};
 use crate::signal::PySignal;
 
 /// An open EDF/EDF+ file.
@@ -382,17 +382,36 @@ impl PyEdfFile {
         self.get().scan_progress()
     }
 
-    /// Create a 2D array proxy for numpy-style indexing.
+    /// Build a 2D proxy from a `SignalGroup`.
     ///
-    /// All selected signals must have the same sample rate.
-    /// If `signal_indices` is None, uses all ordinary (non-annotation) signals.
-    #[pyo3(signature = (signal_indices=None))]
-    fn array_proxy(&self, signal_indices: Option<Vec<usize>>) -> PyResult<PyArrayProxy> {
+    /// `pad_mode` controls reads past a channel's valid length when the group
+    /// is `"open"` (mixed sample rates). Accepts the string `"raise"` (default),
+    /// `"nan"`, `"zero"`, `"edge"`, or a numeric scalar (interpreted as
+    /// `Value(x)`). `None` is treated as `"raise"`.
+    #[pyo3(signature = (group, pad_mode=None))]
+    fn proxy_2d(
+        &self,
+        group: &PySignalGroup,
+        pad_mode: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<PyProxy2D> {
+        let mode = parse_pad_mode(pad_mode.as_ref())?;
         let proxy = self
             .get()
-            .array_proxy(signal_indices.as_deref())
+            .proxy_2d(group.inner().clone(), mode)
             .map_err(to_py_err)?;
-        Ok(PyArrayProxy::new(proxy))
+        Ok(PyProxy2D::new(proxy))
+    }
+
+    /// Classify an arbitrary list of file-level signal indices into a
+    /// `SignalGroup`. Use this when you want a group that's a subset of (or
+    /// crosses) the file's natural rate-based groupings.
+    fn signal_group(&self, indices: Vec<usize>) -> PyResult<PySignalGroup> {
+        let g = edfarray_core::group::SignalGroup::from_indices(
+            self.get().header(),
+            &indices,
+        )
+        .map_err(to_py_err)?;
+        Ok(PySignalGroup::new(g))
     }
 
     /// Partition all ordinary signals into groups by sample rate.

@@ -8,9 +8,9 @@ use regex::RegexBuilder;
 use rayon::prelude::*;
 
 use crate::annotation::Annotation;
-use crate::array_proxy::ArrayProxy;
 use crate::error::{EdfError, Result};
-use crate::group::SignalGroup;
+use crate::group::{PadMode, SignalGroup};
+use crate::proxy_2d::Proxy2D;
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
@@ -311,16 +311,14 @@ impl EdfFile {
         Ok(buf)
     }
 
-    /// Create a 2D array proxy over the given signal indices (or all ordinary signals).
+    /// Build a 2D proxy from a [`SignalGroup`].
     ///
-    /// All signals must have the same sample rate. Returns an error if rates differ.
-    pub fn array_proxy(&self, signal_indices: Option<&[usize]>) -> Result<ArrayProxy> {
-        let indices = match signal_indices {
-            Some(idx) => idx.to_vec(),
-            None => self.ordinary_signal_indices(),
-        };
-        ArrayProxy::new(Arc::clone(&self.file), &indices)
+    /// `Proxy2D` accepts any group kind; for `Open` groups (mixed sample rates)
+    /// the [`PadMode`] decides what reads past short channels return.
+    pub fn proxy_2d(&self, group: SignalGroup, pad_mode: PadMode) -> Result<Proxy2D> {
+        Proxy2D::new(Arc::clone(&self.file), group, pad_mode)
     }
+
 
     /// Partition all ordinary (non-annotation) signals into groups by sample
     /// rate.
@@ -631,12 +629,13 @@ mod tests {
     }
 
     #[test]
-    fn array_proxy_single_signal() {
+    fn proxy_2d_single_signal() {
         let file = build_test_file();
         let edf = EdfFile::open(file.path()).unwrap();
-        let proxy = edf.array_proxy(None).unwrap();
+        let group = SignalGroup::from_indices(edf.header(), &[0]).unwrap();
+        let proxy = edf.proxy_2d(group, PadMode::Raise).unwrap();
         assert_eq!(proxy.shape(), (1, 8));
-        assert_eq!(proxy.sample_rate(), 4.0);
+        assert_eq!(proxy.sample_rate(), Some(4.0));
         let val = proxy.get(0, 3).unwrap();
         assert!((val - 3.0).abs() < f64::EPSILON);
     }
@@ -683,10 +682,11 @@ mod tests {
     }
 
     #[test]
-    fn array_proxy_explicit_indices() {
+    fn proxy_2d_from_group() {
         let file = build_test_file();
         let edf = EdfFile::open(file.path()).unwrap();
-        let proxy = edf.array_proxy(Some(&[0])).unwrap();
+        let group = SignalGroup::from_indices(edf.header(), &[0]).unwrap();
+        let proxy = edf.proxy_2d(group, PadMode::Raise).unwrap();
         assert_eq!(proxy.shape(), (1, 8));
     }
 
@@ -976,19 +976,23 @@ mod fixture_tests {
     }
 
     #[test]
-    fn array_proxy_mixed_rates_error() {
+    fn proxy_2d_accepts_open_group() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        let result = edf.array_proxy(None);
-        assert!(result.is_err());
+        // Mixed sample rates → Open group; Proxy2D accepts it.
+        let indices = edf.ordinary_signal_indices();
+        let group = SignalGroup::from_indices(edf.header(), &indices).unwrap();
+        let proxy = edf.proxy_2d(group, PadMode::Nan).unwrap();
+        assert_eq!(proxy.shape().0, indices.len());
+        assert!(proxy.sample_rate().is_none());
     }
 
     #[test]
-    fn array_proxy_same_rate_group() {
+    fn proxy_2d_from_signal_group() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        let groups = edf.signal_groups();
-        let group = &groups[0];
-        let proxy = edf.array_proxy(Some(&group.indices)).unwrap();
-        assert_eq!(proxy.shape().0, group.len());
+        let group = edf.signal_groups().into_iter().next().unwrap();
+        let n = group.len();
+        let proxy = edf.proxy_2d(group, PadMode::Raise).unwrap();
+        assert_eq!(proxy.shape().0, n);
         assert!(proxy.shape().1 > 0);
     }
 

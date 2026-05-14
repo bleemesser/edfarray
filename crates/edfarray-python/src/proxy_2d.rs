@@ -4,7 +4,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyList, PySlice, PyTuple};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use edfarray_core::array_proxy::ArrayProxy;
+use edfarray_core::group::PadMode;
+use edfarray_core::proxy_2d::Proxy2D;
 
 use crate::errors::to_py_err;
 
@@ -14,40 +15,51 @@ use crate::errors::to_py_err;
 /// int, slice, or list (signal axis only). All signals must share the same
 /// sample rate.
 #[gen_stub_pyclass]
-#[pyclass(name = "ArrayProxy")]
-pub struct PyArrayProxy {
-    proxy: ArrayProxy,
+#[pyclass(name = "Proxy2D")]
+pub struct PyProxy2D {
+    proxy: Proxy2D,
 }
 
-impl PyArrayProxy {
-    pub fn new(proxy: ArrayProxy) -> Self {
-        PyArrayProxy { proxy }
+impl PyProxy2D {
+    pub fn new(proxy: Proxy2D) -> Self {
+        PyProxy2D { proxy }
     }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyArrayProxy {
+impl PyProxy2D {
     /// Shape of the proxy: (num_signals, total_samples).
     #[getter]
     fn shape(&self) -> (usize, usize) {
         self.proxy.shape()
     }
 
-    /// Common sample rate (Hz) of all signals in this proxy.
+    /// Common sample rate (Hz), or `None` if the underlying group has mixed rates.
     #[getter]
-    fn sample_rate(&self) -> f64 {
+    fn sample_rate(&self) -> Option<f64> {
         self.proxy.sample_rate()
+    }
+
+    /// Per-channel valid sample counts, in proxy-coordinate order.
+    #[getter]
+    fn valid_lengths(&self) -> Vec<usize> {
+        self.proxy.valid_lengths().to_vec()
+    }
+
+    /// Pad-mode policy as a string: "raise", "nan", "zero", "value", or "edge".
+    #[getter]
+    fn pad_mode(&self) -> &'static str {
+        pad_mode_name(self.proxy.pad_mode())
     }
 
     fn __repr__(&self) -> String {
         let (rows, cols) = self.proxy.shape();
-        format!(
-            "ArrayProxy(shape=({}, {}), rate={}Hz)",
-            rows,
-            cols,
-            self.proxy.sample_rate()
-        )
+        let rate = match self.proxy.sample_rate() {
+            Some(r) => format!("{}Hz", r),
+            None => "mixed".into(),
+        };
+        format!("Proxy2D(shape=({}, {}), rate={}, pad={})", rows, cols, rate, pad_mode_name(self.proxy.pad_mode()))
     }
 
     /// Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
@@ -62,13 +74,13 @@ impl PyArrayProxy {
         let tuple = if let Ok(t) = key.cast::<PyTuple>() {
             if t.len() != 2 {
                 return Err(PyIndexError::new_err(
-                    "ArrayProxy requires exactly 2 indices: [signal, sample]",
+                    "Proxy2D requires exactly 2 indices: [signal, sample]",
                 ));
             }
             t.clone()
         } else {
             return Err(PyIndexError::new_err(
-                "ArrayProxy requires exactly 2 indices: [signal, sample]",
+                "Proxy2D requires exactly 2 indices: [signal, sample]",
             ));
         };
 
@@ -141,7 +153,7 @@ fn parse_sample_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<(usize,
     if let Ok(slice) = spec.cast::<PySlice>() {
         let indices = slice.indices(length as isize)?;
         if indices.step != 1 {
-            return Err(PyValueError::new_err("step != 1 not supported in ArrayProxy"));
+            return Err(PyValueError::new_err("step != 1 not supported in Proxy2D"));
         }
         Ok((indices.start as usize, indices.stop as usize))
     } else if let Ok(idx) = spec.extract::<isize>() {
@@ -170,5 +182,41 @@ fn parse_signal_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<Vec<usi
         Ok(vec![normalize_index(idx, length)?])
     } else {
         Err(PyTypeError::new_err("signal index must be int, slice, or list"))
+    }
+}
+
+pub(crate) fn parse_pad_mode(spec: Option<&Bound<'_, PyAny>>) -> PyResult<PadMode> {
+    let Some(spec) = spec else {
+        return Ok(PadMode::Raise);
+    };
+    if spec.is_none() {
+        return Ok(PadMode::Raise);
+    }
+    if let Ok(name) = spec.extract::<String>() {
+        return match name.to_ascii_lowercase().as_str() {
+            "raise" => Ok(PadMode::Raise),
+            "nan" => Ok(PadMode::Nan),
+            "zero" => Ok(PadMode::Zero),
+            "edge" => Ok(PadMode::Edge),
+            other => Err(PyValueError::new_err(format!(
+                "unknown pad_mode '{other}' (use 'raise', 'nan', 'zero', 'edge', a number, or None)"
+            ))),
+        };
+    }
+    if let Ok(v) = spec.extract::<f64>() {
+        return Ok(PadMode::Value(v));
+    }
+    Err(PyTypeError::new_err(
+        "pad_mode must be a string ('raise'/'nan'/'zero'/'edge'), a number, or None",
+    ))
+}
+
+pub(crate) fn pad_mode_name(mode: PadMode) -> &'static str {
+    match mode {
+        PadMode::Raise => "raise",
+        PadMode::Nan => "nan",
+        PadMode::Zero => "zero",
+        PadMode::Value(_) => "value",
+        PadMode::Edge => "edge",
     }
 }

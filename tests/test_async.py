@@ -280,13 +280,19 @@ async def test_signal_with_cache():
         async_f.close()
 
 
-async def test_array_proxy_shape_and_read():
+def _largest_group(f):
+    return max(f.signal_groups(), key=len)
+
+
+async def test_proxy_2d_shape_and_read():
     path = _pick_fixture()
     sync_f = edfarray.EdfFile(str(path))
     async_f = await aio.open(str(path))
     try:
-        sync_ap = sync_f.array_proxy()
-        async_ap = async_f.array_proxy()
+        sync_group = _largest_group(sync_f)
+        async_group = _largest_group(async_f)
+        sync_ap = sync_f.proxy_2d(sync_group)
+        async_ap = async_f.proxy_2d(async_group)
         assert async_ap.shape == sync_ap.shape
         assert async_ap.sample_rate == sync_ap.sample_rate
 
@@ -299,11 +305,11 @@ async def test_array_proxy_shape_and_read():
         async_f.close()
 
 
-async def test_array_proxy_get_and_signals_at_sample():
+async def test_proxy_2d_get_and_signals_at_sample():
     path = _pick_fixture()
     async_f = await aio.open(str(path))
     try:
-        ap = async_f.array_proxy()
+        ap = async_f.proxy_2d(_largest_group(async_f))
         val = await ap.get(0, 0)
         assert isinstance(val, float)
         row = await ap.read_signals_at_sample(0)
@@ -313,14 +319,15 @@ async def test_array_proxy_get_and_signals_at_sample():
         async_f.close()
 
 
-async def test_array_proxy_subset_signals():
+async def test_proxy_2d_subset_signals():
     path = _pick_fixture()
     async_f = await aio.open(str(path))
     try:
         ordinary = async_f.ordinary_signal_indices()
         if len(ordinary) < 2:
             pytest.skip("need at least 2 ordinary signals")
-        ap = async_f.array_proxy(signal_indices=ordinary[:2])
+        group = async_f.signal_group(ordinary[:2])
+        ap = async_f.proxy_2d(group, pad_mode="nan")
         assert ap.shape[0] == 2
         data = await ap.read_physical(0, min(ap.shape[1], 200))
         assert data.shape[0] == 2

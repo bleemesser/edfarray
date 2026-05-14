@@ -1,9 +1,9 @@
 mod aio;
 mod annotations;
-mod array_proxy;
 mod errors;
 mod file;
 mod group;
+mod proxy_2d;
 mod signal;
 mod writer;
 
@@ -14,7 +14,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<file::PyEdfFile>()?;
     m.add_class::<signal::PySignal>()?;
     m.add_class::<annotations::PyAnnotation>()?;
-    m.add_class::<array_proxy::PyArrayProxy>()?;
+    m.add_class::<proxy_2d::PyProxy2D>()?;
     m.add_class::<group::PySignalGroup>()?;
     m.add_class::<writer::PyEdfWriter>()?;
     m.add_class::<writer::PyWriterSignal>()?;

@@ -347,6 +347,13 @@ impl PyAsyncEdfFile {
         self.get().unwrap().ordinary_signal_indices()
     }
 
+    fn signal_group(&self, indices: Vec<usize>) -> PyResult<PySignalGroup> {
+        let inner = self.get()?;
+        let g = edfarray_core::group::SignalGroup::from_indices(inner.header(), &indices)
+            .map_err(to_py_err)?;
+        Ok(PySignalGroup::new(g))
+    }
+
     fn signal_groups(&self) -> PyResult<Vec<PySignalGroup>> {
         Ok(self
             .get()?
@@ -473,11 +480,18 @@ impl PyAsyncEdfFile {
         Ok(PyAsyncSignal::new(proxy))
     }
 
-    #[pyo3(signature = (signal_indices=None))]
-    fn array_proxy(&self, signal_indices: Option<Vec<usize>>) -> PyResult<PyAsyncArrayProxy> {
+    #[pyo3(signature = (group, pad_mode=None))]
+    fn proxy_2d(
+        &self,
+        group: &PySignalGroup,
+        pad_mode: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<PyAsyncProxy2D> {
+        let mode = crate::proxy_2d::parse_pad_mode(pad_mode.as_ref())?;
         let inner = self.get()?;
-        let proxy = inner.array_proxy(signal_indices.as_deref()).map_err(to_py_err)?;
-        Ok(PyAsyncArrayProxy::new(proxy))
+        let proxy = inner
+            .proxy_2d(group.inner().clone(), mode)
+            .map_err(to_py_err)?;
+        Ok(PyAsyncProxy2D::new(proxy))
     }
 }
 
@@ -676,37 +690,51 @@ impl PyAsyncSignal {
     }
 }
 
-#[pyclass(name = "ArrayProxy", module = "edfarray._core.aio")]
-pub struct PyAsyncArrayProxy {
-    inner: Arc<edfarray_core::array_proxy::ArrayProxy>,
+#[pyclass(name = "Proxy2D", module = "edfarray._core.aio")]
+pub struct PyAsyncProxy2D {
+    inner: Arc<edfarray_core::proxy_2d::Proxy2D>,
 }
 
-impl PyAsyncArrayProxy {
-    pub fn new(proxy: edfarray_core::array_proxy::ArrayProxy) -> Self {
-        PyAsyncArrayProxy { inner: Arc::new(proxy) }
+impl PyAsyncProxy2D {
+    pub fn new(proxy: edfarray_core::proxy_2d::Proxy2D) -> Self {
+        PyAsyncProxy2D { inner: Arc::new(proxy) }
     }
 }
 
 #[pymethods]
-impl PyAsyncArrayProxy {
+impl PyAsyncProxy2D {
     #[getter]
     fn shape(&self) -> (usize, usize) {
         self.inner.shape()
     }
 
     #[getter]
-    fn sample_rate(&self) -> f64 {
+    fn sample_rate(&self) -> Option<f64> {
         self.inner.sample_rate()
     }
 
     #[getter]
     fn signal_indices(&self) -> Vec<usize> {
-        self.inner.signal_indices().to_vec()
+        self.inner.group().indices.clone()
+    }
+
+    #[getter]
+    fn valid_lengths(&self) -> Vec<usize> {
+        self.inner.valid_lengths().to_vec()
+    }
+
+    #[getter]
+    fn pad_mode(&self) -> &'static str {
+        crate::proxy_2d::pad_mode_name(self.inner.pad_mode())
     }
 
     fn __repr__(&self) -> String {
         let (r, c) = self.inner.shape();
-        format!("<edfarray.aio.ArrayProxy shape=({}, {}) rate={}Hz>", r, c, self.inner.sample_rate())
+        let rate = match self.inner.sample_rate() {
+            Some(r) => format!("{}Hz", r),
+            None => "mixed".into(),
+        };
+        format!("<edfarray.aio.Proxy2D shape=({}, {}) rate={}>", r, c, rate)
     }
 
     #[pyo3(signature = (sample_start, sample_stop, signal_indices=None))]
@@ -718,7 +746,7 @@ impl PyAsyncArrayProxy {
         signal_indices: Option<Vec<usize>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
-        let indices = signal_indices.unwrap_or_else(|| proxy.signal_indices().to_vec());
+        let indices = signal_indices.unwrap_or_else(|| proxy.group().indices.clone());
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let data = tokio::task::spawn_blocking(move || {
                 proxy.read_physical(&indices, sample_start..sample_stop)
@@ -750,7 +778,7 @@ impl PyAsyncArrayProxy {
         signal_indices: Option<Vec<usize>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
-        let indices = signal_indices.unwrap_or_else(|| proxy.signal_indices().to_vec());
+        let indices = signal_indices.unwrap_or_else(|| proxy.group().indices.clone());
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let data = tokio::task::spawn_blocking(move || {
                 proxy.read_digital(&indices, sample_start..sample_stop)
@@ -792,7 +820,7 @@ impl PyAsyncArrayProxy {
         signal_indices: Option<Vec<usize>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
-        let indices = signal_indices.unwrap_or_else(|| proxy.signal_indices().to_vec());
+        let indices = signal_indices.unwrap_or_else(|| proxy.group().indices.clone());
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let data = tokio::task::spawn_blocking(move || {
                 proxy.read_signals_at_sample(&indices, sample_idx)
@@ -1053,7 +1081,7 @@ pub fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     aio.add_class::<PyAsyncWriterSignal>()?;
     aio.add_class::<PyAsyncEdfFile>()?;
     aio.add_class::<PyAsyncSignal>()?;
-    aio.add_class::<PyAsyncArrayProxy>()?;
+    aio.add_class::<PyAsyncProxy2D>()?;
     aio.add_class::<PyAsyncEdfWriter>()?;
     aio.add_function(wrap_pyfunction!(open_async, &aio)?)?;
     aio.add_function(wrap_pyfunction!(inspect_async, &aio)?)?;
