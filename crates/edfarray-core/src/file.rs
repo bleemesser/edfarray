@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use rayon::prelude::*;
 use crate::annotation::Annotation;
 use crate::array_proxy::ArrayProxy;
 use crate::error::{EdfError, Result};
+use crate::group::SignalGroup;
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
@@ -320,20 +322,46 @@ impl EdfFile {
         ArrayProxy::new(Arc::clone(&self.file), &indices)
     }
 
-    /// Group ordinary signal indices by sample rate (Hz).
+    /// Partition all ordinary (non-annotation) signals into groups by sample
+    /// rate.
     ///
-    /// Returns groups as `(rate, indices)` pairs. Sub-Hz precision is preserved
-    /// (signals with rates 123.4 and 123.5 land in different groups). Useful for
-    /// creating `ArrayProxy` instances when the file has mixed sample rates.
-    pub fn signal_indices_by_rate(&self) -> Vec<(f64, Vec<usize>)> {
-        let mut map: HashMap<u64, Vec<usize>> = HashMap::new();
+    /// Each returned [`SignalGroup`] carries enough metadata for the caller to
+    /// decide whether to build a 2D or 3D proxy from it: structural kind,
+    /// min/max total samples, singleton flag, and `covers_all_ordinary` (set
+    /// when the file has exactly one rate group). Sub-Hz precision is
+    /// preserved — channels at 123.4 Hz and 123.5 Hz land in different groups.
+    ///
+    /// Within a single file, every returned group is `Rectangular` (same rate
+    /// -> same total samples). Returns an empty vec if the file has no ordinary
+    /// signals.
+    pub fn signal_groups(&self) -> Vec<SignalGroup> {
+        let header = &self.file.header;
+        let rd = header.record_duration_secs;
+
+        let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
+        let mut order: Vec<u64> = Vec::new();
         for idx in self.ordinary_signal_indices() {
-            let rate = self.file.header.signals[idx]
-                .sample_rate(self.file.header.record_duration_secs);
-            map.entry(rate.to_bits()).or_default().push(idx);
+            let rate = header.signals[idx].sample_rate(rd);
+            let key = rate.to_bits();
+            match buckets.entry(key) {
+                Entry::Vacant(v) => {
+                    v.insert(vec![idx]);
+                    order.push(key);
+                }
+                Entry::Occupied(mut o) => o.get_mut().push(idx),
+            }
         }
-        map.into_iter()
-            .map(|(bits, indices)| (f64::from_bits(bits), indices))
+
+        let covers_all = order.len() == 1;
+        order
+            .into_iter()
+            .map(|key| {
+                let indices = buckets.remove(&key).unwrap();
+                let mut g = SignalGroup::from_indices(header, &indices)
+                    .expect("ordinary indices are valid");
+                g.covers_all_ordinary = covers_all;
+                g
+            })
             .collect()
     }
 
@@ -376,7 +404,7 @@ impl EdfFile {
     }
 
     /// Write a copy of this file to `path`. By default uses the source file's
-    /// variant; override with `variant` to transcode (e.g. `EDF+D` → `EDF+C`).
+    /// variant; override with `variant` to transcode (e.g. `EDF+D` -> `EDF+C`).
     ///
     /// Reads physical sample data and annotations through the existing memory
     /// map and re-emits them via the writer. Only ordinary signals are copied;
@@ -663,13 +691,14 @@ mod tests {
     }
 
     #[test]
-    fn signal_indices_by_rate_groups() {
+    fn signal_groups_single_rate() {
         let file = build_test_file();
         let edf = EdfFile::open(file.path()).unwrap();
-        let by_rate = edf.signal_indices_by_rate();
-        assert_eq!(by_rate.len(), 1);
-        let (_rate, indices) = &by_rate[0];
-        assert_eq!(indices, &vec![0]);
+        let groups = edf.signal_groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].indices, vec![0]);
+        assert!(groups[0].covers_all_ordinary);
+        assert!(groups[0].is_singleton);
     }
 
     #[test]
@@ -929,14 +958,20 @@ mod fixture_tests {
     }
 
     #[test]
-    fn signal_indices_by_rate_mixed() {
+    fn signal_groups_mixed() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        let by_rate = edf.signal_indices_by_rate();
-        assert!(by_rate.len() >= 1);
-        let total: usize = by_rate.iter().map(|(_, v)| v.len()).sum();
+        let groups = edf.signal_groups();
+        assert!(!groups.is_empty());
+        let total: usize = groups.iter().map(|g| g.len()).sum();
         assert_eq!(total, edf.ordinary_signal_indices().len());
-        for (rate, _) in &by_rate {
-            assert!(*rate > 0.0);
+        for g in &groups {
+            assert!(g.sample_rate.unwrap() > 0.0);
+            assert_eq!(g.kind, crate::group::GroupKind::Rectangular);
+        }
+        // covers_all_ordinary is true iff there's exactly one group.
+        let single = groups.len() == 1;
+        for g in &groups {
+            assert_eq!(g.covers_all_ordinary, single);
         }
     }
 
@@ -950,9 +985,9 @@ mod fixture_tests {
     #[test]
     fn array_proxy_same_rate_group() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        let by_rate = edf.signal_indices_by_rate();
-        let (_, group) = &by_rate[0];
-        let proxy = edf.array_proxy(Some(group)).unwrap();
+        let groups = edf.signal_groups();
+        let group = &groups[0];
+        let proxy = edf.array_proxy(Some(&group.indices)).unwrap();
         assert_eq!(proxy.shape().0, group.len());
         assert!(proxy.shape().1 > 0);
     }

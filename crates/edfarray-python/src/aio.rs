@@ -12,6 +12,7 @@ use edfarray_core::writer::{EdfWriter, write_edf};
 
 use crate::annotations::PyAnnotation;
 use crate::errors::to_py_err;
+use crate::group::PySignalGroup;
 use crate::writer::{parse_variant, build_spec, anns_to_core};
 
 use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1};
@@ -346,16 +347,13 @@ impl PyAsyncEdfFile {
         self.get().unwrap().ordinary_signal_indices()
     }
 
-    fn signal_indices_by_rate<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let map = self.get().unwrap().signal_indices_by_rate();
-        let dict = PyDict::new(py);
-        for (rate, indices) in map {
-            dict.set_item(rate, indices)?;
-        }
-        Ok(dict)
+    fn signal_groups(&self) -> PyResult<Vec<PySignalGroup>> {
+        Ok(self
+            .get()?
+            .signal_groups()
+            .into_iter()
+            .map(PySignalGroup::new)
+            .collect())
     }
 
     fn wait_for_annotations<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

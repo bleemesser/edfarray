@@ -63,7 +63,7 @@ impl ArrayProxy {
                 return Err(EdfError::MixedSampleRates {
                     reason: format!(
                         "signal {} has rate {}Hz but signal {} has rate {}Hz. \
-                         Use signal_indices_by_rate() to group signals by rate.",
+                         Use signal_groups() to partition signals by rate.",
                         first_idx, first_rate, idx, rate
                     ),
                 });

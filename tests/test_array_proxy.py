@@ -1,21 +1,22 @@
 import numpy as np
 import pytest
 
-from edfarray._core import EdfFile
+from edfarray import EdfFile, ArrayProxy
 from conftest import FIXTURES
 
 
-def open_edf(name):
+def open_edf(name: str) -> EdfFile:
     return EdfFile(str(FIXTURES / f"{name}.edf"))
 
 
-def get_same_rate_proxy(f):
+def get_same_rate_proxy(f: EdfFile) -> tuple[ArrayProxy, list[int]]:
     """Get an array proxy using the largest group of same-rate signals."""
-    by_rate = f.signal_indices_by_rate()
-    if not by_rate:
+    groups = f.signal_groups()
+    if not groups:
         pytest.skip("no ordinary signals")
-    largest_group = max(by_rate.values(), key=len)
-    return f.array_proxy(largest_group), largest_group
+    largest = max(groups, key=len)
+    indices = largest.indices
+    return f.array_proxy(indices), indices
 
 
 class TestArrayProxy:
@@ -153,25 +154,41 @@ class TestArrayProxy:
         assert abs(val_neg - val_pos) < 1e-10
 
 
-class TestSignalIndicesByRate:
-    def test_returns_dict(self):
+class TestSignalGroups:
+    def test_returns_list(self):
         f = open_edf("test_generator")
-        result = f.signal_indices_by_rate()
-        assert isinstance(result, dict)
+        groups = f.signal_groups()
+        assert isinstance(groups, list)
         all_indices = []
-        for indices in result.values():
-            all_indices.extend(indices)
+        for g in groups:
+            all_indices.extend(g.indices)
         assert sorted(all_indices) == sorted(f.ordinary_signal_indices())
 
-    def test_groups_correctly(self):
+    def test_groups_share_sample_rate(self):
         f = open_edf("test_generator")
-        result = f.signal_indices_by_rate()
-        for rate, indices in result.items():
-            rates = set()
-            for idx in indices:
-                sig = f.signal(idx)
-                rates.add(sig.sample_rate)
+        for g in f.signal_groups():
+            rates = {f.signal(i).sample_rate for i in g.indices}
             assert len(rates) == 1
+            assert next(iter(rates)) == g.sample_rate
+
+    def test_covers_all_ordinary_flag(self):
+        f = open_edf("test_generator")
+        groups = f.signal_groups()
+        expected = len(groups) == 1
+        for g in groups:
+            assert g.covers_all_ordinary == expected
+
+    def test_kind_is_rectangular_in_file(self):
+        f = open_edf("test_generator")
+        for g in f.signal_groups():
+            assert g.kind == "rectangular"
+            assert g.min_samples == g.max_samples
+            assert g.is_rectangular
+
+    def test_singleton_flag(self):
+        f = open_edf("test_generator")
+        for g in f.signal_groups():
+            assert g.is_singleton == (len(g) == 1)
 
 
 class TestScanProgress:

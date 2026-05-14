@@ -11,6 +11,7 @@ __all__ = [
     "EdfFile",
     "EdfWriter",
     "Signal",
+    "SignalGroup",
     "WriterSignal",
     "inspect",
     "write_edf",
@@ -267,12 +268,13 @@ class EdfFile:
         All selected signals must have the same sample rate.
         If `signal_indices` is None, uses all ordinary (non-annotation) signals.
         """
-    def signal_indices_by_rate(self) -> dict:
+    def signal_groups(self) -> builtins.list[SignalGroup]:
         r"""
-        Group ordinary signal indices by sample rate.
+        Partition all ordinary signals into groups by sample rate.
         
-        Returns a dict mapping sample rate in Hz (float) to a list of signal indices.
-        Sub-Hz precision is preserved.
+        Returns a list of `SignalGroup` objects, each carrying its sample rate,
+        structural kind, sample-count range, and whether it covers every
+        ordinary signal in the file. Sub-Hz precision is preserved.
         """
     def write_to(self, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> None:
         r"""
@@ -420,6 +422,66 @@ class Signal:
         the cache. The cache is per-Signal-instance; cloning or re-fetching from
         `EdfFile.signal()` starts fresh.
         """
+
+@typing.final
+class SignalGroup:
+    r"""
+    A set of signal indices grouped for proxy construction, plus the metadata
+    needed to decide whether a 2D or 3D proxy is supported.
+    
+    Created by `EdfFile.signal_groups()`. Within a single EDF file, every group
+    returned by that method is "rectangular" — all channels share a sample rate
+    and total sample count.
+    """
+    @property
+    def indices(self) -> builtins.list[builtins.int]:
+        r"""
+        File-level signal indices in this group.
+        """
+    @property
+    def kind(self) -> builtins.str:
+        r"""
+        Structural kind: `"rectangular"` (all channels share a sample rate)
+        or `"open"` (mixed sample rates; 2D-only).
+        """
+    @property
+    def sample_rate(self) -> typing.Optional[builtins.float]:
+        r"""
+        Common sample rate in Hz, or `None` if the group is `"open"`.
+        """
+    @property
+    def samples_per_record(self) -> typing.Optional[builtins.int]:
+        r"""
+        Common samples-per-record, or `None` if the group is `"open"`.
+        """
+    @property
+    def min_samples(self) -> builtins.int:
+        r"""
+        Minimum total samples across the group's channels.
+        """
+    @property
+    def max_samples(self) -> builtins.int:
+        r"""
+        Maximum total samples across the group's channels.
+        Equal to `min_samples` iff the group is `"rectangular"`.
+        """
+    @property
+    def covers_all_ordinary(self) -> builtins.bool:
+        r"""
+        `True` iff this group spans every ordinary signal in the file.
+        """
+    @property
+    def is_singleton(self) -> builtins.bool:
+        r"""
+        `True` iff the group contains exactly one channel.
+        """
+    @property
+    def is_rectangular(self) -> builtins.bool:
+        r"""
+        `True` iff a 3D proxy can be built from this group.
+        """
+    def __len__(self) -> builtins.int: ...
+    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class WriterSignal:

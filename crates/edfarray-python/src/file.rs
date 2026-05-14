@@ -9,6 +9,7 @@ use edfarray_core::header::Sex;
 use crate::annotations::PyAnnotation;
 use crate::array_proxy::PyArrayProxy;
 use crate::errors::to_py_err;
+use crate::group::PySignalGroup;
 use crate::signal::PySignal;
 
 /// An open EDF/EDF+ file.
@@ -394,20 +395,17 @@ impl PyEdfFile {
         Ok(PyArrayProxy::new(proxy))
     }
 
-    /// Group ordinary signal indices by sample rate.
+    /// Partition all ordinary signals into groups by sample rate.
     ///
-    /// Returns a dict mapping sample rate in Hz (float) to a list of signal indices.
-    /// Sub-Hz precision is preserved.
-    fn signal_indices_by_rate<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let map = self.get().signal_indices_by_rate();
-        let dict = PyDict::new(py);
-        for (rate, indices) in map {
-            dict.set_item(rate, indices)?;
-        }
-        Ok(dict)
+    /// Returns a list of `SignalGroup` objects, each carrying its sample rate,
+    /// structural kind, sample-count range, and whether it covers every
+    /// ordinary signal in the file. Sub-Hz precision is preserved.
+    fn signal_groups(&self) -> Vec<PySignalGroup> {
+        self.get()
+            .signal_groups()
+            .into_iter()
+            .map(PySignalGroup::new)
+            .collect()
     }
 
     /// Write this file to `path`, optionally transcoding to a different variant.
