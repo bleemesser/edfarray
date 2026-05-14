@@ -18,7 +18,7 @@ pages = f.read_page(0.0, 10.0, signal_indices=[0, 1, 5])
 
 There's also `read_page_digital()` which returns int16 arrays without the gain/offset conversion.
 
-#### Time-aware reading for EDF+D
+### Time-aware reading for EDF+D
 
 For EDF+D files with time gaps, use `use_time=True` to resolve the time range to actual sample indices:
 

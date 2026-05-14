@@ -21,14 +21,7 @@ enum AnnotationState {
     Complete(AnnotationIndex),
 }
 
-/// A memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
-///
-/// On open, the file is mapped into memory and the header and record layout are parsed
-/// synchronously (fast, fixed-size). For files with annotation signals, the annotation
-/// scan runs in a background thread so the file can be used immediately for signal reads.
-///
-/// For plain EDF files (no annotation signals), the annotation index is trivially
-/// computed at open time (uniform record spacing) with no background work.
+/// Memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
 pub struct MappedFile {
     mmap: Mmap,
     pub header: EdfHeader,
@@ -48,11 +41,7 @@ impl std::fmt::Debug for MappedFile {
 }
 
 impl MappedFile {
-    /// Open and parse an EDF/EDF+ file.
-    ///
-    /// Parses the header and record layout synchronously, then spawns a background
-    /// thread to build the annotation index (for files with annotation signals).
-    /// Returns immediately — signal data can be read before the scan finishes.
+    /// Open EDF file. Spawns background annotation scan for files with annotation signals.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
         let file = std::fs::File::open(path).map_err(|e| EdfError::FileOpen {
             path: path.to_path_buf(),
@@ -147,9 +136,7 @@ impl MappedFile {
         });
     }
 
-    /// Block until the background annotation scan has completed.
-    ///
-    /// This is a no-op if the scan is already done (plain EDF, or scan finished).
+    /// Block until annotation scan completes. No-op if already done.
     pub fn wait_for_annotations(&self) {
         let (lock, cvar) = &self.scan_done;
         let mut done = lock.lock().unwrap();
@@ -164,9 +151,7 @@ impl MappedFile {
         *done
     }
 
-    /// Returns `(records_scanned, total_records)` for the background annotation scan.
-    ///
-    /// Non-blocking. Can be polled to show progress for large files.
+    /// Annotation scan progress: `(records_scanned, total_records)`. Non-blocking.
     pub fn scan_progress(&self) -> (usize, usize) {
         let state = self.annotations.read().unwrap();
         match &*state {
@@ -191,11 +176,7 @@ impl MappedFile {
         }
     }
 
-    /// Onset time (in seconds) for the given data record.
-    ///
-    /// For EDF and EDF+C, this is computed directly as `rec_idx * record_duration`
-    /// without blocking. For EDF+D, this blocks until the annotation scan completes
-    /// to get the actual (potentially non-uniform) onset from the TALs.
+    /// Record onset time in seconds. Blocks for EDF+D to resolve non-uniform onsets.
     pub fn record_onset(&self, rec_idx: usize) -> f64 {
         if !self.header.variant.is_plus_d() {
             return rec_idx as f64 * self.header.record_duration_secs;
@@ -208,10 +189,7 @@ impl MappedFile {
         })
     }
 
-    /// Find the first and last sample indices for a signal that fall within a time range.
-    ///
-    /// Uses record onsets to resolve the time range to actual sample indices,
-    /// accounting for gaps in EDF+D files.
+    /// Resolve time range to sample indices using record onsets (accounts for EDF+D gaps).
     pub fn sample_range_for_time(&self, proxy: &SignalProxy, start_sec: f64, end_sec: f64) -> (usize, usize) {
         let num_records = self.header.num_records.max(0) as usize;
         if num_records == 0 {
@@ -222,53 +200,43 @@ impl MappedFile {
         let sample_rate = proxy.sample_rate();
         let total_samples = num_records * samples_per_record;
 
-        // Clamp time range
+        // Clamp and validate time range.
         let start_sec = start_sec.max(0.0);
         let end_sec = end_sec.max(0.0);
 
-        // Empty range
         if start_sec >= end_sec {
             return (0, 0);
         }
 
-        // Get record onsets (blocks for EDF+D)
         let onsets: Vec<f64> = self.with_annotations(|idx| {
             idx.record_onsets.clone()
         });
 
         if onsets.is_empty() {
-            // Fallback: uniform spacing
             let s_start = (start_sec * sample_rate) as usize;
             let s_end = ((end_sec * sample_rate) as usize).min(total_samples);
             return (s_start, s_end);
         }
 
-        // Binary search: find first record whose samples could extend past start_sec
         let first_rec = onsets.partition_point(|&o| o + self.header.record_duration_secs <= start_sec);
-        // Binary search: find first record where onset < end_sec
         let end_rec_pt = onsets.partition_point(|&o| o < end_sec);
 
-        // If no record starts before end_sec, no samples fall in the range
         if end_rec_pt == 0 {
             return (0, 0);
         }
 
-        // last_rec is the last record that starts before end_sec
         let last_rec = end_rec_pt.saturating_sub(1).min(num_records - 1);
-        // first_rec is the first record whose onset >= start_sec
         let first_rec = first_rec.min(num_records - 1);
 
         if first_rec > last_rec {
             return (0, 0);
         }
 
-        // O(1) arithmetic for s_start: first sample whose time >= start_sec
         let rec_onset = onsets[first_rec];
         let start_offset = (((start_sec - rec_onset) * sample_rate).ceil() as isize)
             .clamp(0, samples_per_record as isize) as usize;
         let s_start = first_rec * samples_per_record + start_offset;
 
-        // O(1) arithmetic for s_end: exclusive upper bound, first sample whose time >= end_sec
         let last_rec_onset = onsets[last_rec];
         let end_offset = (((end_sec - last_rec_onset) * sample_rate).ceil() as isize)
             .clamp(0, samples_per_record as isize) as usize;
@@ -473,7 +441,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_plain_edf_start_at_zero() {
-        // Regression test for sentinel bug: start_sec=0.0 must include sample 0
         let (file, _, _) = build_test_file();
         let mapped = MappedFile::open(file.path()).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
@@ -484,7 +451,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_all_onsets_after_end() {
-        // Regression test for underflow: all onsets >= end_sec must return (0,0) without panic
         let (file, _, _) = build_test_file();
         let mapped = MappedFile::open(file.path()).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
@@ -496,7 +462,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_start_ge_end() {
-        // start_sec >= end_sec returns empty range
         let (file, _, _) = build_test_file();
         let mapped = MappedFile::open(file.path()).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
@@ -510,7 +475,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_gap_spanning() {
-        // Use the existing edfPlusD.edf fixture which has non-uniform onsets
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
@@ -535,7 +499,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_inside_gap() {
-        // Range entirely inside a gap returns empty
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
@@ -561,7 +524,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_mid_record_range() {
-        // Range that starts mid-record
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
@@ -576,7 +538,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_mid_record() {
-        // Range starting mid-record
         let (file, _, _) = build_test_file();
         let mapped = MappedFile::open(file.path()).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
@@ -588,7 +549,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_underflow_all_onsets_after_end() {
-        // Regression test: all onsets >= end_sec should return (0,0) without panic
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
@@ -607,7 +567,6 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_mid_record() {
-        // Range that starts mid-record
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();

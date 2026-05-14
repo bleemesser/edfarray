@@ -10,7 +10,7 @@ def open_edf(name: str) -> EdfFile:
 
 
 def get_same_rate_proxy(f: EdfFile) -> tuple[Proxy2D, list[int]]:
-    """Get a 2D proxy using the largest group of same-rate signals."""
+    """Return a 2D proxy for the largest same-rate signal group."""
     groups = f.signal_groups()
     if not groups:
         pytest.skip("no ordinary signals")
@@ -99,7 +99,6 @@ class TestArrayProxy:
         np.testing.assert_allclose(arr, sig[0:n], atol=1e-10)
 
     def test_column_vector(self):
-        """proxy[slice, int] returns 1D array of one sample per signal."""
         f = open_edf("test_generator")
         proxy, indices = get_same_rate_proxy(f)
         arr = proxy[:, 0]
@@ -109,14 +108,12 @@ class TestArrayProxy:
             assert abs(arr[i] - sig[0]) < 1e-10
 
     def test_single_signal_single_sample(self):
-        """proxy[int, int] returns a scalar float."""
         f = open_edf("test_generator")
         proxy, indices = get_same_rate_proxy(f)
         val = proxy[0, 0]
         assert isinstance(val, float)
 
     def test_2d_result_is_ndarray(self):
-        """proxy[:, slice] returns a 2D numpy array."""
         f = open_edf("test_generator")
         proxy, indices = get_same_rate_proxy(f)
         arr = proxy[:, 0:10]
@@ -131,7 +128,6 @@ class TestArrayProxy:
     def test_open_group_accepted_with_pad(self):
         f = open_edf("test_generator")
         group = f.signal_group(f.ordinary_signal_indices())
-        # Mixed rates → kind == "open"; Proxy2D accepts with a pad mode.
         assert group.kind == "open"
         proxy = f.proxy_2d(group, pad_mode="nan")
         assert proxy.sample_rate is None

@@ -9,8 +9,7 @@ points cover the common cases:
   arrive, queue annotations between records, then `finish()` (or use a `with`
   block). Best for live recording or files too large to hold in memory.
 
-The writer auto-creates the `EDF Annotations` channel for `+C`/`+D` variants.
-You do **not** include it in your signal list.
+The writer auto-creates the `EDF Annotations` channel for `+C`/`+D` variants. Do not include it in your signal list.
 
 ## One-shot: `write_edf`
 
@@ -92,11 +91,7 @@ parsed annotations rather than copied verbatim.
 
 ## Annotation channel sizing
 
-For `+C`/`+D` variants the writer reserves a fixed byte budget per record for
-the annotation channel (default 120 bytes — enough for the time-keeping TAL
-plus a few short annotations). If a record's annotations don't fit, the writer
-returns an error rather than silently dropping data. Increase the budget via
-`annotation_bytes_per_record`:
+For `+C`/`+D` variants the writer reserves a fixed byte budget per record for the annotation channel. The default is 120 bytes, enough for the time-keeping TAL plus a few short annotations. If a record's annotations don't fit, the writer returns an error rather than silently dropping data. Increase the budget via `annotation_bytes_per_record`:
 
 ```python
 edfarray.write_edf(

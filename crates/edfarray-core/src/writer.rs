@@ -1,24 +1,3 @@
-//! Writing EDF/EDF+ and BDF/BDF+ files.
-//!
-//! Two entry points:
-//!
-//! - [`EdfWriter`] — streaming writer. Open a file, push records one at a time,
-//!   call [`EdfWriter::finish`] to patch the `num_records` field in the header.
-//!   Suitable for live recording or large files that don't fit in memory.
-//!
-//! - [`write_edf`] — one-shot helper. Pass a fully populated [`WriterSpec`] and
-//!   all physical sample data; the function builds an [`EdfWriter`] and emits
-//!   every record in one call. Suitable for editing or transcoding existing
-//!   files where the data is already in memory.
-//!
-//! Annotation channel handling: for `+C`/`+D` variants the writer auto-creates
-//! the `EDF Annotations` signal. The user does **not** include an annotation
-//! channel in the signals list. Each record gets a time-keeping TAL plus any
-//! user annotations whose onset falls within the record's time window. The
-//! channel is sized to fit the largest record's annotations (or a configurable
-//! minimum); annotations that don't fit cause an error rather than being
-//! silently dropped.
-
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -30,13 +9,9 @@ use crate::error::{EdfError, Result};
 use crate::header::EdfVariant;
 
 /// Default minimum byte budget for the annotation channel per record.
-/// Roughly enough room for a time-keeping TAL plus a few short user annotations.
 const DEFAULT_MIN_ANNOTATION_BYTES: usize = 120;
 
-/// One signal's worth of metadata for the writer. Mirrors [`SignalHeader`] but
-/// owned and validated only at write time.
-///
-/// [`SignalHeader`]: crate::signal::SignalHeader
+/// Signal metadata for the writer.
 #[derive(Debug, Clone)]
 pub struct WriterSignal {
     pub label: String,
@@ -123,8 +98,7 @@ impl WriterSignal {
     }
 }
 
-/// Top-level write spec. Used both as the input to [`write_edf`] and to seed an
-/// [`EdfWriter`].
+/// Top-level write spec for [`write_edf`] and [`EdfWriter`].
 #[derive(Debug, Clone)]
 pub struct WriterSpec {
     pub variant: EdfVariant,
@@ -157,23 +131,16 @@ pub struct EdfWriter {
     path: PathBuf,
     inner: Option<BufWriter<File>>,
     spec: WriterSpec,
-    /// Resolved annotation channel byte budget per record (0 for non-plus).
     ann_bytes_per_record: usize,
-    /// Accumulated record count, written into the header on `finish`.
     num_records_written: u64,
-    /// Annotations queued via `add_annotation` but not yet attached to a record.
     pending_annotations: Vec<Annotation>,
-    /// Sub-second component of the recording start time, encoded into the first
-    /// time-keeping annotation. Computed once at create() time.
     start_subsecond: f64,
-    /// Header byte count, kept for the seek-back num_records patch.
     header_bytes: usize,
     finished: bool,
 }
 
 impl EdfWriter {
-    /// Open `path` for writing and emit an initial header with `num_records = -1`.
-    /// On `finish()`, seeks back and patches `num_records` with the true count.
+    /// Open `path` for writing. Header patched with record count on `finish()`.
     pub fn create(path: impl AsRef<Path>, spec: WriterSpec) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
@@ -230,7 +197,7 @@ impl EdfWriter {
         let header_bytes = serialize_header(
             &spec,
             ann_bytes_per_record,
-            /* num_records */ -1,
+            -1,
             &mut writer,
         )?;
 
@@ -257,25 +224,18 @@ impl EdfWriter {
         self.spec.variant.sample_size_bytes()
     }
 
-    /// Queue an annotation to be emitted with the next call to `write_record` /
-    /// `write_record_physical`. Useful for live-capture flows where annotations
-    /// arrive between record boundaries.
+    /// Queue an annotation for the next record write.
     pub fn add_annotation(&mut self, ann: Annotation) {
         self.pending_annotations.push(ann);
     }
 
-    /// Write one record from physical (f64) values. Each inner slice must have
-    /// exactly `signals[i].samples_per_record` values.
-    ///
-    /// Pending annotations queued via `add_annotation` are flushed into this
-    /// record's annotation channel.
+    /// Write one record from physical values. Flushes pending annotations.
     pub fn write_record_physical(&mut self, physical: &[&[f64]]) -> Result<()> {
         let extra = std::mem::take(&mut self.pending_annotations);
         self.write_record_with_annotations(physical, &extra)
     }
 
-    /// Write one record from physical values, with explicit annotations to embed
-    /// into this record's annotation channel (in addition to any pending ones).
+    /// Write one record from physical values with explicit annotations.
     pub fn write_record_with_annotations(
         &mut self,
         physical: &[&[f64]],
@@ -329,12 +289,10 @@ impl EdfWriter {
             }
         }
 
-        // Drain pending into a combined slice (preserving caller-supplied first).
         let mut combined: Vec<&Annotation> = Vec::with_capacity(annotations.len());
         for a in annotations {
             combined.push(a);
         }
-        // Pull any remaining pending added _during_ this call (rare but possible).
         let pending = std::mem::take(&mut self.pending_annotations);
         let pending_refs: Vec<&Annotation> = pending.iter().collect();
         combined.extend(pending_refs);
@@ -360,7 +318,7 @@ impl EdfWriter {
         Ok(())
     }
 
-    /// Finalize the file: flush, seek back, and patch `num_records` in the header.
+    /// Finalize: flush and patch `num_records` in the header.
     pub fn finish(mut self) -> Result<()> {
         self.finish_in_place()
     }
@@ -392,7 +350,6 @@ impl EdfWriter {
             path: self.path.clone(),
             source: e,
         })?;
-        // suppress unused field warning
         let _ = self.header_bytes;
         Ok(())
     }
@@ -401,21 +358,12 @@ impl EdfWriter {
 impl Drop for EdfWriter {
     fn drop(&mut self) {
         if !self.finished {
-            // Best-effort finalize on drop. Errors are suppressed because
-            // panicking from Drop is unsound; callers should call `finish`
-            // explicitly to surface IO errors.
             let _ = self.finish_in_place();
         }
     }
 }
 
-/// One-shot helper: write a complete file from a fully-populated spec, physical
-/// sample data, and annotations.
-///
-/// `data[i]` must have length `num_records * signals[i].samples_per_record`,
-/// where `num_records` is consistent across all signals (inferred from the
-/// shortest signal, but all must agree). Annotations are distributed across
-/// records by their onset.
+/// One-shot: write a complete file from spec, physical data, and annotations.
 pub fn write_edf(
     path: impl AsRef<Path>,
     spec: WriterSpec,
@@ -472,7 +420,6 @@ pub fn write_edf(
     let signals_count = writer.spec.signals.len();
     let record_dur = writer.spec.record_duration_secs;
 
-    // Group annotations by record window for distribution.
     let mut by_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
     for ann in annotations {
         let r = (ann.onset / record_dur).floor() as i64;
@@ -480,7 +427,6 @@ pub fn write_edf(
         if r < num_records {
             by_record[r].push(ann.clone());
         } else if num_records > 0 {
-            // Stash trailing annotations into the last record so they aren't lost.
             by_record[num_records - 1].push(ann.clone());
         } else {
             return Err(EdfError::InvalidArgument {
@@ -504,7 +450,6 @@ pub fn write_edf(
     Ok(())
 }
 
-/// Digital range bounds for `n` byte-wide signed samples. Returns (min, max).
 fn digital_bounds(sample_size_bytes: usize) -> (i64, i64) {
     match sample_size_bytes {
         2 => (i16::MIN as i64, i16::MAX as i64),
@@ -513,8 +458,6 @@ fn digital_bounds(sample_size_bytes: usize) -> (i64, i64) {
     }
 }
 
-/// Format `value` as ASCII left-justified, space-padded, exactly `size` bytes.
-/// Truncates if too long.
 fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
     let bytes = value.as_bytes();
     let mut out = vec![b' '; size];
@@ -523,10 +466,7 @@ fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
     out
 }
 
-/// Format an f64 fitting into `size` bytes of ASCII. Tries decreasing precision
-/// until it fits; falls back to a truncated representation.
 fn format_f64_field(value: f64, size: usize) -> Vec<u8> {
-    // Plain integer if possible.
     if value.fract() == 0.0 && value.abs() < 1e15 {
         let s = format!("{}", value as i64);
         if s.len() <= size {
@@ -539,7 +479,6 @@ fn format_f64_field(value: f64, size: usize) -> Vec<u8> {
             return format_ascii_field(&s, size);
         }
     }
-    // Last resort: truncate.
     let s = format!("{}", value);
     format_ascii_field(&s, size)
 }
@@ -560,7 +499,6 @@ fn serialize_header<W: Write>(
 
     let mut main = Vec::with_capacity(256);
 
-    // version (8): 0 for EDF, 0xFF + "BIOSEMI" + space for BDF
     match spec.variant {
         EdfVariant::Bdf | EdfVariant::BdfPlusC | EdfVariant::BdfPlusD => {
             main.push(0xFF);
@@ -573,7 +511,6 @@ fn serialize_header<W: Write>(
     main.extend(format_ascii_field(&spec.patient_id, 80));
     main.extend(format_ascii_field(&spec.recording_id, 80));
 
-    // start_date (8) DD.MM.YY (year clipping per EDF: 85-99 = 1985-1999, else 2000-2084)
     let dt = spec.start_datetime;
     let yy = dt.year().rem_euclid(100);
     let date_str = format!("{:02}.{:02}.{:02}", dt.day(), dt.month(), yy);
@@ -582,10 +519,8 @@ fn serialize_header<W: Write>(
     let time_str = format!("{:02}.{:02}.{:02}", dt.hour(), dt.minute(), dt.second());
     main.extend(format_ascii_field(&time_str, 8));
 
-    // header_bytes (8)
     main.extend(format_ascii_field(&header_bytes.to_string(), 8));
 
-    // reserved (44) — encodes the variant for + files
     let reserved = match spec.variant {
         EdfVariant::Edf => "",
         EdfVariant::EdfPlusC => "EDF+C",
@@ -596,19 +531,13 @@ fn serialize_header<W: Write>(
     };
     main.extend(format_ascii_field(reserved, 44));
 
-    // num_records (8)
     main.extend(format_ascii_field(&num_records.to_string(), 8));
-
-    // record_duration (8)
     main.extend(format_f64_field(spec.record_duration_secs, 8));
-
-    // num_signals (4)
     main.extend(format_ascii_field(&n_total.to_string(), 4));
 
     debug_assert_eq!(main.len(), 256);
     w.write_all(&main).map_err(io_err)?;
 
-    // Per-signal header is stored transposed: all labels together, then all transducers, etc.
     let mut all_signals: Vec<WriterSignal> = spec.signals.clone();
     if spec.variant.is_plus() {
         all_signals.push(annotation_signal(spec, ann_bytes_per_record));
@@ -691,7 +620,6 @@ fn write_sample<W: Write>(w: &mut W, value: i32, sample_size: usize) -> Result<(
     Ok(())
 }
 
-/// TAL byte values
 const TAL_SEPARATOR: u8 = 0x14;
 const TAL_DURATION_MARKER: u8 = 0x15;
 const TAL_TERMINATOR: u8 = 0x00;
@@ -706,7 +634,6 @@ fn write_annotation_channel<W: Write>(
 ) -> Result<()> {
     let mut buf = Vec::with_capacity(byte_budget);
 
-    // Time-keeping TAL: +<record_onset>\x14\x14\x00
     let onset = record_idx as f64 * record_duration + start_subsecond;
     buf.extend_from_slice(format_tal_onset(onset).as_bytes());
     buf.push(TAL_SEPARATOR);
@@ -753,7 +680,6 @@ fn write_annotation_channel<W: Write>(
     Ok(())
 }
 
-/// Format an annotation onset with a leading sign per EDF+ TAL spec.
 fn format_tal_onset(onset: f64) -> String {
     let s = format_tal_number(onset.abs());
     if onset.is_sign_negative() {
@@ -767,8 +693,6 @@ fn format_tal_duration(d: f64) -> String {
     format_tal_number(d.max(0.0))
 }
 
-/// Format a non-negative f64 as a TAL-compliant number (digits, optional single
-/// decimal point, no leading/trailing dot).
 fn format_tal_number(v: f64) -> String {
     if v.fract() == 0.0 && v.abs() < 1e15 {
         return format!("{}", v as i64);
@@ -853,7 +777,6 @@ mod tests {
         let f = EdfFile::open(&path).unwrap();
         assert_eq!(f.variant(), EdfVariant::EdfPlusC);
         assert_eq!(f.num_records(), 4);
-        // Note: user signals only, not the annotation channel
         assert_eq!(f.ordinary_signal_indices().len(), 1);
 
         let got_anns = f.annotations();
@@ -968,7 +891,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("overflow.edf");
         let mut spec = sample_spec(EdfVariant::EdfPlusC);
-        spec.annotation_bytes_per_record = Some(40); // very small
+        spec.annotation_bytes_per_record = Some(40);
         let data = vec![0.0f64; 256 * 1];
         let big_text = "X".repeat(200);
         let anns = vec![Annotation { onset: 0.0, duration: None, text: big_text }];

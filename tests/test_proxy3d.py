@@ -48,8 +48,7 @@ class TestProxy3D:
         _, _, spr = p3.shape
         block = p3[0:3, :, :]
         assert block.shape == (3, len(g), spr)
-        # Compare with 2D layout: 2D sample idx = rec * spr + s.
-        expected = p2[:, 0 : 3 * spr]  # (n_ch, 3*spr)
+        expected = p2[:, 0 : 3 * spr]
         for rec in range(3):
             for ch in range(len(g)):
                 np.testing.assert_allclose(
@@ -76,7 +75,6 @@ class TestProxy3D:
         f = open_edf("test_generator")
         g = largest_rect_group(f)
         p = f.proxy_3d(g)
-        # test_generator has annotation channels; stride view is unavailable.
         assert p.stride_info() is None
         assert p.supports_strided_view is False
 

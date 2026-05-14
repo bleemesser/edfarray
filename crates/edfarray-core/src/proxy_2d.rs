@@ -8,14 +8,7 @@ use crate::group::{PadMode, SignalGroup};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
 
-/// A 2D view over the channels in a [`SignalGroup`].
-///
-/// Presents a `(num_signals, max_samples)` rectangle. Reads are decoded on
-/// demand from the memory-mapped file — this struct holds no sample data.
-///
-/// Accepts any [`GroupKind`] (rectangular or open). When the group is
-/// `Open`, channels have different per-channel lengths; the [`PadMode`] policy
-/// decides what happens for reads past a short channel's end.
+/// 2D view over signal channels. Decodes on demand from mmap; holds no sample data.
 #[derive(Debug)]
 pub struct Proxy2D {
     file: Arc<MappedFile>,
@@ -25,9 +18,8 @@ pub struct Proxy2D {
 }
 
 impl Proxy2D {
-    /// Build a 2D proxy from a [`SignalGroup`] with the given pad policy.
-    ///
-    /// Returns [`EdfError::InvalidArgument`] if the group is empty.
+    /// Build a 2D proxy from a `SignalGroup` with the given pad policy.
+    /// Returns `EdfError::InvalidArgument` if the group is empty.
     pub fn new(file: Arc<MappedFile>, group: SignalGroup, pad_mode: PadMode) -> Result<Self> {
         if group.indices.is_empty() {
             return Err(EdfError::InvalidArgument {
@@ -72,10 +64,6 @@ impl Proxy2D {
     }
 
     /// Per-channel valid sample counts in proxy-coordinate order.
-    ///
-    /// For `Rectangular` groups every entry equals `shape().1`; for `Open`
-    /// groups entries vary. Callers can use this to avoid OOB reads without
-    /// relying on the pad policy.
     pub fn valid_lengths(&self) -> &[usize] {
         &self.valid_lengths
     }
@@ -110,11 +98,7 @@ impl Proxy2D {
         proxy.get_physical(sample)
     }
 
-    /// Read physical samples for the given proxy-coordinate signal indices and sample range.
-    ///
-    /// Parallelized across signals with rayon. When a requested range extends
-    /// past a channel's valid length, the [`PadMode`] decides whether to error,
-    /// fill, or replicate the edge.
+    /// Read physical samples for signal indices and sample range. Parallel across signals.
     pub fn read_physical(
         &self,
         signal_indices: &[usize],
@@ -349,11 +333,8 @@ fn read_digital_with_pad(
     Ok(buf)
 }
 
-// Convenience constructor: build a group from raw indices and wrap it.
 impl Proxy2D {
-    /// Build a 2D proxy from a list of file-level signal indices.
-    ///
-    /// Convenience for `Proxy2D::new(file, SignalGroup::from_indices(header, indices)?, pad)`.
+    /// Build a 2D proxy from file-level signal indices.
     pub fn from_indices(
         file: Arc<MappedFile>,
         indices: &[usize],

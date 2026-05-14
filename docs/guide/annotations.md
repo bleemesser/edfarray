@@ -41,9 +41,7 @@ edfarray extracts this automatically. All annotation onsets and sample timestamp
 
 ## Discontinuous recordings (EDF+D)
 
-EDF+D files have gaps in the recording. For example, a sleep study might pause during a bathroom break.
-
-The `times()` method on a signal accounts for these gaps:
+EDF+D files have gaps in the recording. The `times()` method on a signal accounts for these gaps:
 
 ```python
 f = edfarray.EdfFile("discontinuous.edf")
@@ -63,12 +61,9 @@ for idx in gaps:
 
 ### `read_page` and `Proxy2D` use flat sample indices
 
-`read_page()`, `Signal` indexing, and `Proxy2D` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, it means the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` — it does not account for gaps.
+`read_page()`, `Signal` indexing, and `Proxy2D` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` and does not account for gaps.
 
-`Proxy3D` indexes by `(record, channel, sample)` rather than a flat sample
-index, so for EDF+D it can be a more natural fit — each record corresponds to
-exactly one onset entry in the annotations index, and the sample axis only
-addresses *within-record* samples.
+`Proxy3D` indexes by `(record, channel, sample)` rather than a flat sample index. For EDF+D this can be a more natural fit. Each record corresponds to exactly one onset entry in the annotations index, and the sample axis only addresses within-record samples.
 
 For example, if a file has records at t=0s, t=1s, then a gap, then t=5s:
 
@@ -96,7 +91,7 @@ sig = f.signal(0)
 data = sig.read_at(0.0, 10.0)  # physical data within 0-10s, gaps excluded
 ```
 
-This is the same behavior as pyedflib's `readSignal(start, n)` — flat sample indices are the standard convention. The `times()` method is what makes EDF+D usable: it gives you the true physical timestamp for every sample so you can map between sample space and time space yourself.
+This is the same behavior as pyedflib's `readSignal(start, n)`. Flat sample indices are the standard convention. For mapping between sample space and time space, use `times()`. It returns the true physical timestamp for every sample.
 
 ## Time-keeping annotations
 

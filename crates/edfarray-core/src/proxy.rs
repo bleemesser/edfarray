@@ -5,11 +5,7 @@ use crate::error::{EdfError, Result};
 use crate::mmap::MappedFile;
 use crate::signal::SignalHeader;
 
-/// Private LRU cache of decoded physical record values.
-///
-/// Keyed by record index. Stores `Vec<f64>` (physical values with gain/offset
-/// already applied). Disabled state is `Option::None` on `SignalProxy`, not a
-/// zero-capacity cache.
+/// LRU cache of decoded physical records. Keyed by record index, disabled via `Option::None` on `SignalProxy`.
 #[derive(Debug)]
 struct LruCache {
     capacity: usize,
@@ -54,11 +50,7 @@ impl LruCache {
     }
 }
 
-/// Array-like view of a single signal across the entire recording.
-///
-/// Translates global sample indices into record/offset pairs and decodes
-/// samples directly from the memory-mapped file on each access. No
-/// application-level caching is performed — the OS page cache handles this.
+/// Array-like view of one signal. Decodes samples from mmap on access; OS page cache handles caching.
 #[derive(Debug)]
 pub struct SignalProxy {
     signal_idx: usize,
@@ -111,19 +103,7 @@ impl SignalProxy {
             .sample_rate(self.file.header.record_duration_secs)
     }
 
-    /// Enable an LRU cache of decoded physical record values.
-    ///
-    /// `capacity` is the number of records to cache (NOT bytes). Memory cost
-    /// per cached record is `samples_per_record * 8` bytes. The cache is per-
-    /// proxy; cloning or re-creating the proxy from `EdfFile::signal()` starts
-    /// fresh.
-    ///
-    /// Caches only `read_physical` and `get_physical` results. `read_digital`
-    /// bypasses the cache.
-    ///
-    /// A capacity of `0` is treated as "explicitly disabled" and returns `self`
-    /// unchanged. Use a small capacity for scrolling viewers; larger values
-    /// waste memory if access patterns don't overlap.
+    /// Enable LRU cache for physical reads. `capacity` is record count, not bytes. `read_digital` bypasses cache. Capacity 0 disables.
     pub fn with_cache(mut self, capacity: usize) -> Self {
         if capacity == 0 {
             return self;
@@ -149,8 +129,7 @@ impl SignalProxy {
         }
         let (rec_idx, offset) = self.resolve_index(idx);
 
-        // Check warm cache first (populated by prior read_physical calls).
-        // On miss, bypass the cache — don't populate for single-sample access.
+        // Check warm cache. On miss, do not populate for single-sample access.
         if let Some(cache) = &self.cache {
             if let Some(cached) = cache.lock().unwrap().get(rec_idx) {
                 if offset < cached.len() {
@@ -185,10 +164,7 @@ impl SignalProxy {
         Ok(h.gain * digital as f64 + h.offset)
     }
 
-    /// Read a range of samples as physical (f64) values into a pre-allocated buffer.
-    ///
-    /// This is the primary hot path. It resolves which data records are needed,
-    /// decodes digital -> f64 directly from the mmap, and writes into `out`.
+    /// Read physical samples into `out`. Decodes digital to f64 from mmap.
     pub fn read_physical(&self, start: usize, end: usize, out: &mut [f64]) -> Result<()> {
         self.validate_range(start, end, out.len())?;
         if self.cache.is_none() {
@@ -224,8 +200,6 @@ impl SignalProxy {
             let record_data = self.file.record_bytes(rec_idx)?;
             let sig_bytes = self.file.layout.signal_bytes(record_data, self.signal_idx)?;
 
-            // Try cache first. Cached entries are always full records of length
-            // `samples_per_record`, so `offset + count <= cached.len()` always holds.
             if let Some(cached) = self.cache.as_ref().unwrap().lock().unwrap().get(rec_idx) {
                 out[out_pos..out_pos + count].copy_from_slice(&cached[offset..offset + count]);
                 out_pos += count;
@@ -233,8 +207,6 @@ impl SignalProxy {
                 continue;
             }
 
-            // Cache miss: decode the FULL record (sig_bytes is the entire
-            // signal portion of this record; we want to cache all of it).
             let mut full_decoded = vec![0.0f64; self.samples_per_record];
             {
                 let h = self.header();
@@ -246,13 +218,11 @@ impl SignalProxy {
                 );
             }
 
-            // Copy needed slice from the decoded record
             let dst = &mut out[out_pos..out_pos + count];
             dst.copy_from_slice(&full_decoded[offset..offset + count]);
             out_pos += count;
             remaining_start += count;
 
-            // Put into cache (after copy, so we don't need to clone)
             {
                 let mut cache = self.cache.as_ref().unwrap().lock().unwrap();
                 cache.put(rec_idx, full_decoded);
@@ -279,11 +249,7 @@ impl SignalProxy {
         )
     }
 
-    /// Physical time in seconds for the sample at the given global index.
-    ///
-    /// For EDF+D files, this accounts for gaps between records using the
-    /// record onset times from the annotation index (blocks until scan completes).
-    /// For EDF and EDF+C, record onsets are computed directly without waiting.
+    /// Physical time in seconds for sample at `idx`. Blocks for EDF+D to resolve onsets.
     pub fn sample_time(&self, idx: usize) -> f64 {
         let (rec_idx, offset) = self.resolve_index(idx);
         let record_onset = self.file.record_onset(rec_idx);
@@ -300,12 +266,7 @@ impl SignalProxy {
         Ok(())
     }
 
-    /// Read physical data for samples whose physical time falls within `[start_sec, end_sec)`.
-    ///
-    /// For EDF+D files, this accounts for gaps between records using the
-    /// record onset times from the annotation index (blocks until scan completes).
-    /// For EDF and EDF+C, this is equivalent to indexing by flat sample number,
-    /// i.e. `int(time * sample_rate)`.
+    /// Read physical samples in `[start_sec, end_sec)`. Accounts for EDF+D gaps.
     pub fn read_at(&self, start_sec: f64, end_sec: f64) -> Result<Vec<f64>> {
         let (s_start, s_end) = if self.file.header.variant.is_plus_d() {
             self.file.sample_range_for_time(self, start_sec, end_sec)
@@ -352,10 +313,7 @@ impl SignalProxy {
         Ok(())
     }
 
-    /// Generic inner loop for reading a range of samples across record boundaries.
-    ///
-    /// `decode_fn` receives (signal_bytes, sample_offset_in_record, sample_count, output_slice)
-    /// and writes decoded values into the output slice.
+    /// Read samples across record boundaries using `decode_fn`.
     fn read_range_inner<T>(
         &self,
         start: usize,
@@ -518,8 +476,6 @@ mod tests {
         assert!(SignalProxy::new(mapped, 1).is_err());
     }
 
-    // --- LruCache unit tests ---
-
     #[test]
     fn lru_get_miss_returns_none() {
         let mut c = LruCache::new(2);
@@ -573,8 +529,6 @@ mod tests {
     fn lru_zero_capacity_panics() {
         let _ = LruCache::new(0);
     }
-
-    // --- Integration tests for with_cache ---
 
     #[test]
     fn cache_disabled_by_default() {

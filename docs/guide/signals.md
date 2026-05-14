@@ -96,10 +96,10 @@ pages = f.read_page(0.0, 10.0)
 ## Signal groups
 
 A `SignalGroup` is a set of channels classified by sample rate. Within a single
-EDF file, every group is either *rectangular* (all channels share a sample rate
-and total sample count — every group from `signal_groups()` is rectangular) or
-*open* (mixed rates — only producible via `signal_group(indices)` when the
-caller mixes rates explicitly).
+EDF file every group is either *rectangular* or *open*. Rectangular groups share
+a sample rate and total sample count. Every group returned by `signal_groups()`
+is rectangular. Open groups have mixed rates and can only be produced by passing
+mixed-rate indices to `signal_group(indices)`.
 
 ```python
 groups = f.signal_groups()
@@ -116,8 +116,8 @@ Useful fields: `kind` (`"rectangular"` / `"open"`), `sample_rate`,
 ## 2D proxy
 
 `Proxy2D` gives numpy-style 2D indexing across signals and samples. It accepts
-any group — including `Open` groups — and uses a `PadMode` to decide what reads
-past a short channel's end return.
+any group, including `Open` groups. For `Open` groups, a `PadMode` decides what
+reads past a short channel's end return.
 
 ```python
 group = max(f.signal_groups(), key=len)
@@ -140,15 +140,15 @@ proxy = f.proxy_2d(all_ch, pad_mode="nan")
 # "raise" | "nan" | "zero" | "edge" | a numeric scalar (= Value)
 ```
 
-`pad_mode` is applied in the *domain of the read* — physical reads see the
-literal `f64` fill, digital reads see the truncated `i32`. `"nan"` is rejected
-for digital reads.
+`pad_mode` is applied in the domain of the read. Physical reads see the literal
+`f64` fill. Digital reads see the truncated `i32`. `"nan"` is rejected for
+digital reads.
 
 ## 3D proxy
 
-For rectangular groups, `Proxy3D` exposes the natural record-major layout
-`(num_records, num_channels, samples_per_record)` — convenient for epoch-based
-ML pipelines where records align with batch units:
+For rectangular groups, `Proxy3D` exposes the record-major layout
+`(num_records, num_channels, samples_per_record)`. This is convenient for
+epoch-based ML pipelines where records align with batch units.
 
 ```python
 proxy = f.proxy_3d(group)              # group.kind must be "rectangular"
@@ -158,8 +158,8 @@ proxy[0:30, :, :]                       # first 30 records, shape (30, n_chan, s
 proxy[5, 2, 100]                        # scalar
 ```
 
-`Proxy3D` is rejected for `Open` groups — use `Proxy2D` with a pad mode
-instead, or pick a single rate group from `signal_groups()`.
+`Proxy3D` is rejected for `Open` groups. Use `Proxy2D` with a pad mode instead,
+or pick a single-rate group from `signal_groups()`.
 
 Both proxies read on demand from the memory-mapped file and hold no sample
 data. Multi-signal reads are parallelized with rayon.

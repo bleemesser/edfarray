@@ -46,11 +46,7 @@ impl PyEdfFile {
         self.inner = None;
     }
 
-    /// Explicitly release the underlying memory-mapped file.
-    ///
-    /// After calling `close()`, any further method calls on this `EdfFile`
-    /// will raise. Existing `Signal` and `ArrayProxy` objects keep their own
-    /// references and remain usable. Idempotent.
+    /// Release the underlying memory-mapped file. Idempotent.
     fn close(&mut self) {
         self.inner = None;
     }
@@ -116,8 +112,7 @@ impl PyEdfFile {
         &self.get().header().recording_id
     }
 
-    /// Returns `datetime.datetime` if the header date/time could be parsed,
-    /// or a string like `"04.04.yy 12.57.02"` if it was anonymized.
+    /// Recording start time as `datetime.datetime`, or raw string if anonymized.
     #[getter]
     fn start_datetime<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let mdt = &self.get().header().start_datetime;

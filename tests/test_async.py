@@ -127,8 +127,6 @@ async def test_read_page_signal_indices_subset():
 
 
 async def test_read_page_concurrent_gather_works():
-    """Concurrent reads via asyncio.gather should all complete with correct
-    results. This is a correctness smoke test, not a perf benchmark."""
     path = _pick_fixture()
     f = await aio.open(str(path))
     try:
@@ -145,12 +143,6 @@ async def test_read_page_concurrent_gather_works():
 
 
 async def test_read_page_releases_gil():
-    """A Python thread should make progress while an async read is in flight.
-    If the GIL is held during decode, the busy thread is starved and its
-    counter barely moves.
-
-    Directly observes GIL release rather than inferring from wall-clock,
-    which is unreliable on tiny fixtures where overhead dominates decode."""
     import threading
 
     path = _pick_fixture()
@@ -281,7 +273,6 @@ async def test_signal_with_cache():
 
 
 async def test_signal_concurrent_reads_release_gil():
-    """Concurrent Signal reads should release the GIL during decode."""
     import threading
 
     path = _pick_fixture()

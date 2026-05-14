@@ -8,7 +8,7 @@ const TAL_SEPARATOR: u8 = 0x14;
 const TAL_DURATION_MARKER: u8 = 0x15;
 const TAL_TERMINATOR: u8 = 0x00;
 
-/// A single annotation parsed from a TAL (Time-stamped Annotation List).
+/// Single annotation from a TAL (Time-stamped Annotation List).
 #[derive(Debug, Clone)]
 pub struct Annotation {
     pub onset: f64,
@@ -16,23 +16,19 @@ pub struct Annotation {
     pub text: String,
 }
 
-/// Index of all annotations and record timing information built from a sequential
-/// scan of the file's annotation signals.
+/// Annotation and record-timing index built from sequential TAL scan.
 #[derive(Debug, Clone)]
 pub struct AnnotationIndex {
-    /// All non-timekeeping annotations, sorted by onset.
+    /// Non-timekeeping annotations, sorted by onset.
     pub annotations: Vec<Annotation>,
 
-    /// Actual onset time (in seconds from file start) for each data record.
-    /// For EDF+C this increases uniformly; for EDF+D it may have gaps.
+    /// Onset time (seconds from file start) for each data record.
     pub record_onsets: Vec<f64>,
 
-    /// Subsecond component of the recording start time, extracted from the
-    /// first time-keeping annotation in the first data record. The EDF header
-    /// only stores integer seconds; EDF+ encodes subsecond precision here.
+    /// Subsecond component of recording start time from first time-keeping TAL.
     pub starttime_subsecond: f64,
 
-    /// Warnings encountered during parsing (malformed TALs, etc.).
+    /// Warnings from parsing (malformed TALs, etc.).
     pub warnings: Vec<String>,
 }
 
@@ -41,11 +37,7 @@ impl AnnotationIndex {
         Self::build_with_progress(data, header, layout, &AtomicUsize::new(0))
     }
 
-    /// Build the annotation index, updating `progress` atomically after each record.
-    ///
-    /// This is the workhorse called by the background scan thread. `progress` is
-    /// incremented after each record is processed, allowing non-blocking progress
-    /// polling from the main thread.
+    /// Build the annotation index with atomic progress tracking per record.
     pub fn build_with_progress(
         data: &[u8],
         header: &EdfHeader,
@@ -123,11 +115,7 @@ impl AnnotationIndex {
             progress.store(rec_idx + 1, Ordering::Relaxed);
         }
 
-        // The first time-keeping annotation's onset encodes the subsecond
-        // component of the recording start time. The EDF header only stores
-        // integer seconds, so EDF+ files use this to convey sub-second precision.
-        // All onsets in the file are relative to the integer-second start, so we
-        // subtract this offset to make them relative to the true start time.
+        // First TAL onset encodes subsecond start time. Subtract it to normalize all onsets.
         let starttime_subsecond = record_onsets.first().copied().unwrap_or(0.0);
 
         for onset in &mut record_onsets {
@@ -159,10 +147,7 @@ impl AnnotationIndex {
     }
 }
 
-/// Parse all TALs from a single annotation signal's bytes within one data record.
-///
-/// Follows edflib's defensive approach: on malformed TALs, emit a warning and
-/// continue parsing rather than failing the entire file.
+/// Parse all TALs from one annotation signal's bytes. Emits warnings on malformed TALs.
 fn parse_tals(data: &[u8], record_idx: usize, warnings: &mut Vec<String>) -> Vec<Annotation> {
     let mut result = Vec::new();
     let mut pos = 0;
@@ -185,9 +170,7 @@ fn parse_tals(data: &[u8], record_idx: usize, warnings: &mut Vec<String>) -> Vec
     result
 }
 
-/// Parse one TAL starting at `pos`, advancing `pos` past it.
-///
-/// TAL format: `+Onset[\x15Duration]\x14[Text\x14]*\x00`
+/// Parse one TAL at `pos`, advancing past it. Format: `+Onset[\x15Dur]\x14[Text\x14]*\x00`.
 fn parse_single_tal(
     data: &[u8],
     pos: &mut usize,
@@ -268,7 +251,7 @@ fn parse_single_tal(
     Ok(annotations)
 }
 
-/// Validate onset string: must start with + or -, contain only digits and at most one dot.
+/// Parse onset: must start with +/- and contain only digits with at most one dot.
 fn parse_onset(s: &str) -> std::result::Result<f64, String> {
     if s.is_empty() {
         return Err("empty onset".to_string());
@@ -286,7 +269,7 @@ fn parse_onset(s: &str) -> std::result::Result<f64, String> {
         .map_err(|e| format!("onset parse error: {e}"))
 }
 
-/// Validate duration string: digits and at most one dot, no sign.
+/// Parse duration: digits and at most one dot, no sign.
 fn parse_duration(s: &str) -> std::result::Result<f64, String> {
     if s.is_empty() {
         return Err("empty duration".to_string());
@@ -317,15 +300,13 @@ fn validate_number(s: &str, label: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Read bytes until one of the stop bytes is found, returning the content as a string.
-/// Advances `pos` past the stop byte.
+/// Read bytes until a stop byte, returning content as a string. Advances `pos`.
 fn read_until(data: &[u8], pos: &mut usize, stop: &[u8]) -> String {
     let bytes = read_until_raw(data, pos, stop);
     String::from_utf8_lossy(&bytes).to_string()
 }
 
-/// Read bytes until one of the stop bytes is found, returning raw bytes.
-/// Advances `pos` past the stop byte.
+/// Read bytes until a stop byte, returning raw bytes. Advances `pos`.
 fn read_until_raw(data: &[u8], pos: &mut usize, stop: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
     while *pos < data.len() {
@@ -339,7 +320,7 @@ fn read_until_raw(data: &[u8], pos: &mut usize, stop: &[u8]) -> Vec<u8> {
     buf
 }
 
-/// Skip past the current TAL to the next one (find next 0x00 byte).
+/// Skip to next TAL (find next 0x00 byte).
 fn skip_to_next_tal(data: &[u8], pos: &mut usize) {
     while *pos < data.len() {
         if data[*pos] == TAL_TERMINATOR {
@@ -350,7 +331,7 @@ fn skip_to_next_tal(data: &[u8], pos: &mut usize) {
     }
 }
 
-/// Check record onsets for consistency based on the file variant.
+/// Validate record onsets for consistency with file variant.
 fn validate_record_onsets(
     onsets: &[f64],
     record_duration: f64,
@@ -663,27 +644,26 @@ mod proptest_fuzz {
     use proptest::prelude::*;
 
     proptest! {
-        /// The TAL parser must never panic on arbitrary byte sequences.
+        /// TAL parser should not panic on arbitrary bytes.
         #[test]
         fn parse_tals_never_panics(data in proptest::collection::vec(any::<u8>(), 0..1024)) {
             let mut warnings = Vec::new();
             let _ = parse_tals(&data, 0, &mut warnings);
         }
 
-        /// Onset validation must never panic on arbitrary strings.
+        /// Onset parser should not panic on arbitrary strings.
         #[test]
         fn parse_onset_never_panics(s in "\\PC{0,64}") {
             let _ = parse_onset(&s);
         }
 
-        /// Duration validation must never panic on arbitrary strings.
+        /// Duration parser should not panic on arbitrary strings.
         #[test]
         fn parse_duration_never_panics(s in "\\PC{0,64}") {
             let _ = parse_duration(&s);
         }
 
-        /// Well-formed TALs should always round-trip: if we construct a valid TAL
-        /// from known-good components, parsing should recover the same values.
+        /// Valid TALs should round-trip: parse recovers the same values.
         #[test]
         fn well_formed_tal_roundtrips(
             onset_sign in prop_oneof![Just("+"), Just("-")],
@@ -737,8 +717,7 @@ mod proptest_fuzz {
             prop_assert_eq!(&ann.text, &text);
         }
 
-        /// Arbitrary bytes appended after a valid TAL should not corrupt parsing
-        /// of the valid TAL.
+        /// Valid TAL should parse correctly despite trailing garbage bytes.
         #[test]
         fn valid_tal_with_trailing_garbage(
             garbage in proptest::collection::vec(any::<u8>(), 0..256),

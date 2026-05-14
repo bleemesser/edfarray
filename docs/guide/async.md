@@ -1,13 +1,8 @@
 # Async API
 
-The async API lives in `edfarray.aio` and mirrors the sync API. It is designed for
-applications that run an event loop and cannot afford to block on mmap decode: a
-desktop reader serving a browser UI, a local server feeding multiple clients, or
-any pipeline where Python work must interleave with I/O-heavy signal decoding.
+The async API lives in `edfarray.aio` and mirrors the sync API. It is intended for applications that run an event loop and cannot afford to block on mmap decode. Typical cases are a desktop reader serving a browser UI, a local server feeding multiple clients, or any pipeline where Python work must interleave with signal decoding.
 
-Every async method releases the GIL during decode via `tokio::task::spawn_blocking`
-on a multi-threaded tokio runtime. Multiple concurrent reads on the same file run
-truly in parallel.
+Every async method releases the GIL during decode via `tokio::task::spawn_blocking` on a multi-threaded tokio runtime. Multiple concurrent reads on the same file run in parallel.
 
 ## Opening files
 
@@ -37,9 +32,7 @@ async with await aio.open("recording.edf") as f:
     data = await f.signal(0).read_physical(0, 1000)
 ```
 
-Metadata getters (`num_signals`, `variant`, `start_datetime`, etc.) are **sync**
-even on the async `EdfFile`. They read from an `Arc`-shared header that was
-already loaded, so they return immediately without I/O.
+Metadata getters (`num_signals`, `variant`, `start_datetime`, etc.) are sync even on the async `EdfFile`. They read from an `Arc`-shared header that was already loaded and return immediately without I/O.
 
 ## Reading signals
 
@@ -70,9 +63,7 @@ sig = f.signal(0, cache_capacity=4)  # cache 4 decoded records
 
 ## Concurrent reads
 
-The headline feature of the async API is truly parallel decoding. Multiple
-coroutines reading different regions of the same file run concurrently on
-separate OS threads:
+Multiple coroutines reading different regions of the same file run concurrently on separate OS threads:
 
 ```python
 import asyncio
@@ -89,25 +80,15 @@ results = await asyncio.gather(
 # Each element of results is a list of numpy arrays (one per signal).
 ```
 
-The four reads decode in parallel on the tokio thread pool. Total wall time is
-close to the time of a single page read, not four times that.
+The four reads decode in parallel on the tokio thread pool. Total wall time is close to the time of a single page read, not four times that.
 
-GIL release means that while Rust is decoding data, other Python coroutines
-that do not need the Rust extension can continue running. The event loop is not
-blocked.
+While Rust is decoding, other Python coroutines that do not need the extension continue to run. The event loop is not blocked.
 
 ## Multi-channel access in async mode
 
-The array proxies (`Proxy2D`, `Proxy3D`) are sync-only. Their value is the
-synchronous numpy-style `proxy[ch, samp_range]` indexing surface — that doesn't
-translate cleanly to `await` points, and ML preprocessing pipelines that want
-this access pattern are themselves sync.
+The array proxies (`Proxy2D`, `Proxy3D`) are sync-only. Their value is the synchronous numpy-style `proxy[ch, samp_range]` indexing surface, which does not translate cleanly to `await` points. ML preprocessing pipelines that want this access pattern are themselves sync.
 
-For multi-channel async reads, use `read_page` (which decodes signals in
-parallel on the tokio thread pool, as shown above) or open the file
-synchronously when you need numpy-style indexing. `signal_groups()` and
-`signal_group()` *are* exposed on the async file for discovery — they're plain
-getters that don't need to await.
+For multi-channel async reads, use `read_page`, which decodes signals in parallel on the tokio thread pool. If you need numpy-style indexing, open the file synchronously. `signal_groups()` and `signal_group()` are exposed on the async file for discovery as plain sync getters.
 
 ## Waiting for annotations
 
@@ -206,11 +187,7 @@ index rather than copied verbatim.
 
 ## Performance and when to choose async
 
-The async API is not universally faster than the sync API — it trades a small
-per-call overhead for the ability to run decodes in parallel and to keep the
-event loop responsive. The benchmarks under `examples/` quantify this on a
-4 MB fixture (`test_generator.edf`, 180 000 samples @ 200 Hz). Numbers will
-vary by file size and machine, but the shape of the result is what matters.
+The async API is not universally faster than the sync API. It trades a small per-call overhead for parallel decode and event-loop responsiveness. The benchmarks under `examples/` quantify this on a 4 MB fixture (`test_generator.edf`, 180 000 samples @ 200 Hz). Absolute numbers vary by file size and machine.
 
 ### Parallel decode scales near-linearly up to core count
 
@@ -228,10 +205,7 @@ Speedup tracks N up to the available core count, then plateaus.
 
 ### The event loop stays responsive under load
 
-`benchmark_async_gil_release.py` runs a busy Python thread alongside 10 full
-decodes. Both APIs drop the GIL during decode (the busy thread runs at ~95%
-of its free-running tick rate either way), but the wall-clock time for the
-decodes themselves is dramatically different:
+`benchmark_async_gil_release.py` runs a busy Python thread alongside 10 full decodes. Both APIs release the GIL during decode (the busy thread runs at ~95% of its free-running tick rate either way), but the wall-clock time for the decodes differs substantially:
 
 | API   | Wall time (10 decodes, busy thread) |
 | ----- | ----------------------------------- |
@@ -254,8 +228,7 @@ serially (concurrency = 1):
 | full read (digital)   | 4.46 ms  | 4.53 ms  | +1.5%    |
 | 1-second slice        | 11 µs    | 107 µs   | +880%    |
 
-The fixed ~100 µs cost of a tokio dispatch + event-loop hop disappears into
-a multi-ms decode but dominates a microsecond-scale slice.
+The fixed ~100 µs cost of a tokio dispatch plus event-loop hop is negligible against a multi-millisecond decode but dominates a microsecond-scale slice.
 
 ### Recommendations
 

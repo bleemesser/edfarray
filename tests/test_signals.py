@@ -1,4 +1,4 @@
-"""Validate signal metadata and data access against pyedflib reference values."""
+"""Test signal metadata and data access against pyedflib reference values."""
 
 import numpy as np
 import pytest
@@ -16,7 +16,6 @@ def fixture(request):
 class TestSignalMetadata:
     def test_signal_count(self, fixture):
         edf, ref = fixture
-        # pyedflib hides annotation signals. Our count includes them.
         num_annotation_signals = sum(
             1 for i in range(edf.num_signals)
             if edf.signal(i).label == "EDF Annotations"
@@ -82,7 +81,6 @@ class TestSignalMetadata:
 
 class TestSignalData:
     def test_physical_samples_match_reference(self, fixture):
-        """First 10 physical samples should match pyedflib output."""
         edf, ref = fixture
         for snippet in ref.get("sample_snippets", []):
             sig = edf.signal(snippet["signal_index"])
@@ -91,7 +89,6 @@ class TestSignalData:
             np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-10)
 
     def test_digital_samples_match_reference(self, fixture):
-        """First 10 digital samples should match pyedflib output."""
         edf, ref = fixture
         for snippet in ref.get("sample_snippets", []):
             sig = edf.signal(snippet["signal_index"])

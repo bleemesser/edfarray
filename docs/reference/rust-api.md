@@ -1,6 +1,6 @@
 # Rust Crate
 
-The `edfarray-core` crate provides the pure Rust implementation. The Python bindings are a thin layer on top of this crate. You can use it directly in Rust applications.
+`edfarray-core` is the pure Rust implementation. The Python bindings are a thin layer on top of it, and the crate can also be used directly from Rust.
 
 ## Dependency
 

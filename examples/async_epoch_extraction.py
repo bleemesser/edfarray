@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel epoch feature extraction on a multi-channel EEG file.
-
-Slides a fixed window over the recording and computes per-epoch features
-(RMS amplitude and dominant-band power) for every channel. Each epoch is
-dispatched as its own coroutine so the tokio thread pool can decode many
-windows in parallel — a typical sleep-staging / spectral-feature workflow.
-
-Also demonstrates `wait_for_annotations` and annotation-driven epoching:
-when annotation onsets are present, we extract a window around each event
-in addition to the sliding-window pass.
-"""
+"""Parallel epoch feature extraction on a multi-channel EEG file."""
 
 import asyncio
 from pathlib import Path
@@ -43,11 +33,13 @@ async def epoch_features(f, idxs, rate: float, start: float, dur: float) -> dict
 async def main() -> None:
     async with await aio.open(str(PATH)) as f:
         ordinary = f.ordinary_signal_indices()
-        # Discover same-rate groups via SignalGroup; pick the largest.
         groups = f.signal_groups()
         group = max(groups, key=len)
         idxs = group.indices
-        rate = group.sample_rate
+        rate = group.sample_rate if group else None
+        if not rate:
+            print("No valid sample rate found.")
+            return
         labels = [f.signal(i).label for i in idxs]
 
         print(f"File:      {PATH.name}")

@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Streaming write driven by an async producer.
-
-Simulates a live acquisition: an async producer generates synthetic EEG
-records and pushes them onto a queue, while a consumer pops records and
-writes them with `aio.EdfWriter`. When the producer detects an artifact
-(here, a synthetic burst), it queues an annotation that the writer
-embeds in the next record.
-
-Afterwards we re-open the file with `aio.open` and print a short report.
-"""
+"""Streaming write driven by an async producer-consumer pipeline."""
 
 import asyncio
 import math
@@ -81,7 +72,7 @@ async def consumer(queue: asyncio.Queue, out_path: Path) -> int:
                 break
             channels, annotation = item
             if annotation is not None:
-                # queued; embedded in the next write_record call
+                # Embedded in the next write_record call
                 w.add_annotation(annotation)
             await w.write_record(channels)
             written += 1
@@ -109,7 +100,6 @@ async def main() -> None:
                 print(f"  t={a.onset:>5.2f}s  {a.text!r}")
             print()
 
-            # Read the entire recording via read_page (async, parallel decode).
             pages = await f.read_page(0.0, f.duration)
             block = np.stack(pages)
             rms = np.sqrt(np.mean(block * block, axis=1))

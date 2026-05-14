@@ -8,15 +8,7 @@ use crate::group::{GroupKind, SignalGroup};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
 
-/// A 3D view over the channels in a *rectangular* [`SignalGroup`].
-///
-/// Shape is `(num_records, num_channels, samples_per_record)`. This mirrors
-/// the underlying EDF record-major layout: each record stores a fixed-size
-/// slab per channel, and a 3D view exposes those slabs directly so callers
-/// can address individual records without per-sample index math.
-///
-/// Reads are decoded on demand from the memory-mapped file. The struct holds
-/// no sample data.
+/// 3D view over a rectangular `SignalGroup`. Shape: `(num_records, num_channels, samples_per_record)`.
 #[derive(Debug)]
 pub struct Proxy3D {
     file: Arc<MappedFile>,
@@ -26,11 +18,7 @@ pub struct Proxy3D {
 }
 
 impl Proxy3D {
-    /// Build a 3D proxy from a `Rectangular` [`SignalGroup`].
-    ///
-    /// Returns [`EdfError::InvalidArgument`] if the group is `Open` (mixed
-    /// sample rates), with a message pointing the caller at
-    /// [`crate::file::EdfFile::signal_groups`].
+    /// Build a 3D proxy. Requires a `Rectangular` group (all channels share `samples_per_record`).
     pub fn new(file: Arc<MappedFile>, group: SignalGroup) -> Result<Self> {
         if !matches!(group.kind, GroupKind::Rectangular) {
             return Err(EdfError::InvalidArgument {
@@ -89,11 +77,7 @@ impl Proxy3D {
         proxy.get_physical(record * self.samples_per_record + sample)
     }
 
-    /// Read a contiguous block of physical samples.
-    ///
-    /// Returns a flat `Vec<f64>` of length `records.len() * channels.len() *
-    /// samples_per_record`, laid out record-major (record → channel → sample),
-    /// matching the natural memory order of the underlying file.
+    /// Read a contiguous block of physical samples. Returns flat Vec in record-major order.
     pub fn read_physical_block(
         &self,
         records: Range<usize>,
@@ -114,12 +98,6 @@ impl Proxy3D {
         let rec_start = records.start;
         let ch_start = channels.start;
 
-        // Parallelize across channels (records are contiguous in memory per
-        // channel, so each task writes a contiguous-ish stripe).
-        let chan_stride = n_rec * spr;
-        // We write into `out` in record-major order, so each channel's samples
-        // are interleaved across records. Easier to gather per-channel then
-        // restripe.
         let per_channel: Result<Vec<Vec<f64>>> = (0..n_ch)
             .into_par_iter()
             .map(|ci| {
@@ -133,7 +111,6 @@ impl Proxy3D {
             })
             .collect();
         let per_channel = per_channel?;
-        let _ = chan_stride;
 
         for ri in 0..n_rec {
             for ci in 0..n_ch {
@@ -192,20 +169,9 @@ impl Proxy3D {
         Ok(out)
     }
 
-    /// Metadata describing a zero-copy strided view over the raw int16 mmap.
+    /// Metadata for a zero-copy strided view over the raw int16 mmap.
     ///
-    /// Returns `Some` only when:
-    /// - The file uses 2-byte samples (EDF/EDF+, not BDF).
-    /// - The group's channel indices form a contiguous range in the file's
-    ///   signal layout.
-    /// - All channels in that range share `samples_per_record` (guaranteed by
-    ///   `Rectangular`, but we also require no annotation channel falls inside
-    ///   the contiguous span).
-    ///
-    /// Callers (in particular the Python binding) can use this metadata to
-    /// build a NumPy view via `numpy.lib.stride_tricks.as_strided` without
-    /// decoding or copying samples. The view yields raw digital `i16` values;
-    /// converting to physical units is the caller's responsibility.
+    /// Returns `Some` only for 2-byte EDF files with contiguous, non-annotation channels.
     pub fn stride_info(&self) -> Option<StrideInfo> {
         if self.file.layout.sample_size_bytes != 2 {
             return None;
@@ -223,8 +189,7 @@ impl Proxy3D {
             }
         }
 
-        // No annotation channel inside the span (annotations have different
-        // semantics and would corrupt the stride view).
+        // Annotation channels would corrupt the stride view.
         for idx in first..first + n_ch {
             if self.file.header.signals[idx].is_annotation {
                 return None;
@@ -278,8 +243,6 @@ impl Proxy3D {
 }
 
 /// Byte-level metadata for a zero-copy strided view of a 3D proxy.
-///
-/// All offsets and strides are in bytes from the start of the mmap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StrideInfo {
     pub base_offset: usize,
@@ -421,8 +384,6 @@ mod tests {
         let p2 = Proxy2D::new(mapped, group, PadMode::Raise).unwrap();
 
         let block = p3.read_physical_block(0..4, 0..3).unwrap();
-        // Verify: for each (rec, ch, samp), block index = (rec*3 + ch)*5 + samp
-        // should equal p2.get(ch, rec*5 + samp).
         for ri in 0..4 {
             for ci in 0..3 {
                 for si in 0..5 {
@@ -448,12 +409,12 @@ mod tests {
 
     #[test]
     fn stride_info_full_data_file() {
-        // No annotation channels; group covers all signals → contiguous.
+        // No annotation channels; group covers all signals, so contiguous.
         let f = build_test_file(3, 4, 5);
         let mapped = MappedFile::open(f.path()).unwrap();
         let group = SignalGroup::from_indices(&mapped.header, &[0, 1, 2]).unwrap();
         let p = Proxy3D::new(mapped, group).unwrap();
-        let info = p.stride_info().expect("contiguous data → stride view available");
+        let info = p.stride_info().expect("contiguous data -> stride view available");
         assert_eq!(info.shape, (4, 3, 5));
         assert_eq!(info.sample_stride_bytes, 2);
         assert_eq!(info.channel_stride_bytes, 5 * 2);
@@ -464,7 +425,7 @@ mod tests {
     fn stride_info_skipping_channels_returns_none() {
         let f = build_test_file(4, 2, 4);
         let mapped = MappedFile::open(f.path()).unwrap();
-        // Pick channels 0 and 2 — non-contiguous → no stride view.
+        // Pick non-contiguous channels -> no stride view.
         let group = SignalGroup::from_indices(&mapped.header, &[0, 2]).unwrap();
         let p = Proxy3D::new(mapped, group).unwrap();
         assert!(p.stride_info().is_none());

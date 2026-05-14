@@ -1,4 +1,4 @@
-"""Validate annotation parsing against pyedflib reference values."""
+"""Test annotation parsing against pyedflib reference values."""
 
 import numpy as np
 import pytest
@@ -55,7 +55,6 @@ class TestAnnotations:
 
 class TestEdgeCases:
     def test_edf_plus_d_opens(self):
-        """EDF+D files should open without error (pyedflib can't even do this)."""
         edf = edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf"))
         assert edf.variant == "EDF+D"
         assert edf.num_signals > 0
@@ -63,11 +62,8 @@ class TestEdgeCases:
 
 
 class TestEdfPlusDTimeMapping:
-    """Verify that EDF+D time mapping works correctly and document the
-    read_page flat-index behavior."""
 
     def test_times_reflect_gaps(self):
-        """Signal.times() must reflect actual record onsets, not flat indices."""
         edf = edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf"))
         sig = edf.signal(0)
         times = sig.times()
@@ -81,8 +77,6 @@ class TestEdfPlusDTimeMapping:
             assert dt[idx] > expected_dt * 1.5
 
     def test_times_span_exceeds_record_count(self):
-        """Physical time span should be larger than num_records * record_duration
-        because of gaps."""
         edf = edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf"))
         sig = edf.signal(0)
         times = sig.times()
@@ -91,9 +85,6 @@ class TestEdfPlusDTimeMapping:
         assert physical_span > flat_span
 
     def test_read_page_uses_flat_indices(self):
-        """read_page maps time to flat sample indices, which is incorrect for
-        EDF+D. This test documents the behavior: requesting 0-10s of data
-        returns samples whose physical timestamps extend beyond 10s."""
         edf = edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf"))
         sig = edf.signal(0)
         sr = sig.sample_rate
@@ -109,8 +100,6 @@ class TestEdfPlusDTimeMapping:
         )
 
     def test_correct_time_window_workflow(self):
-        """The correct way to get samples within a physical time window for
-        EDF+D: use times() to mask the data."""
         edf = edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf"))
         sig = edf.signal(0)
         sr = sig.sample_rate

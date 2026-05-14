@@ -6,7 +6,7 @@ A brief overview of the EDF and EDF+ file formats, enough to understand how edfa
 
 An EDF file consists of a fixed-size header followed by a sequence of data records.
 
-```
+```text
 [ Header: 256 + 256*ns bytes ][ Record 0 ][ Record 1 ] ... [ Record N-1 ]
 ```
 
@@ -16,7 +16,7 @@ An EDF file consists of a fixed-size header followed by a sequence of data recor
 
 The first 256 bytes contain the main header fields, all stored as ASCII text, left-justified and space-padded:
 
-```
+```text
 Offset  Size  Field
 0       8     Version (always "0")
 8       80    Patient identification
@@ -38,7 +38,7 @@ Per-signal fields: label (16), transducer type (80), physical dimension (8), phy
 
 Each data record contains all signals sequentially. For each signal, there are `samples_per_record` samples stored as 16-bit signed integers in little-endian byte order.
 
-```
+```text
 [ Signal 0 samples ][ Signal 1 samples ] ... [ Signal ns-1 samples ]
 ```
 
@@ -70,7 +70,7 @@ The start date in the main header uses two-digit years. Per the EDF spec, years 
 
 Each annotation signal in a data record contains one or more TALs. A TAL has this byte structure:
 
-```
+```text
 +Onset[\x15Duration]\x14[Text\x14]*\x00
 ```
 

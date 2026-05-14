@@ -6,8 +6,7 @@ use crate::signal::SignalHeader;
 /// Fixed size of the main header block in bytes.
 const MAIN_HEADER_SIZE: usize = 256;
 
-/// A date/time value that may be a parsed datetime or a raw string
-/// (e.g. when the file uses anonymized or non-standard date fields).
+/// Parsed datetime or raw string when date fields are non-standard.
 #[derive(Debug, Clone)]
 pub enum MaybeDateTime {
     Parsed(NaiveDateTime),
@@ -40,7 +39,7 @@ impl MaybeDateTime {
     }
 }
 
-/// A date value that may be a parsed date or a raw string.
+/// Parsed date or raw string.
 #[derive(Debug, Clone)]
 pub enum MaybeDate {
     Parsed(NaiveDate),
@@ -59,7 +58,7 @@ impl MaybeDate {
 /// Size of the per-signal header block for one signal.
 const SIGNAL_HEADER_SIZE: usize = 256;
 
-/// Identifies the file as EDF, EDF+C (contiguous), or EDF+D (discontinuous).
+/// File variant: EDF, EDF+C, EDF+D, BDF, BDF+C, BDF+D.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdfVariant {
     Edf,
@@ -96,8 +95,7 @@ impl EdfVariant {
         }
     }
 
-    /// True for any `+C`/`+D` variant (EDF+ or BDF+) — i.e. files that carry an
-    /// annotation signal and follow EDF+ patient/recording field conventions.
+    /// True for any +C/+D variant (EDF+ or BDF+).
     pub fn is_plus(self) -> bool {
         matches!(
             self,
@@ -108,7 +106,7 @@ impl EdfVariant {
         )
     }
 
-    /// True for the discontinuous variants (`EDF+D` or `BDF+D`).
+    /// True for discontinuous variants (EDF+D or BDF+D).
     pub fn is_plus_d(self) -> bool {
         matches!(self, EdfVariant::EdfPlusD | EdfVariant::BdfPlusD)
     }
@@ -134,11 +132,7 @@ pub enum Sex {
     Female,
 }
 
-/// Parsed patient identification subfields from the EDF+ patient_id field.
-///
-/// The EDF+ format encodes patient info as space-separated subfields:
-/// `"code sex birthdate name [additional...]"`. Fields set to "X" indicate
-/// unknown values and are represented as `None`.
+/// Parsed EDF+ patient_id subfields. Fields set to "X" are `None`.
 #[derive(Debug, Clone, Default)]
 pub struct PatientInfo {
     pub code: Option<String>,
@@ -148,10 +142,7 @@ pub struct PatientInfo {
     pub additional: Option<String>,
 }
 
-/// Parsed recording identification subfields from the EDF+ recording_id field.
-///
-/// The EDF+ format encodes recording info as space-separated subfields:
-/// `"Startdate DD-MMM-YYYY admincode technician equipment [additional...]"`.
+/// Parsed EDF+ recording_id subfields.
 #[derive(Debug, Clone, Default)]
 pub struct RecordingInfo {
     pub start_date: Option<MaybeDate>,
@@ -161,7 +152,7 @@ pub struct RecordingInfo {
     pub additional: Option<String>,
 }
 
-/// The complete EDF/EDF+ file header.
+/// Parsed EDF/EDF+ file header.
 #[derive(Debug, Clone)]
 pub struct EdfHeader {
     pub version: String,
@@ -180,9 +171,7 @@ pub struct EdfHeader {
 }
 
 impl EdfHeader {
-    /// Parse a complete EDF header from the beginning of a byte slice.
-    ///
-    /// The slice must contain at least `256 + 256 * num_signals` bytes.
+    /// Parse EDF header from byte slice. Requires `256 + 256 * num_signals` bytes.
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < MAIN_HEADER_SIZE {
             return Err(EdfError::FileTooSmall {
@@ -268,12 +257,7 @@ impl EdfHeader {
         self.num_records.max(0) as f64 * self.record_duration_secs
     }
 
-    /// If this header has `num_records == -1` (EDF-L "unknown length"), recover
-    /// the true count from the file size and the record layout. No-op otherwise.
-    ///
-    /// Appends a warning describing the recovery, including any trailing-bytes
-    /// remainder. If the record size is zero (degenerate header) the count is
-    /// left as-is.
+    /// Recover `num_records` from file size when header has -1 (EDF-L). No-op otherwise.
     pub fn recover_num_records_from_file_size(&mut self, file_size: usize) {
         if self.num_records >= 0 {
             return;
@@ -338,13 +322,7 @@ fn read_f64(data: &[u8], offset: usize, size: usize, name: &'static str) -> Resu
     })
 }
 
-/// Parse the start date (dd.mm.yy) and time (hh.mm.ss) into a `MaybeDateTime`.
-///
-/// Per the EDF spec, two-digit years use 1985 as the clipping year:
-/// 85-99 map to 1985-1999, 00-84 map to 2000-2084.
-///
-/// If the fields contain anonymized or non-standard values (e.g. "04.04.yy"),
-/// the raw strings are preserved instead of failing.
+/// Parse start date (dd.mm.yy) and time (hh.mm.ss). Year clipping: 85-99 -> 1985-1999, 00-84 -> 2000-2084.
 fn parse_start_datetime(date_str: &str, time_str: &str) -> MaybeDateTime {
     match try_parse_datetime(date_str, time_str) {
         Some(dt) => MaybeDateTime::Parsed(dt),
@@ -386,10 +364,7 @@ fn try_parse_datetime(date_str: &str, time_str: &str) -> Option<NaiveDateTime> {
     Some(NaiveDateTime::new(date, time))
 }
 
-/// Parse EDF+ patient_id into structured subfields.
-///
-/// Format: `"code sex birthdate name [additional...]"`
-/// where "X" means unknown. Underscores in names are replaced with spaces.
+/// Parse EDF+ patient_id. "X" means unknown; underscores replaced with spaces.
 fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> PatientInfo {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 4 {
@@ -439,9 +414,7 @@ fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) 
     }
 }
 
-/// Parse EDF+ recording_id into structured subfields.
-///
-/// Format: `"Startdate DD-MMM-YYYY admincode technician equipment [additional...]"`
+/// Parse EDF+ recording_id subfields.
 fn parse_recording_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> RecordingInfo {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 5 || !parts[0].eq_ignore_ascii_case("Startdate") {
@@ -613,7 +586,6 @@ mod tests {
         let mut data = build_test_header(1);
 
         write_field(&mut data, 192, 44, "");
-        // Need to clear the field first
         for b in &mut data[192..236] {
             *b = b' ';
         }

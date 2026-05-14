@@ -1,44 +1,27 @@
 use crate::error::{EdfError, Result};
 use crate::header::EdfHeader;
 
-/// Structural classification of a [`SignalGroup`].
-///
-/// Within a single EDF file, `record_duration_secs` and `num_records` are
-/// file-wide and `num_samples` is per-signal, so `rate = num_samples /
-/// record_duration` implies same-rate channels always have the same total
-/// sample count. The two reachable cases for a single-file group are
-/// therefore:
-/// - `Rectangular` -> shared sample rate; upgradable to a 3D strided view.
-/// - `Open` -> mixed sample rates; 2D only.
+/// Structural classification of a `SignalGroup`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GroupKind {
-    /// All channels share a sample rate and total sample count.
+    /// Shared sample rate and total sample count.
     Rectangular,
-    /// Channels differ in sample rate (and hence in total sample count).
+    /// Mixed sample rates (2D proxy only).
     Open,
 }
 
-/// Fill-value policy applied when a read on a 2D proxy extends past a
-/// channel's valid length (i.e. when the group is `Open` and shorter channels
-/// are read past their end).
-///
-/// Padding is interpreted in the *domain of the read*: a physical read sees an
-/// `f64` fill, a digital read sees an `i32` fill. The fill is a logical
-/// placeholder, not a synthetic digital sample run through per-channel scaling.
+/// Fill-value policy when 2D proxy reads extend past a channel's valid length.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PadMode {
-    /// Raise `SampleOutOfRange` on any read past a channel's valid length.
-    /// This is the default and matches the pre-`PadMode` behavior.
+    /// Raise `SampleOutOfRange` on overflow. Default.
     Raise,
-    /// Pad with `f64::NAN`. Physical reads only — combining with a digital read
-    /// raises [`EdfError::InvalidArgument`].
+    /// Pad with `f64::NAN`. Physical reads only.
     Nan,
     /// Pad with `0.0` (physical) or `0` (digital).
     Zero,
-    /// Pad with a caller-supplied value, interpreted in the read domain.
-    /// On digital reads the value is truncated to `i32` and range-checked.
+    /// Pad with caller-supplied value. Truncated to `i32` on digital reads.
     Value(f64),
-    /// Replicate the last valid sample for each channel (numpy-style "edge").
+    /// Replicate last valid sample per channel.
     Edge,
 }
 
@@ -48,44 +31,29 @@ impl Default for PadMode {
     }
 }
 
-/// A set of signal indices grouped for proxy construction, along with the
-/// metadata needed to reason about which proxy types it supports.
-///
-/// Construct via [`EdfFile::signal_groups`](crate::file::EdfFile::signal_groups)
-/// for the file's natural grouping by sample rate, or via
-/// [`SignalGroup::from_indices`] to classify an arbitrary subset.
+/// Signal indices grouped for proxy construction with supporting metadata.
 #[derive(Debug, Clone)]
 pub struct SignalGroup {
     /// File-level signal indices.
     pub indices: Vec<usize>,
     /// Structural classification.
     pub kind: GroupKind,
-    /// Common sample rate in Hz. `Some` iff `kind` is `Rectangular`.
+    /// Common sample rate in Hz. `Some` only for `Rectangular`.
     pub sample_rate: Option<f64>,
-    /// Common samples-per-record. `Some` iff `kind` is `Rectangular`.
+    /// Common samples-per-record. `Some` only for `Rectangular`.
     pub samples_per_record: Option<usize>,
-    /// Minimum total sample count across the group's channels.
+    /// Min total sample count across channels.
     pub min_samples: usize,
-    /// Maximum total sample count across the group's channels.
-    ///
-    /// Equal to `min_samples` iff `kind` is `Rectangular`.
+    /// Max total sample count across channels.
     pub max_samples: usize,
-    /// `true` iff this group contains every ordinary (non-annotation) signal
-    /// in the file. Only set by [`EdfFile::signal_groups`]; hand-built groups
-    /// always have this `false`.
+    /// True if group contains every ordinary signal. Set only by `EdfFile::signal_groups`.
     pub covers_all_ordinary: bool,
-    /// `true` iff `indices.len() == 1`.
+    /// True if `indices.len() == 1`.
     pub is_singleton: bool,
 }
 
 impl SignalGroup {
-    /// Classify an arbitrary set of file-level signal indices.
-    ///
-    /// Annotation channels are not rejected here — callers that want to exclude
-    /// them should filter first via
-    /// [`EdfFile::ordinary_signal_indices`](crate::file::EdfFile::ordinary_signal_indices).
-    /// Returns [`EdfError::SignalOutOfRange`] for any index past the header's
-    /// signal count, and [`EdfError::InvalidArgument`] for an empty slice.
+    /// Classify signal indices into a group. Does not reject annotation channels.
     pub fn from_indices(header: &EdfHeader, indices: &[usize]) -> Result<Self> {
         if indices.is_empty() {
             return Err(EdfError::InvalidArgument {

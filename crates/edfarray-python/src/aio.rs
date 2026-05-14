@@ -373,16 +373,7 @@ impl PyAsyncEdfFile {
         })
     }
 
-    /// Read a page of physical (f64) data for multiple signals over a time range.
-    ///
-    /// Returns a list of numpy arrays, one per signal. Signals with different
-    /// sample rates produce arrays of different lengths.
-    ///
-    /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
-    ///
-    /// When `use_time` is false (default), time params are converted to flat
-    /// sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
-    /// the time range using actual record onset times.
+    /// Read physical data for multiple signals over a time range. Returns list of numpy arrays.
     #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
     fn read_page<'py>(
         &self,
@@ -411,9 +402,7 @@ impl PyAsyncEdfFile {
         })
     }
 
-    /// Read a page of digital (raw int32) data for multiple signals over a time range.
-    ///
-    /// Same parameters as `read_page` but returns int32 arrays of the raw digital values.
+    /// Read digital (int32) data for multiple signals over a time range.
     #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
     fn read_page_digital<'py>(
         &self,
@@ -442,7 +431,7 @@ impl PyAsyncEdfFile {
         })
     }
 
-    /// Write this file to `path`, optionally transcoding to a different variant.
+    /// Write to `path`, optionally transcoding to a different variant.
     #[pyo3(signature = (path, variant=None))]
     fn write_to<'py>(
         &self,

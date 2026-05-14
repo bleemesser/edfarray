@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Concurrent multi-file scan.
-
-Opens several EDF files in parallel, gathers summary statistics for one
-ordinary signal from each, and prints a small report. Demonstrates
-`aio.inspect` for cheap header-only metadata, `aio.open` + async context
-managers, and `asyncio.gather` for true parallel decode across files.
-"""
+"""Concurrent multi-file scan using aio.inspect and asyncio.gather."""
 
 import asyncio
 from pathlib import Path

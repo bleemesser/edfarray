@@ -2,7 +2,7 @@
 
 An EDF/EDF+ parser written in Rust with numpy-like Python bindings.
 
-Handles EDF, EDF+C, and EDF+D files of any size without loading them into memory. Files are memory-mapped, signals are decoded on the fly, and multi-channel reads are parallelized across cores.
+Handles EDF, EDF+C, and EDF+D files of any size without loading them into memory. Files are memory-mapped, signals are lazily decoded, and multi-channel reads are parallelized across cores.
 
 ## Install
 

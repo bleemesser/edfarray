@@ -23,10 +23,6 @@ pub struct SignalHeader {
 
 impl SignalHeader {
     /// Parse the header fields for signal at `index` from the per-signal header bytes.
-    ///
-    /// The EDF format stores per-signal fields in a transposed layout: all labels
-    /// come first (16 bytes × ns), then all transducer types (80 bytes × ns), etc.
-    /// The caller provides the full per-signal header block and the total signal count.
     pub fn parse(data: &[u8], index: usize, num_signals: usize) -> Result<Self> {
         let label = read_signal_field(data, index, num_signals, 0, 16)?;
         let transducer = read_signal_field(data, index, num_signals, 16, 80)?;
@@ -94,9 +90,6 @@ impl SignalHeader {
 }
 
 /// Read a trimmed ASCII string field from the transposed per-signal header layout.
-///
-/// In EDF, per-signal fields are stored contiguously for all signals:
-/// field_start + field_size * signal_index gives the offset for a specific signal.
 fn read_signal_field(
     data: &[u8],
     index: usize,

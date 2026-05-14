@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """Benchmark parallel decode through the async API.
 
-Compares sequential awaits vs `asyncio.gather` of N concurrent reads on the
-same open file. The async runtime dispatches each decode to `spawn_blocking`
-on the tokio thread pool with the GIL released, so wall-clock time for N
-gathered reads should approach the time of a single read (bounded by the
-tokio pool size and the OS thread count), not N times that.
+Compares sequential awaits vs asyncio.gather of N concurrent reads.
+The async runtime dispatches each decode to spawn_blocking on the tokio
+thread pool with the GIL released.
 
 Usage:
     python benchmark_async_parallel_decode.py [path/to/file.edf]
-
-If no path is given, the largest fixture is used. For a meaningful number,
-point at a file where a full-signal decode takes tens to hundreds of ms.
 """
 
 import asyncio
@@ -104,9 +99,7 @@ async def main():
               f"{speedup:>8.2f}x  {eff:>10.1f}%")
 
     print()
-    print("Speedup near N (efficiency near 100%) indicates true parallel")
-    print("decode on the tokio pool. Plateau above the OS core count is")
-    print("expected.")
+    print("Speedup near N indicates true parallel decode on the tokio pool.")
 
     await f.close() if asyncio.iscoroutinefunction(f.close) else f.close()
 

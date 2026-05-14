@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
-"""Benchmark async behavior under concurrent Python load.
+"""Benchmark async vs sync decode under concurrent Python load.
 
-A background Python thread spins on a counter while decodes are in flight.
-Both the sync and async paths release the GIL during the Rust decode, so the
-busy thread should advance in both cases. The interesting signal is
-*wall-clock time for the decodes themselves*: the sync path runs decode on
-the calling Python thread (which contends with the busy thread on GIL
-re-acquisition and CPU), while the async path dispatches each decode to a
-tokio worker on a separate OS thread, so the calling thread only runs
-event-loop bookkeeping and Python work proceeds in parallel.
-
-Reports:
-- counter ticks/second observed during each run (both should be close to
-  free-running, confirming GIL is dropped during decode)
-- wall-clock decode time under busy-thread load — the real headline
+A busy Python thread spins while decodes run. Both paths release the GIL
+during Rust decode. The async path dispatches to a tokio worker thread,
+avoiding contention with the busy thread on GIL re-acquisition.
 
 Usage:
     python benchmark_async_gil_release.py [path/to/file.edf]
@@ -35,7 +25,7 @@ def pick_path() -> Path:
 
 
 class BusyCounter:
-    """A Python thread that increments a counter as fast as it can."""
+    """Daemon thread that increments a counter as fast as possible."""
 
     def __init__(self):
         self.count = 0
@@ -55,7 +45,7 @@ class BusyCounter:
 
 
 def measure_freerun(duration: float) -> float:
-    """Ticks per second with no other Python work competing."""
+    """Ticks per second with no competing work."""
     bc = BusyCounter()
     bc.start()
     t0 = time.perf_counter()
@@ -66,7 +56,7 @@ def measure_freerun(duration: float) -> float:
 
 
 def measure_sync(path: Path, repeats: int) -> tuple[float, float]:
-    """Run a sync full-signal decode while the busy thread runs."""
+    """Sync full-signal decode with busy thread."""
     import edfarray
 
     f = edfarray.EdfFile(str(path))
@@ -83,7 +73,7 @@ def measure_sync(path: Path, repeats: int) -> tuple[float, float]:
 
 
 async def measure_async(path: Path, repeats: int) -> tuple[float, float]:
-    """Run async full-signal decodes while the busy thread runs."""
+    """Async full-signal decode with busy thread."""
     import edfarray.aio as aio
 
     f = await aio.open(str(path))
@@ -109,7 +99,6 @@ async def main():
     print(f"File: {path.name} ({size_mb:.1f} MB)")
     print()
 
-    # Calibrate free-running tick rate.
     print("Calibrating free-running counter (1 s with no decode)...")
     freerun = measure_freerun(1.0)
     print(f"  freerun: {freerun:,.0f} ticks/sec")
@@ -138,11 +127,9 @@ async def main():
     speedup = sync_elapsed / async_elapsed if async_elapsed > 0 else float("inf")
     print(f"Wall-clock speedup under busy-thread load: {speedup:.1f}x")
     print()
-    print("Both paths drop the GIL during the Rust decode (high tick ratio in")
-    print("both confirms this). The wall-clock gap comes from where the decode")
-    print("runs: sync uses the calling thread (contending with the busy thread")
-    print("for GIL/CPU); async dispatches to a tokio worker on a separate OS")
-    print("thread so Python work proceeds in parallel without contention.")
+    print("Both paths drop the GIL during Rust decode. The wall-clock gap")
+    print("comes from where decode runs: sync contends with the busy thread;")
+    print("async dispatches to a tokio worker on a separate OS thread.")
 
 
 if __name__ == "__main__":

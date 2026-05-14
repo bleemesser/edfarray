@@ -17,11 +17,7 @@ use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
 use crate::signal::SignalHeader;
 
-/// Top-level handle for an open EDF/EDF+ file.
-///
-/// Provides access to the file header, signal data (via `SignalProxy`),
-/// and annotations. The underlying file is memory-mapped and remains
-/// open for the lifetime of this struct.
+/// Open EDF/EDF+ file with memory-mapped access to header, signals, and annotations.
 pub struct EdfFile {
     file: Arc<MappedFile>,
 }
@@ -73,16 +69,13 @@ impl EdfFile {
         &self.file.header.recording
     }
 
-    /// All non-timekeeping annotations, sorted by onset.
-    /// Blocks until the annotation scan is complete.
+    /// All non-timekeeping annotations, sorted by onset. Blocks until scan completes.
     pub fn annotations(&self) -> Vec<Annotation> {
         self.file
             .with_annotations(|idx| idx.annotations.clone())
     }
 
-    /// Return annotations with onset strictly before `t`.
-    /// Uses binary search (partition_point) for efficiency.
-    /// Blocks until the annotation scan is complete.
+    /// Annotations with onset strictly before `t`. Blocks until scan completes.
     pub fn annotations_before(&self, t: f64) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             let split = idx.annotations.partition_point(|a| a.onset < t);
@@ -90,9 +83,7 @@ impl EdfFile {
         })
     }
 
-    /// Return annotations with onset greater than or equal to `t`.
-    /// Uses binary search (partition_point) for efficiency.
-    /// Blocks until the annotation scan is complete.
+    /// Annotations with onset >= `t`. Blocks until scan completes.
     pub fn annotations_after(&self, t: f64) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             let split = idx.annotations.partition_point(|a| a.onset < t);
@@ -100,9 +91,7 @@ impl EdfFile {
         })
     }
 
-    /// Return annotations with onset in the half-open interval `[start, end)`.
-    /// Uses binary search for efficiency.
-    /// Blocks until the annotation scan is complete.
+    /// Annotations with onset in `[start, end)`. Blocks until scan completes.
     pub fn annotations_in_range(&self, start: f64, end: f64) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             let lo = idx.annotations.partition_point(|a| a.onset < start);
@@ -111,16 +100,8 @@ impl EdfFile {
         })
     }
 
-    /// Filter annotations by text content.
-    ///
-    /// If `regex` is `false`, returns annotations whose text contains the query
-    /// as a case-insensitive substring.
-    ///
-    /// If `regex` is `true`, returns annotations whose text matches the query
-    /// as a case-insensitive regex pattern.
-    ///
-    /// Returns `EdfError::InvalidArgument` if the regex pattern is invalid.
-    /// Blocks until the annotation scan is complete.
+    /// Filter annotations by text. If `regex` is true, use case-insensitive regex; otherwise case-insensitive substring.
+    /// Blocks until scan completes.
     pub fn filter_annotations(&self, query: &str, regex: bool) -> Result<Vec<Annotation>> {
         self.file.with_annotations(|idx| {
             let annotations = &idx.annotations;
@@ -148,8 +129,7 @@ impl EdfFile {
         })
     }
 
-    /// Return annotations whose text exactly matches `text` (case-sensitive).
-    /// Blocks until the annotation scan is complete.
+    /// Annotations whose text exactly matches `text`. Blocks until scan completes.
     pub fn annotations_by_text(&self, text: &str) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             idx.annotations
@@ -160,8 +140,7 @@ impl EdfFile {
         })
     }
 
-    /// Parse warnings accumulated during file open (malformed TALs, etc.).
-    /// Blocks until the annotation scan is complete.
+    /// Warnings from header parse and TAL scan. Blocks until scan completes.
     pub fn warnings(&self) -> Vec<String> {
         let mut w = self.file.header.warnings.clone();
         self.file.with_annotations(|idx| {
@@ -170,19 +149,17 @@ impl EdfFile {
         w
     }
 
-    /// Progress of the background annotation scan: (records_scanned, total_records).
+    /// Annotation scan progress: `(records_scanned, total_records)`.
     pub fn scan_progress(&self) -> (usize, usize) {
         self.file.scan_progress()
     }
 
-    /// Whether the background annotation scan has completed.
+    /// Whether annotation scan has completed.
     pub fn annotations_ready(&self) -> bool {
         self.file.annotations_ready()
     }
 
-    /// Block the current thread until the background annotation scan completes.
-    ///
-    /// Idempotent: returns immediately if the scan is already done.
+    /// Block until annotation scan completes. Idempotent.
     pub fn wait_for_annotations(&self) {
         self.file.wait_for_annotations();
     }
@@ -214,16 +191,8 @@ impl EdfFile {
             .collect()
     }
 
-    /// Read a page of physical data for the given signals over a time range.
-    ///
-    /// Returns a vec of f64 buffers, one per signal index. Each buffer contains
-    /// the physical samples for that signal in the time range `[start_sec, end_sec)`.
-    /// Signals may have different sample rates, so buffers may have different lengths.
-    ///
-    /// **EDF+D note:** when `use_time` is false (default), time parameters are
-    /// converted to flat sample indices (`(time * sample_rate) as usize`), not
-    /// physical time. For discontinuous recordings, set `use_time=true` to resolve
-    /// the time range to actual sample indices using record onset times.
+    /// Read physical data for signals over `[start_sec, end_sec)`. Parallel via rayon.
+    /// For EDF+D, set `use_time=true` to resolve times via record onsets instead of flat indices.
     pub fn read_page(
         &self,
         signal_indices: &[usize],
@@ -250,7 +219,7 @@ impl EdfFile {
             .collect()
     }
 
-    /// Read a page of digital data for the given signals over a time range.
+    /// Read digital data for signals over `[start_sec, end_sec)`. Parallel via rayon.
     pub fn read_page_digital(
         &self,
         signal_indices: &[usize],
@@ -277,7 +246,7 @@ impl EdfFile {
             .collect()
     }
 
-    /// Hint to the OS that we'll need the data records covering the given time range.
+    /// OS read-ahead hint for records covering the time range.
     #[cfg(unix)]
     fn advise_time_range(&self, start_sec: f64, end_sec: f64) {
         let dur = self.file.header.record_duration_secs;
@@ -312,32 +281,18 @@ impl EdfFile {
         Ok(buf)
     }
 
-    /// Build a 3D proxy from a `Rectangular` [`SignalGroup`].
+    /// Build a 3D proxy from a `Rectangular` `SignalGroup`.
     pub fn proxy_3d(&self, group: SignalGroup) -> Result<Proxy3D> {
         Proxy3D::new(Arc::clone(&self.file), group)
     }
 
-    /// Build a 2D proxy from a [`SignalGroup`].
-    ///
-    /// `Proxy2D` accepts any group kind; for `Open` groups (mixed sample rates)
-    /// the [`PadMode`] decides what reads past short channels return.
+    /// Build a 2D proxy. For `Open` groups (mixed sample rates), `PadMode` controls overflow reads.
     pub fn proxy_2d(&self, group: SignalGroup, pad_mode: PadMode) -> Result<Proxy2D> {
         Proxy2D::new(Arc::clone(&self.file), group, pad_mode)
     }
 
 
-    /// Partition all ordinary (non-annotation) signals into groups by sample
-    /// rate.
-    ///
-    /// Each returned [`SignalGroup`] carries enough metadata for the caller to
-    /// decide whether to build a 2D or 3D proxy from it: structural kind,
-    /// min/max total samples, singleton flag, and `covers_all_ordinary` (set
-    /// when the file has exactly one rate group). Sub-Hz precision is
-    /// preserved — channels at 123.4 Hz and 123.5 Hz land in different groups.
-    ///
-    /// Within a single file, every returned group is `Rectangular` (same rate
-    /// -> same total samples). Returns an empty vec if the file has no ordinary
-    /// signals.
+    /// Partition ordinary signals into `SignalGroup`s by sample rate. Each group is `Rectangular`.
     pub fn signal_groups(&self) -> Vec<SignalGroup> {
         let header = &self.file.header;
         let rd = header.record_duration_secs;
@@ -383,12 +338,7 @@ impl EdfFile {
         self.signal(idx)
     }
 
-    /// Return all signal indices whose label matches `label`.
-    ///
-    /// If `exact` is `false` (default), performs a case-insensitive substring match.
-    /// If `exact` is `true`, performs a case-sensitive exact equality match.
-    ///
-    /// Searches all signals including annotation signals.
+    /// Signal indices matching `label`. Default is case-insensitive substring; `exact=true` uses case-sensitive equality.
     pub fn find_all_signals(&self, label: &str, exact: bool) -> Vec<usize> {
         let query = label.to_lowercase();
         self.file
@@ -407,13 +357,7 @@ impl EdfFile {
             .collect()
     }
 
-    /// Write a copy of this file to `path`. By default uses the source file's
-    /// variant; override with `variant` to transcode (e.g. `EDF+D` -> `EDF+C`).
-    ///
-    /// Reads physical sample data and annotations through the existing memory
-    /// map and re-emits them via the writer. Only ordinary signals are copied;
-    /// the destination's annotation channel is rebuilt from the parsed
-    /// annotations rather than copied verbatim.
+    /// Copy this file to `path`. Override `variant` to transcode. Rebuilds annotation channel from parsed annotations.
     pub fn write_to(&self, path: impl AsRef<Path>, variant: Option<EdfVariant>) -> Result<()> {
         use crate::writer::{EdfWriter, WriterSignal, WriterSpec};
         use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -467,7 +411,7 @@ impl EdfFile {
 
         let mut writer = EdfWriter::create(path, spec)?;
 
-        // Pre-fetch annotations and group by record window.
+        // Group annotations by record window.
         let record_dur = header.record_duration_secs;
         let num_records = self.num_records();
         let mut by_record: Vec<Vec<Annotation>> =
@@ -483,7 +427,7 @@ impl EdfFile {
             }
         }
 
-        // Stream record-by-record so we don't materialize the whole file in RAM.
+        // Stream records to avoid loading entire file into RAM.
         let mut proxies: Vec<SignalProxy> = Vec::with_capacity(ordinary.len());
         for &idx in &ordinary {
             proxies.push(self.signal(idx)?);
@@ -528,8 +472,7 @@ fn read_field(data: &[u8], offset: usize, size: usize, name: &'static str) -> Re
     Ok(String::from_utf8_lossy(bytes).trim().to_string())
 }
 
-/// Lightweight metadata extracted from an EDF/EDF+ file header without
-/// scanning data records or building an annotation index.
+/// Header metadata without annotation scan or persistent mmap.
 #[derive(Debug, Clone)]
 pub struct EdfMetadata {
     pub variant: EdfVariant,
@@ -544,20 +487,14 @@ pub struct EdfMetadata {
 }
 
 impl EdfFile {
-    /// Read only the header; no annotation scan, no persistent mmap.
-    ///
-    /// This is a cheap operation suitable for batch inspection of many files.
-    /// It does not memory-map the file, does not spawn background threads,
-    /// and does not read any data records.
+    /// Read header metadata only. No mmap, no background threads, no data records read.
     pub fn inspect(path: impl AsRef<Path>) -> Result<EdfMetadata> {
         let mut file = std::fs::File::open(path.as_ref()).map_err(|e| EdfError::FileOpen {
             path: path.as_ref().to_path_buf(),
             source: e,
         })?;
 
-        // EDF header = 256 bytes + 256 bytes per signal.
-        // We need to read the main header to know num_signals, then read
-        // enough to get all signal headers.
+        // Read 256-byte main header, then 256 bytes per signal.
         let mut buf = vec![b' '; 256];
         file.read_exact(&mut buf).map_err(|e| EdfError::FileOpen {
             path: path.as_ref().to_path_buf(),
@@ -754,9 +691,7 @@ mod tests {
         build_synthetic_file(2, false, 0)
     }
 
-    /// Build a 1-signal EDF file. If `edf_l` is true, write `num_records=-1`
-    /// in the header (still writing `actual_records` worth of data, plus
-    /// `trailing_bytes` of garbage to test trailing-byte handling).
+    /// Build 1-signal EDF file. `edf_l` sets num_records=-1; `trailing_bytes` appends garbage.
     fn build_synthetic_file(
         actual_records: usize,
         edf_l: bool,
@@ -814,8 +749,7 @@ mod tests {
         data[start..start + bytes.len().min(fs)].copy_from_slice(&bytes[..bytes.len().min(fs)]);
     }
 
-    /// Build a 1-signal BDF file (3-byte samples). If `plus_c` is true, write "BDF+C"
-    /// in the reserved field to produce a BDF+C variant.
+    /// Build 1-signal BDF file. `plus_c` writes "BDF+C" in reserved field.
     fn build_synthetic_bdf_file(actual_records: usize, plus_c: bool) -> NamedTempFile {
         let num_signals = 1;
         let header_bytes = 256 + 256 * num_signals;
@@ -841,10 +775,7 @@ mod tests {
         write_hdr(&mut buf, 252, 4, &num_signals.to_string());
 
         let sig = &mut buf[256..];
-        // BDF signal header fields at parser offsets:
-        // label=16B@0, transducer=80B@16, physical_dim=8B@96,
-        // physical_min=8B@104, physical_max=8B@112, digital_min=8B@120,
-        // digital_max=8B@128, prefiltering=80B@136, num_samples=8B@216, reserved=32B@224
+        // BDF signal header fields at parser offsets.
         write_sig(sig, 0, 1, 0, 16, "EEG             ");
         write_sig(sig, 0, 1, 16, 80, "X X X X       ");
         write_sig(sig, 0, 1, 96, 8, "uV");

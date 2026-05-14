@@ -1,11 +1,7 @@
 use crate::error::{EdfError, Result};
 use crate::header::EdfHeader;
 
-/// Describes the byte layout of signals within a single data record.
-///
-/// EDF data records contain all signals sequentially: all samples for signal 0,
-/// then all samples for signal 1, etc. Each sample is a 2-byte little-endian
-/// signed integer. BDF records use 3 bytes per sample.
+/// Byte layout of signals within a single data record.
 #[derive(Debug, Clone)]
 pub struct RecordLayout {
     pub record_size: usize,
@@ -37,8 +33,6 @@ impl RecordLayout {
     }
 
     /// Extract the raw bytes for a specific signal within a data record.
-    ///
-    /// `record_data` must be exactly `record_size` bytes (one complete data record).
     pub fn signal_bytes<'a>(&self, record_data: &'a [u8], signal_idx: usize) -> Result<&'a [u8]> {
         if signal_idx >= self.signal_offsets.len() {
             return Err(EdfError::SignalOutOfRange {
@@ -60,10 +54,7 @@ impl RecordLayout {
             })
     }
 
-    /// Decode raw little-endian bytes into physical f64 values.
-    ///
-    /// Uses a two-pass approach to help the compiler autovectorize:
-    /// first widen to f64, then apply gain and offset as a uniform f64 pass.
+    /// Decode raw bytes into physical f64 values. Two-pass for autovectorization.
     pub fn decode_physical(&self, raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
         match self.sample_size_bytes {
             2 => {

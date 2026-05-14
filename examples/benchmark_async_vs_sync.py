@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Benchmark single-shot async vs sync to measure async overhead.
 
-At concurrency=1 the async API can't be faster than sync — it should at most
-match it. This benchmark quantifies the overhead of going through tokio +
-`spawn_blocking` + the asyncio event loop for a single read.
-
-A small (single-digit %) gap is acceptable; a large gap would mean the async
-path is paying too much per-call cost to be worth it for serial workloads.
+Quantifies the overhead of tokio + spawn_blocking + asyncio event loop
+for a single read.
 
 Usage:
     python benchmark_async_vs_sync.py [path/to/file.edf]
@@ -76,7 +72,6 @@ async def main():
 
     repeats = 10
 
-    # open
     t_sync_open = median_sync(lambda: edfarray.EdfFile(str(path)), repeats)
 
     async def _aopen():
@@ -84,7 +79,6 @@ async def main():
     t_async_open = await median_async(_aopen, repeats)
     report("open", t_sync_open, t_async_open)
 
-    # full signal read (physical)
     f_sync = edfarray.EdfFile(str(path))
     sig_sync = f_sync.signal(0)
     f_async = await aio.open(str(path))
@@ -97,7 +91,6 @@ async def main():
     t_async_full = await median_async(_afull, repeats)
     report("full read (physical)", t_sync_full, t_async_full)
 
-    # full digital read
     t_sync_dig = median_sync(lambda: sig_sync.to_digital(), repeats)
 
     async def _adig():
@@ -105,7 +98,6 @@ async def main():
     t_async_dig = await median_async(_adig, repeats)
     report("full read (digital)", t_sync_dig, t_async_dig)
 
-    # small slice (1 second)
     sr = int(sig_sync.sample_rate)
     n_samples = len(sig_sync)
     mid = n_samples // 2
@@ -118,9 +110,7 @@ async def main():
     report("1-second slice", t_sync_slice, t_async_slice)
 
     print()
-    print("Async overhead is per-call cost (tokio dispatch + event loop hop)")
-    print("on top of identical Rust decode. For workloads that don't benefit")
-    print("from concurrency, the sync API remains the right choice.")
+    print("Async overhead is per-call cost of tokio dispatch + event loop hop.")
 
 
 if __name__ == "__main__":

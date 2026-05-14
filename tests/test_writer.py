@@ -91,7 +91,6 @@ def test_streaming_writer_explicit_finish(tmp_path: Path):
     w.write_record([chunk])
     w.write_record([chunk])
     w.finish()
-    # idempotent
     w.finish()
     f = edfarray.EdfFile(str(p))
     assert f.num_records == 2

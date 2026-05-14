@@ -46,19 +46,21 @@ Supports the context manager protocol (`with` statement).
 
 `recording_additional: str | None` -- Additional recording information.
 
-`annotations: list[Annotation]` -- All non-timekeeping annotations from the file, sorted by onset. Empty for plain EDF files. Blocks until the background annotation scan is complete.
+The annotation accessors below block until the background annotation scan completes. Use `annotations_ready` to check status without blocking. Range queries use binary search.
 
-`annotations_before(t: float) -> list[Annotation]` -- Annotations with onset strictly before `t`. Uses binary search for efficiency. Blocks until the background annotation scan is complete.
+`annotations: list[Annotation]` -- All non-timekeeping annotations from the file, sorted by onset. Empty for plain EDF files.
 
-`annotations_after(t: float) -> list[Annotation]` -- Annotations with onset >= `t`. Uses binary search for efficiency. Blocks until the background annotation scan is complete.
+`annotations_before(t: float) -> list[Annotation]` -- Annotations with onset strictly before `t`.
 
-`annotations_in_range(start: float, end: float) -> list[Annotation]` -- Annotations with onset in the half-open interval `[start, end)`. Uses binary search for efficiency. Blocks until the background annotation scan is complete.
+`annotations_after(t: float) -> list[Annotation]` -- Annotations with onset >= `t`.
 
-`filter_annotations(query: str, regex: bool = False) -> list[Annotation]` -- Filter annotations by text content. If `regex` is `False`, returns annotations whose text contains the query as a case-insensitive substring. If `regex` is `True`, returns annotations whose text matches the query as a case-insensitive regex pattern. Raises `ValueError` for invalid regex patterns.
+`annotations_in_range(start: float, end: float) -> list[Annotation]` -- Annotations with onset in the half-open interval `[start, end)`.
 
-`annotations_by_text(text: str) -> list[Annotation]` -- Annotations whose text exactly matches `text` (case-sensitive). Blocks until the background annotation scan is complete.
+`filter_annotations(query: str, regex: bool = False) -> list[Annotation]` -- Filter annotations by text content. With `regex=False`, matches the query as a case-insensitive substring. With `regex=True`, matches the query as a case-insensitive regex pattern. Raises `ValueError` for invalid regex patterns.
 
-`warnings: list[str]` -- Parse warnings accumulated during file open. Empty if the file is well-formed. Blocks until the background annotation scan is complete.
+`annotations_by_text(text: str) -> list[Annotation]` -- Annotations whose text exactly matches `text` (case-sensitive).
+
+`warnings: list[str]` -- Parse warnings accumulated during file open. Empty if the file is well-formed.
 
 `header: dict` -- Dictionary with basic header fields: `version`, `patient_id`, `recording_id`, `num_signals`, `num_records`, `record_duration`, `duration`, `variant`.
 
