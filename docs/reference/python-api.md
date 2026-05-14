@@ -76,17 +76,21 @@ Supports the context manager protocol (`with` statement).
 
 `ordinary_signal_indices() -> list[int]` -- Indices of all non-annotation signals.
 
-`read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-arrayproxy-use-flat-sample-indices) for details.
+`read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-proxy2d-use-flat-sample-indices) for details.
 
 `read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int32 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
 
-`array_proxy(signal_indices: list[int] | None = None) -> ArrayProxy` -- Create a 2D array proxy for numpy-style multi-channel indexing. All selected signals must have the same sample rate. If `signal_indices` is `None`, uses all ordinary signals. Raises `ValueError` if sample rates differ.
+`signal_groups() -> list[SignalGroup]` -- Partition all ordinary signals into groups by sample rate. Each group records its classification, sample rate, sample-count range, and whether it covers every ordinary signal. Sub-Hz precision is preserved.
 
-`signal_indices_by_rate() -> dict[float, list[int]]` -- Group ordinary signal indices by sample rate in Hz. Sub-Hz precision is preserved (e.g. 123.4 and 123.5 form distinct groups). Useful for creating separate `ArrayProxy` instances when the file has mixed sample rates.
+`signal_group(indices: list[int]) -> SignalGroup` -- Classify an arbitrary list of file-level signal indices into a `SignalGroup`. Use when you want a group that's a subset of (or crosses) the file's natural rate-based groupings.
+
+`proxy_2d(group: SignalGroup, pad_mode: str | float | None = None) -> Proxy2D` -- Build a 2D proxy for numpy-style multi-channel indexing. Accepts any group kind; for `Open` groups (mixed sample rates), `pad_mode` decides what reads past short channels return. Values: `"raise"` (default), `"nan"`, `"zero"`, `"edge"`, or a numeric scalar (interpreted as `Value(x)`).
+
+`proxy_3d(group: SignalGroup) -> Proxy3D` -- Build a 3D proxy `(num_records, num_channels, samples_per_record)`. Requires `group.kind == "rectangular"`. Errors otherwise.
 
 `write_to(path: str, variant: str | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations.
 
-`close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal` and `ArrayProxy` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
+`close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal`, `Proxy2D`, and `Proxy3D` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
 
 `closed: bool` -- Whether `close()` has been called.
 
@@ -174,29 +178,78 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 ---
 
-## ArrayProxy
+## SignalGroup
 
-Returned by `EdfFile.array_proxy()`. A 2D view over multiple signals with the same sample rate. Reads data on demand from the memory-mapped file.
+A set of file-level signal indices plus classification metadata. Built by
+`EdfFile.signal_groups()` or `EdfFile.signal_group(indices)`.
 
 ### Properties
 
-`shape: tuple[int, int]` -- `(num_signals, total_samples_per_signal)`.
+`indices: list[int]` -- File-level signal indices in the group.
 
-`sample_rate: float` -- Common sample rate (Hz) of all signals in the proxy.
+`kind: str` -- `"rectangular"` (all channels share a sample rate and total sample count) or `"open"` (mixed sample rates; 2D-only).
+
+`sample_rate: float | None` -- Common rate, or `None` if `kind == "open"`.
+
+`samples_per_record: int | None` -- Common SPR, or `None` if `kind == "open"`.
+
+`min_samples: int` / `max_samples: int` -- Bounds on total samples across channels. Equal for `"rectangular"`.
+
+`covers_all_ordinary: bool` -- `True` iff this group spans every ordinary signal in the file. Set only by `signal_groups()`; hand-built groups are always `False`.
+
+`is_singleton: bool` -- `True` iff the group contains exactly one channel.
+
+`is_rectangular: bool` -- Shortcut for `kind == "rectangular"`.
+
+`len(group)` -- Number of channels in the group.
+
+---
+
+## Proxy2D
+
+Returned by `EdfFile.proxy_2d(group, pad_mode=...)`. A 2D view over a `SignalGroup`. Reads on demand from the memory-mapped file.
+
+### Properties
+
+`shape: tuple[int, int]` -- `(num_signals, max_samples_across_signals)`.
+
+`sample_rate: float | None` -- Common rate, or `None` if the underlying group is `Open`.
+
+`valid_lengths: list[int]` -- Per-channel valid sample counts, in proxy-coordinate order. All entries equal `shape[1]` for `"rectangular"` groups; for `"open"` groups they vary.
+
+`pad_mode: str` -- `"raise"`, `"nan"`, `"zero"`, `"value"`, or `"edge"`.
 
 ### Indexing
 
-`proxy[int, int]` -- Returns a single physical value as a `float`. Supports negative indexing on both axes.
+`proxy[int, int]` -- Returns a single physical value as a `float`. Supports negative indexing.
 
-`proxy[int, slice]` -- Returns a 1D `numpy.ndarray` of float64 physical values for one signal.
-
-`proxy[slice, int]` -- Returns a 1D `numpy.ndarray` with one sample from each signal in the slice.
-
-`proxy[slice, slice]` -- Returns a 2D `numpy.ndarray` of shape `(num_selected_signals, num_selected_samples)`.
+`proxy[int, slice]` / `proxy[slice, int]` / `proxy[slice, slice]` -- Returns the natural 1D or 2D `numpy.ndarray` of float64 physical values.
 
 `proxy[list, slice]` -- Fancy indexing on the signal axis. The list contains proxy-coordinate signal indices.
 
-Step values other than 1 are not supported in slices.
+Step values other than 1 are not supported. Reads past a channel's valid length are governed by `pad_mode`: `"raise"` (default) raises `IndexError`; other modes fill (`"nan"` is physical-only).
+
+---
+
+## Proxy3D
+
+Returned by `EdfFile.proxy_3d(group)`. A 3D view over a `Rectangular` `SignalGroup`, exposing the underlying record-major layout.
+
+### Properties
+
+`shape: tuple[int, int, int]` -- `(num_records, num_channels, samples_per_record)`.
+
+`sample_rate: float` -- Common sample rate.
+
+`supports_strided_view: bool` -- `True` when the file/group support a zero-copy `as_strided` view. See `stride_info()`.
+
+### Methods
+
+`stride_info() -> dict | None` -- Byte-level metadata for a zero-copy strided view of the underlying int16 mmap, or `None` if ineligible. Keys: `base_offset`, `record_stride_bytes`, `channel_stride_bytes`, `sample_stride_bytes`, `shape`. Eligibility requires 2-byte samples, a contiguous channel-index range in the file, and no annotation channel interleaved within that span.
+
+### Indexing
+
+`proxy[rec, ch, samp]` -- Each axis accepts an int or a slice with step 1. Returns a scalar (all ints), 1D / 2D / 3D `numpy.ndarray` depending on how many axes are sliced.
 
 ---
 

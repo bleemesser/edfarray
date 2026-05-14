@@ -96,21 +96,18 @@ GIL release means that while Rust is decoding data, other Python coroutines
 that do not need the Rust extension can continue running. The event loop is not
 blocked.
 
-## 2D access via ArrayProxy
+## Multi-channel access in async mode
 
-The async `ArrayProxy` provides multi-channel 2D reads:
+The array proxies (`Proxy2D`, `Proxy3D`) are sync-only. Their value is the
+synchronous numpy-style `proxy[ch, samp_range]` indexing surface — that doesn't
+translate cleanly to `await` points, and ML preprocessing pipelines that want
+this access pattern are themselves sync.
 
-```python
-ap = f.array_proxy()  # all ordinary signals at a common sample rate
-print(ap.shape)       # (num_signals, total_samples)
-
-# Read a 2D window: signals x samples
-block = await ap.read_physical(0, 1000)
-# block.shape == (num_signals, 1000)
-```
-
-All `ArrayProxy` methods (`read_physical`, `read_digital`, `get`,
-`read_signals_at_sample`) are async and release the GIL.
+For multi-channel async reads, use `read_page` (which decodes signals in
+parallel on the tokio thread pool, as shown above) or open the file
+synchronously when you need numpy-style indexing. `signal_groups()` and
+`signal_group()` *are* exposed on the async file for discovery — they're plain
+getters that don't need to await.
 
 ## Waiting for annotations
 

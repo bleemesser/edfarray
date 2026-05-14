@@ -61,9 +61,14 @@ for idx in gaps:
           f"({times[idx+1] - times[idx]:.3f}s)")
 ```
 
-### `read_page` and `ArrayProxy` use flat sample indices
+### `read_page` and `Proxy2D` use flat sample indices
 
-`read_page()`, `Signal` indexing, and `ArrayProxy` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, it means the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` — it does not account for gaps.
+`read_page()`, `Signal` indexing, and `Proxy2D` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, it means the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` — it does not account for gaps.
+
+`Proxy3D` indexes by `(record, channel, sample)` rather than a flat sample
+index, so for EDF+D it can be a more natural fit — each record corresponds to
+exactly one onset entry in the annotations index, and the sample axis only
+addresses *within-record* samples.
 
 For example, if a file has records at t=0s, t=1s, then a gap, then t=5s:
 

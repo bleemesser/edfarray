@@ -27,11 +27,10 @@ EVENT_PRE = 0.5
 EVENT_POST = 1.5
 
 
-async def epoch_features(ap, start: float, dur: float) -> dict:
-    rate = ap.sample_rate
+async def epoch_features(f, idxs, rate: float, start: float, dur: float) -> dict:
     n = int(dur * rate)
-    start_idx = int(start * rate)
-    block = await ap.read_physical(start_idx, start_idx + n)
+    pages = await f.read_page(start, start + dur, signal_indices=idxs)
+    block = np.stack(pages)[:, :n]  # (n_chan, n_samples)
     rms = np.sqrt(np.mean(block * block, axis=1))
     spec = np.fft.rfft(block, axis=1)
     power = (spec.real ** 2 + spec.imag ** 2) / n
@@ -44,9 +43,11 @@ async def epoch_features(ap, start: float, dur: float) -> dict:
 async def main() -> None:
     async with await aio.open(str(PATH)) as f:
         ordinary = f.ordinary_signal_indices()
-        groups = f.signal_indices_by_rate()
-        rate, idxs = max(groups.items(), key=lambda kv: len(kv[1]))
-        ap = f.array_proxy(idxs)
+        # Discover same-rate groups via SignalGroup; pick the largest.
+        groups = f.signal_groups()
+        group = max(groups, key=len)
+        idxs = group.indices
+        rate = group.sample_rate
         labels = [f.signal(i).label for i in idxs]
 
         print(f"File:      {PATH.name}")
@@ -60,7 +61,7 @@ async def main() -> None:
               f"(hop {HOP_SEC}s) dispatched via asyncio.gather")
 
         epochs = await asyncio.gather(
-            *(epoch_features(ap, float(s), EPOCH_SEC) for s in starts)
+            *(epoch_features(f, idxs, rate, float(s), EPOCH_SEC) for s in starts)
         )
         print()
 
@@ -85,7 +86,7 @@ async def main() -> None:
         print(f"Event-locked epochs: {len(events)} events "
               f"({EVENT_PRE}s pre, {EVENT_POST}s post)")
         windows = await asyncio.gather(*(
-            epoch_features(ap, a.onset - EVENT_PRE, EVENT_PRE + EVENT_POST)
+            epoch_features(f, idxs, rate, a.onset - EVENT_PRE, EVENT_PRE + EVENT_POST)
             for a in events
         ))
         for ev, w in zip(events, windows):

@@ -109,8 +109,9 @@ async def main() -> None:
                 print(f"  t={a.onset:>5.2f}s  {a.text!r}")
             print()
 
-            ap = f.array_proxy()
-            block = await ap.read_physical(0, ap.shape[1])
+            # Read the entire recording via read_page (async, parallel decode).
+            pages = await f.read_page(0.0, f.duration)
+            block = np.stack(pages)
             rms = np.sqrt(np.mean(block * block, axis=1))
             print("Per-channel RMS over full file:")
             for i, r in enumerate(rms):
