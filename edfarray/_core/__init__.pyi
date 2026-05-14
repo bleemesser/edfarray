@@ -10,6 +10,7 @@ __all__ = [
     "EdfFile",
     "EdfWriter",
     "Proxy2D",
+    "Proxy3D",
     "Signal",
     "SignalGroup",
     "WriterSignal",
@@ -238,6 +239,14 @@ class EdfFile:
         `"nan"`, `"zero"`, `"edge"`, or a numeric scalar (interpreted as
         `Value(x)`). `None` is treated as `"raise"`.
         """
+    def proxy_3d(self, group: SignalGroup) -> Proxy3D:
+        r"""
+        Build a 3D proxy from a rectangular `SignalGroup`.
+        
+        Requires `group.kind == "rectangular"` (all channels share a sample
+        rate). Use `signal_groups()` to discover eligible groups, or
+        `signal_group(...)` to construct one from specific indices.
+        """
     def signal_group(self, indices: typing.Sequence[builtins.int]) -> SignalGroup:
         r"""
         Classify an arbitrary list of file-level signal indices into a
@@ -343,6 +352,51 @@ class Proxy2D:
         | int | slice | 1D ndarray |
         | slice/list | int | 1D ndarray |
         | slice/list | slice | 2D ndarray |
+        """
+
+@typing.final
+class Proxy3D:
+    r"""
+    3D view over a `Rectangular` signal group, shape
+    `(num_records, num_channels, samples_per_record)`.
+    
+    Indexing semantics match NumPy 3D: `proxy[rec, ch, samp]` returns a scalar
+    when all three are ints, a 2D ndarray when two are slices, etc. Step != 1
+    is not supported.
+    """
+    @property
+    def shape(self) -> tuple[builtins.int, builtins.int, builtins.int]:
+        r"""
+        Shape of the proxy: `(num_records, num_channels, samples_per_record)`.
+        """
+    @property
+    def sample_rate(self) -> builtins.float:
+        r"""
+        Common sample rate (Hz) of the group's channels.
+        """
+    @property
+    def supports_strided_view(self) -> builtins.bool:
+        r"""
+        `True` if the file/group support a zero-copy stride view via
+        [`as_strided`].
+        """
+    def __repr__(self) -> builtins.str: ...
+    def __getitem__(self, key: typing.Any) -> typing.Any:
+        r"""
+        NumPy-style 3D indexing: `proxy[rec, channel, sample]`.
+        
+        Each axis accepts an int or a slice with step 1. Returns a scalar
+        (all three ints), a 1D array (one slice axis), a 2D array (two slice
+        axes), or a 3D array (all slices).
+        """
+    def stride_info(self) -> typing.Any:
+        r"""
+        Zero-copy stride-view metadata as a dict, or `None` when not eligible.
+        
+        Keys: `base_offset`, `record_stride_bytes`, `channel_stride_bytes`,
+        `sample_stride_bytes`, `shape`. Eligibility requires 2-byte samples,
+        a contiguous channel-index range, and no annotation channel inside
+        that span.
         """
 
 @typing.final

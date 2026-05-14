@@ -11,6 +11,7 @@ use crate::annotation::Annotation;
 use crate::error::{EdfError, Result};
 use crate::group::{PadMode, SignalGroup};
 use crate::proxy_2d::Proxy2D;
+use crate::proxy_3d::Proxy3D;
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
@@ -309,6 +310,11 @@ impl EdfFile {
         let mut buf = vec![0i32; count];
         proxy.read_digital(s_start, s_end, &mut buf)?;
         Ok(buf)
+    }
+
+    /// Build a 3D proxy from a `Rectangular` [`SignalGroup`].
+    pub fn proxy_3d(&self, group: SignalGroup) -> Result<Proxy3D> {
+        Proxy3D::new(Arc::clone(&self.file), group)
     }
 
     /// Build a 2D proxy from a [`SignalGroup`].

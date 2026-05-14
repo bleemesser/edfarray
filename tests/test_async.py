@@ -280,61 +280,6 @@ async def test_signal_with_cache():
         async_f.close()
 
 
-def _largest_group(f):
-    return max(f.signal_groups(), key=len)
-
-
-async def test_proxy_2d_shape_and_read():
-    path = _pick_fixture()
-    sync_f = edfarray.EdfFile(str(path))
-    async_f = await aio.open(str(path))
-    try:
-        sync_group = _largest_group(sync_f)
-        async_group = _largest_group(async_f)
-        sync_ap = sync_f.proxy_2d(sync_group)
-        async_ap = async_f.proxy_2d(async_group)
-        assert async_ap.shape == sync_ap.shape
-        assert async_ap.sample_rate == sync_ap.sample_rate
-
-        n_samp = min(async_ap.shape[1], 500)
-        async_data = await async_ap.read_physical(0, n_samp)
-        sync_data = sync_ap[:, 0:n_samp]
-        assert async_data.shape == sync_data.shape
-        np.testing.assert_array_equal(async_data, sync_data)
-    finally:
-        async_f.close()
-
-
-async def test_proxy_2d_get_and_signals_at_sample():
-    path = _pick_fixture()
-    async_f = await aio.open(str(path))
-    try:
-        ap = async_f.proxy_2d(_largest_group(async_f))
-        val = await ap.get(0, 0)
-        assert isinstance(val, float)
-        row = await ap.read_signals_at_sample(0)
-        assert row.dtype == np.float64
-        assert row.shape == (ap.shape[0],)
-    finally:
-        async_f.close()
-
-
-async def test_proxy_2d_subset_signals():
-    path = _pick_fixture()
-    async_f = await aio.open(str(path))
-    try:
-        ordinary = async_f.ordinary_signal_indices()
-        if len(ordinary) < 2:
-            pytest.skip("need at least 2 ordinary signals")
-        group = async_f.signal_group(ordinary[:2])
-        ap = async_f.proxy_2d(group, pad_mode="nan")
-        assert ap.shape[0] == 2
-        data = await ap.read_physical(0, min(ap.shape[1], 200))
-        assert data.shape[0] == 2
-    finally:
-        async_f.close()
-
-
 async def test_signal_concurrent_reads_release_gil():
     """Concurrent Signal reads should release the GIL during decode."""
     import threading

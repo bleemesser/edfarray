@@ -10,6 +10,7 @@ use crate::annotations::PyAnnotation;
 use crate::errors::to_py_err;
 use crate::group::PySignalGroup;
 use crate::proxy_2d::{PyProxy2D, parse_pad_mode};
+use crate::proxy_3d::PyProxy3D;
 use crate::signal::PySignal;
 
 /// An open EDF/EDF+ file.
@@ -400,6 +401,19 @@ impl PyEdfFile {
             .proxy_2d(group.inner().clone(), mode)
             .map_err(to_py_err)?;
         Ok(PyProxy2D::new(proxy))
+    }
+
+    /// Build a 3D proxy from a rectangular `SignalGroup`.
+    ///
+    /// Requires `group.kind == "rectangular"` (all channels share a sample
+    /// rate). Use `signal_groups()` to discover eligible groups, or
+    /// `signal_group(...)` to construct one from specific indices.
+    fn proxy_3d(&self, group: &PySignalGroup) -> PyResult<PyProxy3D> {
+        let proxy = self
+            .get()
+            .proxy_3d(group.inner().clone())
+            .map_err(to_py_err)?;
+        Ok(PyProxy3D::new(proxy))
     }
 
     /// Classify an arbitrary list of file-level signal indices into a

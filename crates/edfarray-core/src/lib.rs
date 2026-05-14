@@ -6,6 +6,7 @@ pub mod header;
 pub mod mmap;
 pub mod proxy;
 pub mod proxy_2d;
+pub mod proxy_3d;
 pub mod record;
 pub mod signal;
 pub mod writer;
