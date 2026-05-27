@@ -75,11 +75,8 @@ impl PyProxy3D {
         }
 
         let (n_rec, n_ch, spr) = self.proxy.shape();
-        let (rec_spec, ch_spec, samp_spec) = (
-            tuple.get_item(0)?,
-            tuple.get_item(1)?,
-            tuple.get_item(2)?,
-        );
+        let (rec_spec, ch_spec, samp_spec) =
+            (tuple.get_item(0)?, tuple.get_item(1)?, tuple.get_item(2)?);
 
         let rec = AxisSpec::parse(&rec_spec, n_rec, "record")?;
         let ch = AxisSpec::parse(&ch_spec, n_ch, "channel")?;

@@ -190,7 +190,12 @@ impl MappedFile {
     }
 
     /// Resolve time range to sample indices using record onsets (accounts for EDF+D gaps).
-    pub fn sample_range_for_time(&self, proxy: &SignalProxy, start_sec: f64, end_sec: f64) -> (usize, usize) {
+    pub fn sample_range_for_time(
+        &self,
+        proxy: &SignalProxy,
+        start_sec: f64,
+        end_sec: f64,
+    ) -> (usize, usize) {
         let num_records = self.header.num_records.max(0) as usize;
         if num_records == 0 {
             return (0, 0);
@@ -208,9 +213,7 @@ impl MappedFile {
             return (0, 0);
         }
 
-        let onsets: Vec<f64> = self.with_annotations(|idx| {
-            idx.record_onsets.clone()
-        });
+        let onsets: Vec<f64> = self.with_annotations(|idx| idx.record_onsets.clone());
 
         if onsets.is_empty() {
             let s_start = (start_sec * sample_rate) as usize;
@@ -218,7 +221,8 @@ impl MappedFile {
             return (s_start, s_end);
         }
 
-        let first_rec = onsets.partition_point(|&o| o + self.header.record_duration_secs <= start_sec);
+        let first_rec =
+            onsets.partition_point(|&o| o + self.header.record_duration_secs <= start_sec);
         let end_rec_pt = onsets.partition_point(|&o| o < end_sec);
 
         if end_rec_pt == 0 {
@@ -475,8 +479,8 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_gap_spanning() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/edfPlusD.edf");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
         mapped.wait_for_annotations();
@@ -484,9 +488,10 @@ mod tests {
         // Verify onsets are non-uniform (has gaps)
         mapped.with_annotations(|idx| {
             assert!(idx.record_onsets.len() >= 3);
-            let has_gap = idx.record_onsets.windows(2).any(|w| {
-                (w[1] - w[0] - mapped.header.record_duration_secs).abs() > 0.001
-            });
+            let has_gap = idx
+                .record_onsets
+                .windows(2)
+                .any(|w| (w[1] - w[0] - mapped.header.record_duration_secs).abs() > 0.001);
             assert!(has_gap, "fixture should have non-uniform onsets");
         });
 
@@ -499,8 +504,8 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_inside_gap() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/edfPlusD.edf");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
         mapped.wait_for_annotations();
@@ -513,7 +518,8 @@ mod tests {
                 let gap_end = w[1];
                 if gap_end - gap_start > 0.5 {
                     let mid = (gap_start + gap_end) / 2.0;
-                    let (s_start, s_end) = mapped.sample_range_for_time(&proxy, mid - 0.1, mid + 0.1);
+                    let (s_start, s_end) =
+                        mapped.sample_range_for_time(&proxy, mid - 0.1, mid + 0.1);
                     assert_eq!(s_start, 0, "range inside gap should return (0,0)");
                     assert_eq!(s_end, 0);
                     break;
@@ -524,8 +530,8 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_mid_record_range() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/edfPlusD.edf");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
         mapped.wait_for_annotations();
@@ -544,13 +550,13 @@ mod tests {
         // start at 0.5s (midway through record 0), end at 1.5s (midway through record 1)
         let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.5, 1.5);
         assert_eq!(s_start, 2); // sample index 2 is at time 0.5s
-        assert_eq!(s_end, 6);   // exclusive: samples 2,3,4,5
+        assert_eq!(s_end, 6); // exclusive: samples 2,3,4,5
     }
 
     #[test]
     fn sample_range_for_time_edfd_underflow_all_onsets_after_end() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/edfPlusD.edf");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
         mapped.wait_for_annotations();
@@ -559,7 +565,8 @@ mod tests {
         mapped.with_annotations(|idx| {
             let first_onset = idx.record_onsets.first().copied().unwrap_or(0.0);
             let before_first = first_onset - 10.0;
-            let (s_start, s_end) = mapped.sample_range_for_time(&proxy, before_first, first_onset - 0.001);
+            let (s_start, s_end) =
+                mapped.sample_range_for_time(&proxy, before_first, first_onset - 0.001);
             assert_eq!(s_start, 0);
             assert_eq!(s_end, 0);
         });
@@ -567,8 +574,8 @@ mod tests {
 
     #[test]
     fn sample_range_for_time_edfd_mid_record() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/edfPlusD.edf");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
         let mapped = MappedFile::open(&fixture).unwrap();
         let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
         mapped.wait_for_annotations();
@@ -578,5 +585,4 @@ mod tests {
         assert!(s_start > 0, "should skip the first portion of record 0");
         assert!(s_end > s_start);
     }
-
 }

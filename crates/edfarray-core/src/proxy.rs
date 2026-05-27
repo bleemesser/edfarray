@@ -198,7 +198,10 @@ impl SignalProxy {
             let count = available.min(needed);
 
             let record_data = self.file.record_bytes(rec_idx)?;
-            let sig_bytes = self.file.layout.signal_bytes(record_data, self.signal_idx)?;
+            let sig_bytes = self
+                .file
+                .layout
+                .signal_bytes(record_data, self.signal_idx)?;
 
             if let Some(cached) = self.cache.as_ref().unwrap().lock().unwrap().get(rec_idx) {
                 out[out_pos..out_pos + count].copy_from_slice(&cached[offset..offset + count]);
@@ -210,12 +213,9 @@ impl SignalProxy {
             let mut full_decoded = vec![0.0f64; self.samples_per_record];
             {
                 let h = self.header();
-                self.file.layout.decode_physical(
-                    sig_bytes,
-                    h.gain,
-                    h.offset,
-                    &mut full_decoded,
-                );
+                self.file
+                    .layout
+                    .decode_physical(sig_bytes, h.gain, h.offset, &mut full_decoded);
             }
 
             let dst = &mut out[out_pos..out_pos + count];

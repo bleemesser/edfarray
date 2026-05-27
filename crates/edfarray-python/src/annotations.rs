@@ -20,7 +20,11 @@ impl PyAnnotation {
     #[new]
     #[pyo3(signature = (onset, text, duration=None))]
     fn new(onset: f64, text: String, duration: Option<f64>) -> Self {
-        PyAnnotation { onset, duration, text }
+        PyAnnotation {
+            onset,
+            duration,
+            text,
+        }
     }
 
     fn __repr__(&self) -> String {

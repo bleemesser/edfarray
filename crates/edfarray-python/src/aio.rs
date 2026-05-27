@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex as StdMutex};
 
 use chrono::{Datelike, Timelike};
-use pyo3::prelude::*;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use edfarray_core::annotation::Annotation as CoreAnnotation;
@@ -13,7 +13,7 @@ use edfarray_core::writer::{EdfWriter, write_edf};
 use crate::annotations::PyAnnotation;
 use crate::errors::to_py_err;
 use crate::group::PySignalGroup;
-use crate::writer::{parse_variant, build_spec, anns_to_core};
+use crate::writer::{anns_to_core, build_spec, parse_variant};
 
 use numpy::{PyArray1, PyReadonlyArray1};
 
@@ -454,7 +454,11 @@ impl PyAsyncEdfFile {
     }
 
     #[pyo3(signature = (idx_or_label, cache_capacity=0))]
-    fn signal(&self, idx_or_label: &Bound<'_, PyAny>, cache_capacity: usize) -> PyResult<PyAsyncSignal> {
+    fn signal(
+        &self,
+        idx_or_label: &Bound<'_, PyAny>,
+        cache_capacity: usize,
+    ) -> PyResult<PyAsyncSignal> {
         let inner = self.get()?;
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
             inner.signal(idx).map_err(to_py_err)?
@@ -465,10 +469,13 @@ impl PyAsyncEdfFile {
                 "signal() argument must be int or str",
             ));
         };
-        let proxy = if cache_capacity > 0 { proxy.with_cache(cache_capacity) } else { proxy };
+        let proxy = if cache_capacity > 0 {
+            proxy.with_cache(cache_capacity)
+        } else {
+            proxy
+        };
         Ok(PyAsyncSignal::new(proxy))
     }
-
 }
 
 #[pyclass(name = "Signal", module = "edfarray._core.aio")]
@@ -478,7 +485,9 @@ pub struct PyAsyncSignal {
 
 impl PyAsyncSignal {
     pub fn new(proxy: edfarray_core::proxy::SignalProxy) -> Self {
-        PyAsyncSignal { inner: Arc::new(proxy) }
+        PyAsyncSignal {
+            inner: Arc::new(proxy),
+        }
     }
 }
 
@@ -552,17 +561,24 @@ impl PyAsyncSignal {
         )
     }
 
-    fn read_physical<'py>(&self, py: Python<'py>, start: usize, stop: usize) -> PyResult<Bound<'py, PyAny>> {
+    fn read_physical<'py>(
+        &self,
+        py: Python<'py>,
+        start: usize,
+        stop: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let buf: Vec<f64> = tokio::task::spawn_blocking(move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
-                let count = stop.saturating_sub(start);
-                let mut buf = vec![0.0; count];
-                if count > 0 {
-                    proxy.read_physical(start, stop, &mut buf)?;
-                }
-                Ok(buf)
-            })
+            let buf: Vec<f64> = tokio::task::spawn_blocking(
+                move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                    let count = stop.saturating_sub(start);
+                    let mut buf = vec![0.0; count];
+                    if count > 0 {
+                        proxy.read_physical(start, stop, &mut buf)?;
+                    }
+                    Ok(buf)
+                },
+            )
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
             .map_err(to_py_err)?;
@@ -572,17 +588,24 @@ impl PyAsyncSignal {
         })
     }
 
-    fn read_digital<'py>(&self, py: Python<'py>, start: usize, stop: usize) -> PyResult<Bound<'py, PyAny>> {
+    fn read_digital<'py>(
+        &self,
+        py: Python<'py>,
+        start: usize,
+        stop: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let buf: Vec<i32> = tokio::task::spawn_blocking(move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
-                let count = stop.saturating_sub(start);
-                let mut buf = vec![0i32; count];
-                if count > 0 {
-                    proxy.read_digital(start, stop, &mut buf)?;
-                }
-                Ok(buf)
-            })
+            let buf: Vec<i32> = tokio::task::spawn_blocking(
+                move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
+                    let count = stop.saturating_sub(start);
+                    let mut buf = vec![0i32; count];
+                    if count > 0 {
+                        proxy.read_digital(start, stop, &mut buf)?;
+                    }
+                    Ok(buf)
+                },
+            )
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
             .map_err(to_py_err)?;
@@ -592,7 +615,12 @@ impl PyAsyncSignal {
         })
     }
 
-    fn read_at<'py>(&self, py: Python<'py>, start_sec: f64, end_sec: f64) -> PyResult<Bound<'py, PyAny>> {
+    fn read_at<'py>(
+        &self,
+        py: Python<'py>,
+        start_sec: f64,
+        end_sec: f64,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let buf = tokio::task::spawn_blocking(move || proxy.read_at(start_sec, end_sec))
@@ -609,13 +637,15 @@ impl PyAsyncSignal {
         let proxy = self.inner.clone();
         let len = self.inner.len();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
-                let mut buf = vec![0.0; len];
-                if len > 0 {
-                    proxy.read_physical(0, len, &mut buf)?;
-                }
-                Ok(buf)
-            })
+            let buf = tokio::task::spawn_blocking(
+                move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                    let mut buf = vec![0.0; len];
+                    if len > 0 {
+                        proxy.read_physical(0, len, &mut buf)?;
+                    }
+                    Ok(buf)
+                },
+            )
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
             .map_err(to_py_err)?;
@@ -629,13 +659,15 @@ impl PyAsyncSignal {
         let proxy = self.inner.clone();
         let len = self.inner.len();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
-                let mut buf = vec![0i32; len];
-                if len > 0 {
-                    proxy.read_digital(0, len, &mut buf)?;
-                }
-                Ok(buf)
-            })
+            let buf = tokio::task::spawn_blocking(
+                move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
+                    let mut buf = vec![0i32; len];
+                    if len > 0 {
+                        proxy.read_digital(0, len, &mut buf)?;
+                    }
+                    Ok(buf)
+                },
+            )
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
             .map_err(to_py_err)?;
@@ -649,13 +681,15 @@ impl PyAsyncSignal {
         let proxy = self.inner.clone();
         let len = self.inner.len();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
-                let mut buf = vec![0.0; len];
-                if len > 0 {
-                    proxy.read_times(0, len, &mut buf)?;
-                }
-                Ok(buf)
-            })
+            let buf = tokio::task::spawn_blocking(
+                move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                    let mut buf = vec![0.0; len];
+                    if len > 0 {
+                        proxy.read_times(0, len, &mut buf)?;
+                    }
+                    Ok(buf)
+                },
+            )
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
             .map_err(to_py_err)?;
@@ -666,10 +700,17 @@ impl PyAsyncSignal {
     }
 }
 
-
 #[pyclass(name = "EdfWriter", module = "edfarray._core.aio")]
 pub struct PyAsyncEdfWriter {
     inner: Arc<StdMutex<Option<EdfWriter>>>,
+}
+
+/// Lock the writer mutex, mapping a poisoned mutex to a Python exception.
+fn lock_writer(
+    m: &StdMutex<Option<EdfWriter>>,
+) -> PyResult<std::sync::MutexGuard<'_, Option<EdfWriter>>> {
+    m.lock()
+        .map_err(|_| PyRuntimeError::new_err("EdfWriter is poisoned by a previous failed write"))
 }
 
 #[pymethods]
@@ -713,15 +754,18 @@ impl PyAsyncEdfWriter {
                 .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
                 .map_err(to_py_err)?;
             Python::attach(|py| {
-                Py::new(py, PyAsyncEdfWriter {
-                    inner: Arc::new(StdMutex::new(Some(writer))),
-                })
+                Py::new(
+                    py,
+                    PyAsyncEdfWriter {
+                        inner: Arc::new(StdMutex::new(Some(writer))),
+                    },
+                )
             })
         })
     }
 
     fn add_annotation(&self, annotation: PyAnnotation) -> PyResult<()> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = lock_writer(&self.inner)?;
         let w = guard
             .as_mut()
             .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
@@ -744,14 +788,17 @@ impl PyAsyncEdfWriter {
             .iter()
             .map(|arr| arr.as_slice().map(|s| s.to_vec()))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("physical arrays must be contiguous: {e}")))?;
-        let anns_owned: Vec<CoreAnnotation> = annotations
-            .map(|a| anns_to_core(&a))
-            .unwrap_or_default();
+            .map_err(|e| {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "physical arrays must be contiguous: {e}"
+                ))
+            })?;
+        let anns_owned: Vec<CoreAnnotation> =
+            annotations.map(|a| anns_to_core(&a)).unwrap_or_default();
         let writer = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             tokio::task::spawn_blocking(move || -> PyResult<()> {
-                let mut guard = writer.lock().unwrap();
+                let mut guard = lock_writer(&writer)?;
                 let w = guard
                     .as_mut()
                     .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
@@ -769,7 +816,7 @@ impl PyAsyncEdfWriter {
         let writer = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             tokio::task::spawn_blocking(move || -> PyResult<()> {
-                let mut guard = writer.lock().unwrap();
+                let mut guard = lock_writer(&writer)?;
                 let w = guard
                     .take()
                     .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
@@ -782,7 +829,11 @@ impl PyAsyncEdfWriter {
     }
 
     fn __repr__(&self) -> String {
-        if self.inner.lock().unwrap().is_some() {
+        let open = match self.inner.lock() {
+            Ok(g) => g.is_some(),
+            Err(p) => p.into_inner().is_some(),
+        };
+        if open {
             "<edfarray.aio.EdfWriter open>".to_string()
         } else {
             "<edfarray.aio.EdfWriter finished>".to_string()
@@ -802,7 +853,7 @@ impl PyAsyncEdfWriter {
         let writer = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             tokio::task::spawn_blocking(move || -> PyResult<()> {
-                let mut guard = writer.lock().unwrap();
+                let mut guard = lock_writer(&writer)?;
                 if let Some(w) = guard.take() {
                     w.finish().map_err(to_py_err)?;
                 }
@@ -856,10 +907,10 @@ fn write_edf_async<'py>(
         .iter()
         .map(|arr| arr.as_slice().map(|s| s.to_vec()))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("data arrays must be contiguous: {e}")))?;
-    let anns_owned: Vec<CoreAnnotation> = annotations
-        .map(|a| anns_to_core(&a))
-        .unwrap_or_default();
+        .map_err(|e| {
+            pyo3::exceptions::PyTypeError::new_err(format!("data arrays must be contiguous: {e}"))
+        })?;
+    let anns_owned: Vec<CoreAnnotation> = annotations.map(|a| anns_to_core(&a)).unwrap_or_default();
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         tokio::task::spawn_blocking(move || -> PyResult<()> {
             let slices: Vec<&[f64]> = owned.iter().map(|v| v.as_slice()).collect();
@@ -879,7 +930,14 @@ fn open_async<'py>(py: Python<'py>, path: String) -> PyResult<Bound<'py, PyAny>>
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
             .map_err(to_py_err)?;
-        Python::attach(|py| Py::new(py, PyAsyncEdfFile { inner: Some(Arc::new(edf)) }))
+        Python::attach(|py| {
+            Py::new(
+                py,
+                PyAsyncEdfFile {
+                    inner: Some(Arc::new(edf)),
+                },
+            )
+        })
     })
 }
 

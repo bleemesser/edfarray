@@ -71,7 +71,10 @@ pub enum EdfVariant {
 
 impl EdfVariant {
     pub fn parse(version_bytes: &[u8], reserved: &str) -> Self {
-        if version_bytes.len() >= 8 && version_bytes[0] == 0xFF && &version_bytes[1..8] == b"BIOSEMI" {
+        if version_bytes.len() >= 8
+            && version_bytes[0] == 0xFF
+            && &version_bytes[1..8] == b"BIOSEMI"
+        {
             if reserved.starts_with("BDF+C") {
                 EdfVariant::BdfPlusC
             } else if reserved.starts_with("BDF+D") {
@@ -212,6 +215,8 @@ impl EdfHeader {
             });
         }
 
+        // TODO: this variant selection seems very fragile. Is our parsing method here officially specced?
+        // If not, we should ensure the file open path has a manual variant specifier to override if a file does not self-document it.
         let variant = EdfVariant::parse(&data[0..8], &reserved);
         let start_datetime = parse_start_datetime(&start_date_str, &start_time_str);
 

@@ -65,10 +65,7 @@ impl SignalGroup {
         let n = header.num_signals;
         for &i in indices {
             if i >= n {
-                return Err(EdfError::SignalOutOfRange {
-                    index: i,
-                    count: n,
-                });
+                return Err(EdfError::SignalOutOfRange { index: i, count: n });
             }
         }
 
@@ -87,7 +84,7 @@ impl SignalGroup {
         for &i in &indices[1..] {
             let s = &header.signals[i];
             let rate = s.sample_rate(rd);
-            if (rate - first_rate).abs() > 1e-9 {
+            if (rate - first_rate).abs() > first_rate.abs().max(rate.abs()) * 1e-9 {
                 all_same_rate = false;
             }
             let total = num_records * s.num_samples;

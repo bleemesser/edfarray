@@ -22,9 +22,7 @@ pub struct PyEdfFile {
 
 impl PyEdfFile {
     fn get(&self) -> &EdfFile {
-        self.inner
-            .as_ref()
-            .expect("operation on closed EdfFile")
+        self.inner.as_ref().expect("operation on closed EdfFile")
     }
 }
 
@@ -415,11 +413,8 @@ impl PyEdfFile {
     /// `SignalGroup`. Use this when you want a group that's a subset of (or
     /// crosses) the file's natural rate-based groupings.
     fn signal_group(&self, indices: Vec<usize>) -> PyResult<PySignalGroup> {
-        let g = edfarray_core::group::SignalGroup::from_indices(
-            self.get().header(),
-            &indices,
-        )
-        .map_err(to_py_err)?;
+        let g = edfarray_core::group::SignalGroup::from_indices(self.get().header(), &indices)
+            .map_err(to_py_err)?;
         Ok(PySignalGroup::new(g))
     }
 

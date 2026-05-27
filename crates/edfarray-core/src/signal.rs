@@ -45,7 +45,8 @@ impl SignalHeader {
             });
         }
 
-        if (physical_min - physical_max).abs() < f64::EPSILON {
+        let phys_scale = physical_min.abs().max(physical_max.abs());
+        if (physical_min - physical_max).abs() <= phys_scale * f64::EPSILON {
             return Err(EdfError::InvalidPhysicalRange {
                 index,
                 min: physical_min,

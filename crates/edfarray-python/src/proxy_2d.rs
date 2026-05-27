@@ -59,7 +59,13 @@ impl PyProxy2D {
             Some(r) => format!("{}Hz", r),
             None => "mixed".into(),
         };
-        format!("Proxy2D(shape=({}, {}), rate={}, pad={})", rows, cols, rate, pad_mode_name(self.proxy.pad_mode()))
+        format!(
+            "Proxy2D(shape=({}, {}), rate={}, pad={})",
+            rows,
+            cols,
+            rate,
+            pad_mode_name(self.proxy.pad_mode())
+        )
     }
 
     /// Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
@@ -103,7 +109,10 @@ impl PyProxy2D {
             let si = normalize_index(si, num_signals)?;
             let (samp_start, samp_end) = parse_sample_spec(&samp_spec, num_samples)?;
             let count = samp_end.saturating_sub(samp_start);
-            let data = self.proxy.read_slice(si..si + 1, samp_start..samp_end).map_err(to_py_err)?;
+            let data = self
+                .proxy
+                .read_slice(si..si + 1, samp_start..samp_end)
+                .map_err(to_py_err)?;
             let array = PyArray1::<f64>::zeros(py, count, false);
             if count > 0 {
                 unsafe {
@@ -119,12 +128,18 @@ impl PyProxy2D {
 
         if let Some(sa) = samp_int {
             let sa = normalize_index(sa, num_samples)?;
-            let vals = self.proxy.read_signals_at_sample(&signal_indices, sa).map_err(to_py_err)?;
+            let vals = self
+                .proxy
+                .read_signals_at_sample(&signal_indices, sa)
+                .map_err(to_py_err)?;
             let array = PyArray1::<f64>::from_vec(py, vals);
             return Ok(array.into_any().unbind());
         }
 
-        let data = self.proxy.read_physical(&signal_indices, samp_start..samp_end).map_err(to_py_err)?;
+        let data = self
+            .proxy
+            .read_physical(&signal_indices, samp_start..samp_end)
+            .map_err(to_py_err)?;
         let n_sig = signal_indices.len();
         let array = PyArray2::<f64>::zeros(py, (n_sig, count), false);
         unsafe {
@@ -168,7 +183,9 @@ fn parse_signal_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<Vec<usi
     if let Ok(slice) = spec.cast::<PySlice>() {
         let indices = slice.indices(length as isize)?;
         if indices.step != 1 {
-            return Err(PyValueError::new_err("step != 1 not supported for signal axis"));
+            return Err(PyValueError::new_err(
+                "step != 1 not supported for signal axis",
+            ));
         }
         Ok((indices.start as usize..indices.stop as usize).collect())
     } else if let Ok(list) = spec.cast::<PyList>() {
@@ -181,7 +198,9 @@ fn parse_signal_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<Vec<usi
     } else if let Ok(idx) = spec.extract::<isize>() {
         Ok(vec![normalize_index(idx, length)?])
     } else {
-        Err(PyTypeError::new_err("signal index must be int, slice, or list"))
+        Err(PyTypeError::new_err(
+            "signal index must be int, slice, or list",
+        ))
     }
 }
 

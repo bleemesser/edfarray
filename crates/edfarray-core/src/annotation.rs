@@ -158,7 +158,7 @@ fn parse_tals(data: &[u8], record_idx: usize, warnings: &mut Vec<String>) -> Vec
             continue;
         }
 
-        match parse_single_tal(data, &mut pos, record_idx) {
+        match parse_single_tal(data, &mut pos, record_idx, warnings) {
             Ok(annotations) => result.extend(annotations),
             Err(msg) => {
                 warnings.push(msg);
@@ -175,6 +175,7 @@ fn parse_single_tal(
     data: &[u8],
     pos: &mut usize,
     record_idx: usize,
+    warnings: &mut Vec<String>,
 ) -> std::result::Result<Vec<Annotation>, String> {
     let tal_start = *pos;
 
@@ -195,9 +196,15 @@ fn parse_single_tal(
             && data.get(pos.wrapping_sub(1)) == Some(&TAL_DURATION_MARKER)
         {
             let dur_str = read_until(data, pos, &[TAL_SEPARATOR]);
-            parse_duration(&dur_str).map_err(|reason| format!(
-            "invalid TAL duration at record {record_idx}, byte offset {tal_start}: {reason}"
-        )).ok()
+            match parse_duration(&dur_str) {
+                Ok(d) => Some(d),
+                Err(reason) => {
+                    warnings.push(format!(
+                        "invalid TAL duration at record {record_idx}, byte offset {tal_start}: {reason}"
+                    ));
+                    None
+                }
+            }
         } else {
             None
         };

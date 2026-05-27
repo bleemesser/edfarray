@@ -4,17 +4,17 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use regex::RegexBuilder;
 use rayon::prelude::*;
+use regex::RegexBuilder;
 
 use crate::annotation::Annotation;
 use crate::error::{EdfError, Result};
 use crate::group::{PadMode, SignalGroup};
-use crate::proxy_2d::Proxy2D;
-use crate::proxy_3d::Proxy3D;
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
+use crate::proxy_2d::Proxy2D;
+use crate::proxy_3d::Proxy3D;
 use crate::signal::SignalHeader;
 
 /// Open EDF/EDF+ file with memory-mapped access to header, signals, and annotations.
@@ -71,8 +71,7 @@ impl EdfFile {
 
     /// All non-timekeeping annotations, sorted by onset. Blocks until scan completes.
     pub fn annotations(&self) -> Vec<Annotation> {
-        self.file
-            .with_annotations(|idx| idx.annotations.clone())
+        self.file.with_annotations(|idx| idx.annotations.clone())
     }
 
     /// Annotations with onset strictly before `t`. Blocks until scan completes.
@@ -159,7 +158,7 @@ impl EdfFile {
         self.file.annotations_ready()
     }
 
-    /// Block until annotation scan completes. Idempotent.
+    /// Block until annotation scan completes, if not already done.
     pub fn wait_for_annotations(&self) {
         self.file.wait_for_annotations();
     }
@@ -271,7 +270,12 @@ impl EdfFile {
         Ok(buf)
     }
 
-    fn read_digital_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<i32>> {
+    fn read_digital_samples(
+        &self,
+        proxy: &SignalProxy,
+        s_start: usize,
+        s_end: usize,
+    ) -> Result<Vec<i32>> {
         if s_start >= proxy.len() || s_start >= s_end {
             return Ok(Vec::new());
         }
@@ -290,7 +294,6 @@ impl EdfFile {
     pub fn proxy_2d(&self, group: SignalGroup, pad_mode: PadMode) -> Result<Proxy2D> {
         Proxy2D::new(Arc::clone(&self.file), group, pad_mode)
     }
-
 
     /// Partition ordinary signals into `SignalGroup`s by sample rate. Each group is `Rectangular`.
     pub fn signal_groups(&self) -> Vec<SignalGroup> {
@@ -357,12 +360,12 @@ impl EdfFile {
             .collect()
     }
 
-    /// Copy this file to `path`. Override `variant` to transcode. Rebuilds annotation channel from parsed annotations.
+    /// Copy this file to `path`. Override `variant` (`None` = keep current) to transcode. Rebuilds annotation channel from parsed annotations.
     pub fn write_to(&self, path: impl AsRef<Path>, variant: Option<EdfVariant>) -> Result<()> {
         use crate::writer::{EdfWriter, WriterSignal, WriterSpec};
         use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-        let target_variant = variant.unwrap_or(self.variant());
+        let target_variant = variant.unwrap_or(self.variant()); // TODO: validate that transcoding logic between ANY edf/bdf/+ variant is correctly implemented here
         let header = &self.file.header;
 
         let start_datetime = match header.start_datetime.as_datetime() {
@@ -414,8 +417,7 @@ impl EdfFile {
         // Group annotations by record window.
         let record_dur = header.record_duration_secs;
         let num_records = self.num_records();
-        let mut by_record: Vec<Vec<Annotation>> =
-            (0..num_records).map(|_| Vec::new()).collect();
+        let mut by_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
         if target_variant.is_plus() {
             for ann in self.annotations().into_iter() {
                 let r = (ann.onset / record_dur).floor() as i64;
@@ -487,7 +489,7 @@ pub struct EdfMetadata {
 }
 
 impl EdfFile {
-    /// Read header metadata only. No mmap, no background threads, no data records read.
+    /// Read header metadata only, without memory-mapping the file.
     pub fn inspect(path: impl AsRef<Path>) -> Result<EdfMetadata> {
         let mut file = std::fs::File::open(path.as_ref()).map_err(|e| EdfError::FileOpen {
             path: path.as_ref().to_path_buf(),
@@ -523,8 +525,7 @@ impl EdfFile {
             header.recover_num_records_from_file_size(file_size);
         }
 
-        let signal_labels: Vec<String> =
-            header.signals.iter().map(|s| s.label.clone()).collect();
+        let signal_labels: Vec<String> = header.signals.iter().map(|s| s.label.clone()).collect();
         let sample_rates: Vec<f64> = header
             .signals
             .iter()
@@ -591,10 +592,11 @@ mod tests {
         assert_eq!(edf.duration(), 5.0);
         let sig = edf.signal(0).unwrap();
         assert_eq!(sig.len(), 20);
-        assert!(edf
-            .warnings()
-            .iter()
-            .any(|w| w.contains("EDF-L") && w.contains("recovered num_records=5")));
+        assert!(
+            edf.warnings()
+                .iter()
+                .any(|w| w.contains("EDF-L") && w.contains("recovered num_records=5"))
+        );
     }
 
     #[test]
@@ -602,10 +604,7 @@ mod tests {
         let file = build_synthetic_file(3, true, 5);
         let edf = EdfFile::open(file.path()).unwrap();
         assert_eq!(edf.num_records(), 3);
-        assert!(edf
-            .warnings()
-            .iter()
-            .any(|w| w.contains("trailing bytes")));
+        assert!(edf.warnings().iter().any(|w| w.contains("trailing bytes")));
     }
 
     #[test]
@@ -1071,7 +1070,10 @@ mod fixture_tests {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
         // "dc" is a substring of DC01, DC04, DC03, DC02 (indices 12, 13, 14, 15)
         let indices = edf.find_all_signals("dc", false);
-        assert!(indices.len() >= 1, "partial match should find at least one signal");
+        assert!(
+            indices.len() >= 1,
+            "partial match should find at least one signal"
+        );
         // Verify all returned indices have labels containing "dc" (case-insensitive)
         for &idx in &indices {
             let label_lower = edf.header().signals[idx].label.to_lowercase();
@@ -1105,7 +1107,10 @@ mod fixture_tests {
     fn find_all_signals_no_match() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
         let indices = edf.find_all_signals("zzzzz_no_such_label", false);
-        assert!(indices.is_empty(), "non-existent label should return empty vec");
+        assert!(
+            indices.is_empty(),
+            "non-existent label should return empty vec"
+        );
     }
 
     #[test]

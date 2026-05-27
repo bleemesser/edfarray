@@ -82,7 +82,8 @@ impl WriterSignal {
                 field: "digital_min/max",
                 reason: format!(
                     "digital range [{}, {}] outside {}-bit signed range [{dmin}, {dmax}]",
-                    self.digital_min, self.digital_max,
+                    self.digital_min,
+                    self.digital_max,
                     sample_size_bytes * 8,
                 ),
             });
@@ -194,12 +195,7 @@ impl EdfWriter {
 
         let mut writer = BufWriter::new(file);
 
-        let header_bytes = serialize_header(
-            &spec,
-            ann_bytes_per_record,
-            -1,
-            &mut writer,
-        )?;
+        let header_bytes = serialize_header(&spec, ann_bytes_per_record, -1, &mut writer)?;
 
         Ok(EdfWriter {
             path,
@@ -337,15 +333,17 @@ impl EdfWriter {
             path: self.path.clone(),
             source: e.into_error(),
         })?;
-        file.seek(SeekFrom::Start(236)).map_err(|e| EdfError::FileOpen {
-            path: self.path.clone(),
-            source: e,
-        })?;
+        file.seek(SeekFrom::Start(236))
+            .map_err(|e| EdfError::FileOpen {
+                path: self.path.clone(),
+                source: e,
+            })?;
         let nrec_field = format_ascii_field(&self.num_records_written.to_string(), 8);
-        file.write_all(&nrec_field).map_err(|e| EdfError::FileOpen {
-            path: self.path.clone(),
-            source: e,
-        })?;
+        file.write_all(&nrec_field)
+            .map_err(|e| EdfError::FileOpen {
+                path: self.path.clone(),
+                source: e,
+            })?;
         file.flush().map_err(|e| EdfError::FileOpen {
             path: self.path.clone(),
             source: e,
@@ -545,7 +543,10 @@ fn serialize_header<W: Write>(
 
     let labels: Vec<_> = all_signals.iter().map(|s| s.label.clone()).collect();
     let transducers: Vec<_> = all_signals.iter().map(|s| s.transducer.clone()).collect();
-    let dims: Vec<_> = all_signals.iter().map(|s| s.physical_dimension.clone()).collect();
+    let dims: Vec<_> = all_signals
+        .iter()
+        .map(|s| s.physical_dimension.clone())
+        .collect();
     let pmins: Vec<_> = all_signals.iter().map(|s| s.physical_min).collect();
     let pmaxs: Vec<_> = all_signals.iter().map(|s| s.physical_max).collect();
     let dmins: Vec<_> = all_signals.iter().map(|s| s.digital_min).collect();
@@ -729,7 +730,9 @@ mod tests {
                 NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
             ),
             record_duration_secs: 1.0,
-            signals: vec![WriterSignal::new("EEG Fpz", "uV", -3200.0, 3200.0, -32768, 32767, 256)],
+            signals: vec![WriterSignal::new(
+                "EEG Fpz", "uV", -3200.0, 3200.0, -32768, 32767, 256,
+            )],
             annotation_bytes_per_record: None,
         }
     }
@@ -768,9 +771,21 @@ mod tests {
         let spec = sample_spec(EdfVariant::EdfPlusC);
         let data: Vec<f64> = ramp(256 * 4);
         let anns = vec![
-            Annotation { onset: 0.5, duration: None, text: "start".into() },
-            Annotation { onset: 1.25, duration: Some(2.0), text: "spike".into() },
-            Annotation { onset: 3.9, duration: None, text: "end".into() },
+            Annotation {
+                onset: 0.5,
+                duration: None,
+                text: "start".into(),
+            },
+            Annotation {
+                onset: 1.25,
+                duration: Some(2.0),
+                text: "spike".into(),
+            },
+            Annotation {
+                onset: 3.9,
+                duration: None,
+                text: "end".into(),
+            },
         ];
         write_edf(&path, spec, &[&data], &anns).unwrap();
 
@@ -845,8 +860,16 @@ mod tests {
         let spec = sample_spec(EdfVariant::EdfPlusC);
         let data: Vec<f64> = ramp(256 * 3);
         let anns = vec![
-            Annotation { onset: 0.5, duration: None, text: "a".into() },
-            Annotation { onset: 2.0, duration: Some(0.5), text: "b".into() },
+            Annotation {
+                onset: 0.5,
+                duration: None,
+                text: "a".into(),
+            },
+            Annotation {
+                onset: 2.0,
+                duration: Some(0.5),
+                text: "b".into(),
+            },
         ];
         write_edf(&src, spec, &[&data], &anns).unwrap();
 
@@ -881,7 +904,11 @@ mod tests {
         let path = dir.path().join("plain.edf");
         let spec = sample_spec(EdfVariant::Edf);
         let data = vec![0.0f64; 256];
-        let anns = vec![Annotation { onset: 0.0, duration: None, text: "x".into() }];
+        let anns = vec![Annotation {
+            onset: 0.0,
+            duration: None,
+            text: "x".into(),
+        }];
         let err = write_edf(&path, spec, &[&data], &anns).unwrap_err();
         assert!(matches!(err, EdfError::InvalidArgument { .. }));
     }
@@ -894,7 +921,11 @@ mod tests {
         spec.annotation_bytes_per_record = Some(40);
         let data = vec![0.0f64; 256 * 1];
         let big_text = "X".repeat(200);
-        let anns = vec![Annotation { onset: 0.0, duration: None, text: big_text }];
+        let anns = vec![Annotation {
+            onset: 0.0,
+            duration: None,
+            text: big_text,
+        }];
         let err = write_edf(&path, spec, &[&data], &anns).unwrap_err();
         assert!(matches!(err, EdfError::InvalidArgument { .. }));
     }

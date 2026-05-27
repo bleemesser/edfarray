@@ -389,7 +389,10 @@ mod tests {
                 for si in 0..5 {
                     let v3 = block[(ri * 3 + ci) * 5 + si];
                     let v2 = p2.get(ci, ri * 5 + si).unwrap();
-                    assert!((v3 - v2).abs() < f64::EPSILON, "mismatch at ({ri},{ci},{si})");
+                    assert!(
+                        (v3 - v2).abs() < f64::EPSILON,
+                        "mismatch at ({ri},{ci},{si})"
+                    );
                 }
             }
         }
@@ -414,7 +417,9 @@ mod tests {
         let mapped = MappedFile::open(f.path()).unwrap();
         let group = SignalGroup::from_indices(&mapped.header, &[0, 1, 2]).unwrap();
         let p = Proxy3D::new(mapped, group).unwrap();
-        let info = p.stride_info().expect("contiguous data -> stride view available");
+        let info = p
+            .stride_info()
+            .expect("contiguous data -> stride view available");
         assert_eq!(info.shape, (4, 3, 5));
         assert_eq!(info.sample_stride_bytes, 2);
         assert_eq!(info.channel_stride_bytes, 5 * 2);

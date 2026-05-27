@@ -166,7 +166,10 @@ impl Proxy2D {
         signal_indices: &[usize],
         sample: usize,
     ) -> Result<Vec<f64>> {
-        signal_indices.iter().map(|&s| self.get(s, sample)).collect()
+        signal_indices
+            .iter()
+            .map(|&s| self.get(s, sample))
+            .collect()
     }
 
     fn resolve_signal(&self, proxy_idx: usize) -> Result<usize> {

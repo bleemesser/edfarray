@@ -64,7 +64,8 @@ impl RecordLayout {
             }
             3 => {
                 for (i, chunk) in raw.chunks_exact(3).enumerate() {
-                    let raw24 = (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
+                    let raw24 =
+                        (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
                     let signed = (raw24 << 8) >> 8;
                     out[i] = signed as f64;
                 }
@@ -86,7 +87,8 @@ impl RecordLayout {
             }
             3 => {
                 for (i, chunk) in raw.chunks_exact(3).enumerate() {
-                    let raw24 = (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
+                    let raw24 =
+                        (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
                     let signed = (raw24 << 8) >> 8;
                     out[i] = signed;
                 }
@@ -152,10 +154,10 @@ mod tests {
         };
         // values: 1, -1, 8388607 (0x7FFFFF), -8388608 (0x800000)
         let raw = [
-            0x01, 0x00, 0x00,  // 1
-            0xFF, 0xFF, 0xFF,  // -1
-            0xFF, 0xFF, 0x7F,  // 8388607
-            0x00, 0x00, 0x80,  // -8388608
+            0x01, 0x00, 0x00, // 1
+            0xFF, 0xFF, 0xFF, // -1
+            0xFF, 0xFF, 0x7F, // 8388607
+            0x00, 0x00, 0x80, // -8388608
         ];
         let mut out = [0.0f64; 4];
         layout.decode_physical(&raw, 1.0, 0.0, &mut out);
@@ -174,10 +176,7 @@ mod tests {
             sample_size_bytes: 3,
         };
         let raw = [
-            0x01, 0x00, 0x00,
-            0xFF, 0xFF, 0xFF,
-            0xFF, 0xFF, 0x7F,
-            0x00, 0x00, 0x80,
+            0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x00, 0x00, 0x80,
         ];
         let mut out = [0i32; 4];
         layout.decode_digital(&raw, &mut out);

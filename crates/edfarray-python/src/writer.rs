@@ -206,14 +206,19 @@ impl PyEdfWriter {
         let spec = build_spec(
             variant,
             record_duration,
-            signals.into_iter().map(PyWriterSignal::into_inner).collect(),
+            signals
+                .into_iter()
+                .map(PyWriterSignal::into_inner)
+                .collect(),
             start_datetime,
             patient_id,
             recording_id,
             annotation_bytes_per_record,
         )?;
         let writer = EdfWriter::create(&path, spec).map_err(to_py_err)?;
-        Ok(PyEdfWriter { inner: Some(writer) })
+        Ok(PyEdfWriter {
+            inner: Some(writer),
+        })
     }
 
     fn __enter__<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
@@ -262,7 +267,9 @@ impl PyEdfWriter {
             .iter()
             .map(|arr| arr.as_slice())
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| PyTypeError::new_err(format!("physical arrays must be contiguous: {e}")))?;
+            .map_err(|e| {
+                PyTypeError::new_err(format!("physical arrays must be contiguous: {e}"))
+            })?;
         let anns_owned = annotations.map(|a| anns_to_core(&a)).unwrap_or_default();
         w.write_record_with_annotations(&slices, &anns_owned)
             .map_err(to_py_err)
@@ -322,7 +329,10 @@ pub fn write_edf_py(
     let spec = build_spec(
         variant,
         record_duration,
-        signals.into_iter().map(PyWriterSignal::into_inner).collect(),
+        signals
+            .into_iter()
+            .map(PyWriterSignal::into_inner)
+            .collect(),
         start_datetime,
         patient_id,
         recording_id,
