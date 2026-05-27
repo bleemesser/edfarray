@@ -41,9 +41,7 @@ edfarray extracts this automatically. All annotation onsets and sample timestamp
 
 ## Discontinuous recordings (EDF+D)
 
-EDF+D files have gaps in the recording. For example, a sleep study might pause during a bathroom break.
-
-The `times()` method on a signal accounts for these gaps:
+EDF+D files have gaps in the recording. The `times()` method on a signal accounts for these gaps:
 
 ```python
 f = edfarray.EdfFile("discontinuous.edf")
@@ -61,9 +59,11 @@ for idx in gaps:
           f"({times[idx+1] - times[idx]:.3f}s)")
 ```
 
-### `read_page` and `ArrayProxy` use flat sample indices
+### `read_page` and `Proxy2D` use flat sample indices
 
-`read_page()`, `Signal` indexing, and `ArrayProxy` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, it means the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` — it does not account for gaps.
+`read_page()`, `Signal` indexing, and `Proxy2D` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` and does not account for gaps.
+
+`Proxy3D` indexes by `(record, channel, sample)` rather than a flat sample index. For EDF+D this can be a more natural fit. Each record corresponds to exactly one onset entry in the annotations index, and the sample axis only addresses within-record samples.
 
 For example, if a file has records at t=0s, t=1s, then a gap, then t=5s:
 
@@ -74,24 +74,24 @@ For example, if a file has records at t=0s, t=1s, then a gap, then t=5s:
 pages = f.read_page(0.0, 10.0)
 ```
 
-The correct way to get data within a physical time window for EDF+D is to use `times()` to identify which samples fall in your range:
+#### Time-aware reading for EDF+D
+
+Use `use_time=True` to resolve the time range to actual sample indices using record onset times:
 
 ```python
-# CORRECT for EDF+D: use timestamps to select the right samples.
-sig = f.signal(0)
-all_data = sig.to_numpy()
-all_times = sig.times()
-
-t_start, t_end = 0.0, 10.0
-mask = (all_times >= t_start) & (all_times < t_end)
-data_in_window = all_data[mask]
-times_in_window = all_times[mask]
-
-# data_in_window will have fewer samples than (t_end - t_start) * sample_rate
-# because the gaps contain no recorded data.
+# CORRECT for EDF+D: time-aware page read.
+pages = f.read_page(0.0, 10.0, use_time=True)
+# pages will contain only samples from records that fall within 0-10s physical time.
 ```
 
-This is the same behavior as pyedflib's `readSignal(start, n)` — flat sample indices are the standard convention. The `times()` method is what makes EDF+D usable: it gives you the true physical timestamp for every sample so you can map between sample space and time space yourself.
+For single-signal time-aware reading, use `Signal.read_at()`:
+
+```python
+sig = f.signal(0)
+data = sig.read_at(0.0, 10.0)  # physical data within 0-10s, gaps excluded
+```
+
+This is the same behavior as pyedflib's `readSignal(start, n)`. Flat sample indices are the standard convention. For mapping between sample space and time space, use `times()`. It returns the true physical timestamp for every sample.
 
 ## Time-keeping annotations
 

@@ -20,6 +20,7 @@ include = ["edfarray/_core/*.pyi", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [dependency-groups]
 dev = [
@@ -27,4 +28,5 @@ dev = [
     "maturin>=1.0",
     "pyedflib>=0.1.42",
     "mkdocs-material>=9.7.5",
+    "pytest-asyncio>=0.23",
 ]

@@ -8,6 +8,7 @@ use memmap2::Mmap;
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
 use crate::header::{EdfHeader, EdfVariant};
+use crate::proxy::SignalProxy;
 use crate::record::RecordLayout;
 
 /// Internal state machine for the background annotation scan.
@@ -20,14 +21,7 @@ enum AnnotationState {
     Complete(AnnotationIndex),
 }
 
-/// A memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
-///
-/// On open, the file is mapped into memory and the header and record layout are parsed
-/// synchronously (fast, fixed-size). For files with annotation signals, the annotation
-/// scan runs in a background thread so the file can be used immediately for signal reads.
-///
-/// For plain EDF files (no annotation signals), the annotation index is trivially
-/// computed at open time (uniform record spacing) with no background work.
+/// Memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
 pub struct MappedFile {
     mmap: Mmap,
     pub header: EdfHeader,
@@ -47,12 +41,17 @@ impl std::fmt::Debug for MappedFile {
 }
 
 impl MappedFile {
-    /// Open and parse an EDF/EDF+ file.
-    ///
-    /// Parses the header and record layout synchronously, then spawns a background
-    /// thread to build the annotation index (for files with annotation signals).
-    /// Returns immediately — signal data can be read before the scan finishes.
+    /// Open EDF file. Spawns background annotation scan for files with annotation signals.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
+        Self::open_with_variant(path, None)
+    }
+
+    /// Open a file, optionally forcing the EDF/BDF variant instead of trusting
+    /// the header's auto-detected one. The override only controls the
+    /// plain/`+C`/`+D` distinction; the EDF-vs-BDF sample size is always taken
+    /// from the version field, so an override whose sample-size family disagrees
+    /// is rejected.
+    pub fn open_with_variant(path: &Path, variant: Option<EdfVariant>) -> Result<Arc<Self>> {
         let file = std::fs::File::open(path).map_err(|e| EdfError::FileOpen {
             path: path.to_path_buf(),
             source: e,
@@ -63,7 +62,26 @@ impl MappedFile {
             source: e,
         })?;
 
-        let header = EdfHeader::parse(&mmap)?;
+        let mut header = EdfHeader::parse(&mmap)?;
+        if let Some(forced) = variant {
+            let detected = header.variant;
+            if forced.sample_size_bytes() != detected.sample_size_bytes() {
+                return Err(EdfError::InvalidArgument {
+                    name: "variant",
+                    reason: format!(
+                        "cannot override {detected} as {forced}: EDF/BDF sample size is \
+                         determined by the version field and cannot be overridden"
+                    ),
+                });
+            }
+            if forced != detected {
+                header.warnings.push(format!(
+                    "variant overridden from detected {detected} to {forced}"
+                ));
+            }
+            header.variant = forced;
+        }
+        header.recover_num_records_from_file_size(mmap.len());
         let layout = RecordLayout::from_header(&header);
 
         let has_annotations = header.signals.iter().any(|s| s.is_annotation);
@@ -145,9 +163,7 @@ impl MappedFile {
         });
     }
 
-    /// Block until the background annotation scan has completed.
-    ///
-    /// This is a no-op if the scan is already done (plain EDF, or scan finished).
+    /// Block until annotation scan completes. No-op if already done.
     pub fn wait_for_annotations(&self) {
         let (lock, cvar) = &self.scan_done;
         let mut done = lock.lock().unwrap();
@@ -162,9 +178,7 @@ impl MappedFile {
         *done
     }
 
-    /// Returns `(records_scanned, total_records)` for the background annotation scan.
-    ///
-    /// Non-blocking. Can be polled to show progress for large files.
+    /// Annotation scan progress: `(records_scanned, total_records)`. Non-blocking.
     pub fn scan_progress(&self) -> (usize, usize) {
         let state = self.annotations.read().unwrap();
         match &*state {
@@ -189,13 +203,9 @@ impl MappedFile {
         }
     }
 
-    /// Onset time (in seconds) for the given data record.
-    ///
-    /// For EDF and EDF+C, this is computed directly as `rec_idx * record_duration`
-    /// without blocking. For EDF+D, this blocks until the annotation scan completes
-    /// to get the actual (potentially non-uniform) onset from the TALs.
+    /// Record onset time in seconds. Blocks for EDF+D to resolve non-uniform onsets.
     pub fn record_onset(&self, rec_idx: usize) -> f64 {
-        if self.header.variant != EdfVariant::EdfPlusD {
+        if !self.header.variant.is_plus_d() {
             return rec_idx as f64 * self.header.record_duration_secs;
         }
         self.with_annotations(|idx| {
@@ -204,6 +214,69 @@ impl MappedFile {
                 .copied()
                 .unwrap_or(rec_idx as f64 * self.header.record_duration_secs)
         })
+    }
+
+    /// Resolve time range to sample indices using record onsets (accounts for EDF+D gaps).
+    pub fn sample_range_for_time(
+        &self,
+        proxy: &SignalProxy,
+        start_sec: f64,
+        end_sec: f64,
+    ) -> (usize, usize) {
+        let num_records = self.header.num_records.max(0) as usize;
+        if num_records == 0 {
+            return (0, 0);
+        }
+
+        let samples_per_record = proxy.header().num_samples;
+        let sample_rate = proxy.sample_rate();
+        let total_samples = num_records * samples_per_record;
+
+        // Clamp and validate time range.
+        let start_sec = start_sec.max(0.0);
+        let end_sec = end_sec.max(0.0);
+
+        if start_sec >= end_sec {
+            return (0, 0);
+        }
+
+        let onsets: Vec<f64> = self.with_annotations(|idx| idx.record_onsets.clone());
+
+        if onsets.is_empty() {
+            let s_start = (start_sec * sample_rate) as usize;
+            let s_end = ((end_sec * sample_rate) as usize).min(total_samples);
+            return (s_start, s_end);
+        }
+
+        let first_rec =
+            onsets.partition_point(|&o| o + self.header.record_duration_secs <= start_sec);
+        let end_rec_pt = onsets.partition_point(|&o| o < end_sec);
+
+        if end_rec_pt == 0 {
+            return (0, 0);
+        }
+
+        let last_rec = end_rec_pt.saturating_sub(1).min(num_records - 1);
+        let first_rec = first_rec.min(num_records - 1);
+
+        if first_rec > last_rec {
+            return (0, 0);
+        }
+
+        let rec_onset = onsets[first_rec];
+        let start_offset = (((start_sec - rec_onset) * sample_rate).ceil() as isize)
+            .clamp(0, samples_per_record as isize) as usize;
+        let s_start = first_rec * samples_per_record + start_offset;
+
+        let last_rec_onset = onsets[last_rec];
+        let end_offset = (((end_sec - last_rec_onset) * sample_rate).ceil() as isize)
+            .clamp(0, samples_per_record as isize) as usize;
+        let s_end = last_rec * samples_per_record + end_offset;
+
+        let s_start = s_start.min(total_samples);
+        let s_end = s_end.min(total_samples);
+
+        (s_start, s_end)
     }
 
     /// Raw bytes of the entire file (the mmap backing).
@@ -253,6 +326,7 @@ impl MappedFile {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     fn build_test_file() -> (NamedTempFile, usize, usize) {
@@ -394,5 +468,148 @@ mod tests {
         let bytes = value.as_bytes();
         let len = bytes.len().min(field_size);
         data[start..start + len].copy_from_slice(&bytes[..len]);
+    }
+
+    #[test]
+    fn sample_range_for_time_plain_edf_start_at_zero() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.0, 1.0);
+        assert_eq!(s_start, 0, "sample 0 must be included when start_sec=0.0");
+        assert_eq!(s_end, 4);
+    }
+
+    #[test]
+    fn sample_range_for_time_all_onsets_after_end() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        // end_sec=0.0, all onsets (0.0, 1.0, 2.0) are >= 0.0, so partition_point(|o| o < 0.0) = 0
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, -1.0, 0.0);
+        assert_eq!(s_start, 0);
+        assert_eq!(s_end, 0);
+    }
+
+    #[test]
+    fn sample_range_for_time_start_ge_end() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 5.0, 3.0);
+        assert_eq!(s_start, 0);
+        assert_eq!(s_end, 0);
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 3.0, 3.0);
+        assert_eq!(s_start, 0);
+        assert_eq!(s_end, 0);
+    }
+
+    #[test]
+    fn sample_range_for_time_edfd_gap_spanning() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
+        let mapped = MappedFile::open(&fixture).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        mapped.wait_for_annotations();
+
+        // Verify onsets are non-uniform (has gaps)
+        mapped.with_annotations(|idx| {
+            assert!(idx.record_onsets.len() >= 3);
+            let has_gap = idx
+                .record_onsets
+                .windows(2)
+                .any(|w| (w[1] - w[0] - mapped.header.record_duration_secs).abs() > 0.001);
+            assert!(has_gap, "fixture should have non-uniform onsets");
+        });
+
+        // Range spanning the gap: should skip the gap
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.0, 10.0);
+        assert_eq!(s_start, 0);
+        let total_uniform = mapped.header.num_records as usize * proxy.header().num_samples;
+        assert!(s_end < total_uniform, "gap should reduce sample count");
+    }
+
+    #[test]
+    fn sample_range_for_time_edfd_inside_gap() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
+        let mapped = MappedFile::open(&fixture).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        mapped.wait_for_annotations();
+
+        // Find a gap region and query it
+        mapped.with_annotations(|idx| {
+            let onsets = &idx.record_onsets;
+            for w in onsets.windows(2) {
+                let gap_start = w[0] + mapped.header.record_duration_secs;
+                let gap_end = w[1];
+                if gap_end - gap_start > 0.5 {
+                    let mid = (gap_start + gap_end) / 2.0;
+                    let (s_start, s_end) =
+                        mapped.sample_range_for_time(&proxy, mid - 0.1, mid + 0.1);
+                    assert_eq!(s_start, 0, "range inside gap should return (0,0)");
+                    assert_eq!(s_end, 0);
+                    break;
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn sample_range_for_time_edfd_mid_record_range() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
+        let mapped = MappedFile::open(&fixture).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        mapped.wait_for_annotations();
+
+        // Start at 0.5s which is mid-record 0
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.5, 1.0);
+        assert!(s_start > 0, "should skip the first portion of record 0");
+        assert!(s_end > s_start);
+    }
+
+    #[test]
+    fn sample_range_for_time_mid_record() {
+        let (file, _, _) = build_test_file();
+        let mapped = MappedFile::open(file.path()).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        // start at 0.5s (midway through record 0), end at 1.5s (midway through record 1)
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.5, 1.5);
+        assert_eq!(s_start, 2); // sample index 2 is at time 0.5s
+        assert_eq!(s_end, 6); // exclusive: samples 2,3,4,5
+    }
+
+    #[test]
+    fn sample_range_for_time_edfd_underflow_all_onsets_after_end() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
+        let mapped = MappedFile::open(&fixture).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        mapped.wait_for_annotations();
+
+        // Query a time range entirely before the first record onset
+        mapped.with_annotations(|idx| {
+            let first_onset = idx.record_onsets.first().copied().unwrap_or(0.0);
+            let before_first = first_onset - 10.0;
+            let (s_start, s_end) =
+                mapped.sample_range_for_time(&proxy, before_first, first_onset - 0.001);
+            assert_eq!(s_start, 0);
+            assert_eq!(s_end, 0);
+        });
+    }
+
+    #[test]
+    fn sample_range_for_time_edfd_mid_record() {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/edfPlusD.edf");
+        let mapped = MappedFile::open(&fixture).unwrap();
+        let proxy = SignalProxy::new(Arc::clone(&mapped), 0).unwrap();
+        mapped.wait_for_annotations();
+
+        // Start at 0.5s which is mid-record 0
+        let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.5, 1.0);
+        assert!(s_start > 0, "should skip the first portion of record 0");
+        assert!(s_end > s_start);
     }
 }

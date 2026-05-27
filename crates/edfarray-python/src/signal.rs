@@ -74,13 +74,13 @@ impl PySignal {
 
     /// Digital minimum value.
     #[getter]
-    fn digital_min(&self) -> i16 {
+    fn digital_min(&self) -> i32 {
         self.proxy.header().digital_min
     }
 
     /// Digital maximum value.
     #[getter]
-    fn digital_max(&self) -> i16 {
+    fn digital_max(&self) -> i32 {
         self.proxy.header().digital_max
     }
 
@@ -159,10 +159,10 @@ impl PySignal {
         Ok(array)
     }
 
-    /// Return the entire signal as a raw int16 numpy array.
-    fn to_digital<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i16>>> {
+    /// Return the entire signal as a raw int32 numpy array.
+    fn to_digital<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i32>>> {
         let len = self.proxy.len();
-        let array = PyArray1::<i16>::zeros(py, len, false);
+        let array = PyArray1::<i32>::zeros(py, len, false);
         if len > 0 {
             unsafe {
                 let slice = array.as_slice_mut()?;
@@ -184,6 +184,38 @@ impl PySignal {
             }
         }
         Ok(array)
+    }
+
+    /// Return physical data for samples whose time falls within `[start_sec, end_sec)`.
+    ///
+    /// For EDF+D files, this accounts for gaps between records using the
+    /// record onset times from the annotation index (blocks until scan completes).
+    /// For EDF and EDF+C, this is equivalent to indexing by flat sample number,
+    /// i.e. `int(time * sample_rate)`.
+    fn read_at<'py>(
+        &self,
+        py: Python<'py>,
+        start_sec: f64,
+        end_sec: f64,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let buf = self.proxy.read_at(start_sec, end_sec).map_err(to_py_err)?;
+        let len = buf.len();
+        let array = PyArray1::<f64>::zeros(py, len, false);
+        if len > 0 {
+            unsafe {
+                array.as_slice_mut()?.copy_from_slice(&buf);
+            }
+        }
+        Ok(array)
+    }
+
+    /// Enable an LRU cache for decoded physical record data.
+    ///
+    /// `capacity` is the number of records to cache. A capacity of 0 disables
+    /// the cache. The cache is per-Signal-instance; cloning or re-fetching from
+    /// `EdfFile.signal()` starts fresh.
+    fn with_cache(&mut self, capacity: usize) {
+        self.proxy.with_cache_mut(capacity);
     }
 }
 

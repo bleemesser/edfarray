@@ -11,8 +11,8 @@ pub struct SignalHeader {
     pub physical_dimension: String,
     pub physical_min: f64,
     pub physical_max: f64,
-    pub digital_min: i16,
-    pub digital_max: i16,
+    pub digital_min: i32,
+    pub digital_max: i32,
     pub prefiltering: String,
     pub num_samples: usize,
     pub reserved: String,
@@ -23,10 +23,6 @@ pub struct SignalHeader {
 
 impl SignalHeader {
     /// Parse the header fields for signal at `index` from the per-signal header bytes.
-    ///
-    /// The EDF format stores per-signal fields in a transposed layout: all labels
-    /// come first (16 bytes × ns), then all transducer types (80 bytes × ns), etc.
-    /// The caller provides the full per-signal header block and the total signal count.
     pub fn parse(data: &[u8], index: usize, num_signals: usize) -> Result<Self> {
         let label = read_signal_field(data, index, num_signals, 0, 16)?;
         let transducer = read_signal_field(data, index, num_signals, 16, 80)?;
@@ -34,8 +30,8 @@ impl SignalHeader {
 
         let physical_min = parse_signal_f64(data, index, num_signals, 104, 8, "physical_min")?;
         let physical_max = parse_signal_f64(data, index, num_signals, 112, 8, "physical_max")?;
-        let digital_min = parse_signal_i16(data, index, num_signals, 120, 8, "digital_min")?;
-        let digital_max = parse_signal_i16(data, index, num_signals, 128, 8, "digital_max")?;
+        let digital_min = parse_signal_i32(data, index, num_signals, 120, 8, "digital_min")?;
+        let digital_max = parse_signal_i32(data, index, num_signals, 128, 8, "digital_max")?;
 
         let prefiltering = read_signal_field(data, index, num_signals, 136, 80)?;
         let num_samples = parse_signal_usize(data, index, num_signals, 216, 8, "num_samples")?;
@@ -49,7 +45,8 @@ impl SignalHeader {
             });
         }
 
-        if (physical_min - physical_max).abs() < f64::EPSILON {
+        let phys_scale = physical_min.abs().max(physical_max.abs());
+        if (physical_min - physical_max).abs() <= phys_scale * f64::EPSILON {
             return Err(EdfError::InvalidPhysicalRange {
                 index,
                 min: physical_min,
@@ -79,7 +76,7 @@ impl SignalHeader {
     }
 
     /// Convert a raw digital sample value to its physical value.
-    pub fn digital_to_physical(&self, digital: i16) -> f64 {
+    pub fn digital_to_physical(&self, digital: i32) -> f64 {
         self.gain * digital as f64 + self.offset
     }
 
@@ -94,9 +91,6 @@ impl SignalHeader {
 }
 
 /// Read a trimmed ASCII string field from the transposed per-signal header layout.
-///
-/// In EDF, per-signal fields are stored contiguously for all signals:
-/// field_start + field_size * signal_index gives the offset for a specific signal.
 fn read_signal_field(
     data: &[u8],
     index: usize,
@@ -132,19 +126,19 @@ fn parse_signal_f64(
     })
 }
 
-fn parse_signal_i16(
+fn parse_signal_i32(
     data: &[u8],
     index: usize,
     num_signals: usize,
     field_offset: usize,
     field_size: usize,
     field_name: &'static str,
-) -> Result<i16> {
+) -> Result<i32> {
     let s = read_signal_field(data, index, num_signals, field_offset, field_size)?;
-    s.parse::<i16>().map_err(|_| EdfError::InvalidSignalField {
+    s.parse::<i32>().map_err(|_| EdfError::InvalidSignalField {
         index,
         field: field_name,
-        reason: format!("not a valid i16: {:?}", s),
+        reason: format!("not a valid i32: {:?}", s),
     })
 }
 

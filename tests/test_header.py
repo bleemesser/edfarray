@@ -1,4 +1,4 @@
-"""Validate header parsing against pyedflib reference values."""
+"""Test header parsing against pyedflib reference values."""
 
 import pytest
 
@@ -13,8 +13,6 @@ def fixture(request):
 class TestBasicProperties:
     def test_num_signals(self, fixture):
         edf, ref = fixture
-        # pyedflib hides annotation signals from its count. Our num_signals
-        # is the raw header count including annotation signals.
         num_annotation_signals = sum(
             1 for i in range(edf.num_signals)
             if edf.signal(i).label == "EDF Annotations"

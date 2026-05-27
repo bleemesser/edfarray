@@ -1,21 +1,21 @@
 import numpy as np
 import pytest
 
-from edfarray._core import EdfFile
+from edfarray import EdfFile, Proxy2D
 from conftest import FIXTURES
 
 
-def open_edf(name):
+def open_edf(name: str) -> EdfFile:
     return EdfFile(str(FIXTURES / f"{name}.edf"))
 
 
-def get_same_rate_proxy(f):
-    """Get an array proxy using the largest group of same-rate signals."""
-    by_rate = f.signal_indices_by_rate()
-    if not by_rate:
+def get_same_rate_proxy(f: EdfFile) -> tuple[Proxy2D, list[int]]:
+    """Return a 2D proxy for the largest same-rate signal group."""
+    groups = f.signal_groups()
+    if not groups:
         pytest.skip("no ordinary signals")
-    largest_group = max(by_rate.values(), key=len)
-    return f.array_proxy(largest_group), largest_group
+    largest = max(groups, key=len)
+    return f.proxy_2d(largest), largest.indices
 
 
 class TestArrayProxy:
@@ -81,12 +81,13 @@ class TestArrayProxy:
     def test_repr(self):
         f = open_edf("test_generator")
         proxy, _ = get_same_rate_proxy(f)
-        assert "ArrayProxy" in repr(proxy)
+        assert "Proxy2D" in repr(proxy)
 
     def test_specific_signal_indices(self):
         f = open_edf("test_generator")
         indices = f.ordinary_signal_indices()
-        proxy = f.array_proxy([indices[0]])
+        group = f.signal_group([indices[0]])
+        proxy = f.proxy_2d(group)
         assert proxy.shape[0] == 1
 
     def test_edf_plus_c(self):
@@ -98,7 +99,6 @@ class TestArrayProxy:
         np.testing.assert_allclose(arr, sig[0:n], atol=1e-10)
 
     def test_column_vector(self):
-        """proxy[slice, int] returns 1D array of one sample per signal."""
         f = open_edf("test_generator")
         proxy, indices = get_same_rate_proxy(f)
         arr = proxy[:, 0]
@@ -108,29 +108,29 @@ class TestArrayProxy:
             assert abs(arr[i] - sig[0]) < 1e-10
 
     def test_single_signal_single_sample(self):
-        """proxy[int, int] returns a scalar float."""
         f = open_edf("test_generator")
         proxy, indices = get_same_rate_proxy(f)
         val = proxy[0, 0]
         assert isinstance(val, float)
 
     def test_2d_result_is_ndarray(self):
-        """proxy[:, slice] returns a 2D numpy array."""
         f = open_edf("test_generator")
         proxy, indices = get_same_rate_proxy(f)
         arr = proxy[:, 0:10]
         assert arr.ndim == 2
         assert arr.shape == (len(indices), 10)
 
-    def test_empty_proxy(self):
+    def test_empty_group_rejected(self):
         f = open_edf("test_generator")
-        proxy = f.array_proxy([])
-        assert proxy.shape == (0, 0)
+        with pytest.raises(ValueError):
+            f.signal_group([])
 
-    def test_mixed_rates_error(self):
+    def test_open_group_accepted_with_pad(self):
         f = open_edf("test_generator")
-        with pytest.raises(ValueError, match="mixed sample rates"):
-            f.array_proxy()
+        group = f.signal_group(f.ordinary_signal_indices())
+        assert group.kind == "open"
+        proxy = f.proxy_2d(group, pad_mode="nan")
+        assert proxy.sample_rate is None
 
     def test_requires_two_indices(self):
         f = open_edf("test_generator")
@@ -138,11 +138,24 @@ class TestArrayProxy:
         with pytest.raises(IndexError, match="2 indices"):
             proxy[0]
 
-    def test_step_not_supported(self):
+    def test_signal_axis_step_not_supported(self):
         f = open_edf("test_generator")
         proxy, _ = get_same_rate_proxy(f)
         with pytest.raises(ValueError, match="step"):
-            proxy[0, 0:100:2]
+            proxy[0:4:2, 0:100]
+
+    def test_sample_axis_step(self):
+        f = open_edf("test_generator")
+        proxy, _ = get_same_rate_proxy(f)
+        full = proxy[:, 0:1000]
+        assert np.array_equal(proxy[:, 0:1000:4], full[:, ::4])
+        assert np.array_equal(proxy[0, 0:1000:4], full[0, ::4])
+
+    def test_sample_axis_negative_step(self):
+        f = open_edf("test_generator")
+        proxy, _ = get_same_rate_proxy(f)
+        ref = proxy[:, 0:1001]
+        assert np.array_equal(proxy[:, 1000:0:-1], ref[:, 1000:0:-1])
 
     def test_negative_sample_index(self):
         f = open_edf("test_generator")
@@ -153,25 +166,41 @@ class TestArrayProxy:
         assert abs(val_neg - val_pos) < 1e-10
 
 
-class TestSignalIndicesByRate:
-    def test_returns_dict(self):
+class TestSignalGroups:
+    def test_returns_list(self):
         f = open_edf("test_generator")
-        result = f.signal_indices_by_rate()
-        assert isinstance(result, dict)
+        groups = f.signal_groups()
+        assert isinstance(groups, list)
         all_indices = []
-        for indices in result.values():
-            all_indices.extend(indices)
+        for g in groups:
+            all_indices.extend(g.indices)
         assert sorted(all_indices) == sorted(f.ordinary_signal_indices())
 
-    def test_groups_correctly(self):
+    def test_groups_share_sample_rate(self):
         f = open_edf("test_generator")
-        result = f.signal_indices_by_rate()
-        for rate, indices in result.items():
-            rates = set()
-            for idx in indices:
-                sig = f.signal(idx)
-                rates.add(sig.sample_rate)
+        for g in f.signal_groups():
+            rates = {f.signal(i).sample_rate for i in g.indices}
             assert len(rates) == 1
+            assert next(iter(rates)) == g.sample_rate
+
+    def test_covers_all_ordinary_flag(self):
+        f = open_edf("test_generator")
+        groups = f.signal_groups()
+        expected = len(groups) == 1
+        for g in groups:
+            assert g.covers_all_ordinary == expected
+
+    def test_kind_is_rectangular_in_file(self):
+        f = open_edf("test_generator")
+        for g in f.signal_groups():
+            assert g.kind == "rectangular"
+            assert g.min_samples == g.max_samples
+            assert g.is_rectangular
+
+    def test_singleton_flag(self):
+        f = open_edf("test_generator")
+        for g in f.signal_groups():
+            assert g.is_singleton == (len(g) == 1)
 
 
 class TestScanProgress:

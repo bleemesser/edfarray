@@ -17,5 +17,9 @@ site/
 edfarray/*
 !edfarray/__init__.py
 !edfarray/_core/
+!edfarray/aio/
 edfarray/_core/*
+edfarray/aio/*
 !edfarray/_core/__init__.pyi
+!edfarray/aio/__init__.pyi
+!edfarray/aio/__init__.py

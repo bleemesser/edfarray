@@ -33,9 +33,15 @@ with edfarray.EdfFile("recording.edf") as f:
     # Bulk access -- all channels for a time window, parallelized with rayon
     pages = f.read_page(0.0, 10.0)
 
-    # 2D array proxy for multi-channel numpy access
-    proxy = f.array_proxy()           # all signals (must share sample rate)
-    data = proxy[:, 0:10000]          # 2D numpy array: (n_signals x 10000)
+    # 2D / 3D proxies for multi-channel numpy access. Build from a SignalGroup,
+    # which is discovered via signal_groups() (partitions by sample rate).
+    group = max(f.signal_groups(), key=len)   # the largest same-rate group
+    p2 = f.proxy_2d(group)                    # shape: (n_signals, n_samples)
+    data = p2[:, 0:10000]                     # 2D numpy array
+
+    # For uniform-rate groups, a 3D record view is natural for ML batching.
+    p3 = f.proxy_3d(group)                    # shape: (n_records, n_chan, spr)
+    epoch = p3[0:30, :, :]                    # first 30 records, all channels
 
     # Annotations (EDF+ only)
     for ann in f.annotations:

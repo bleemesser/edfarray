@@ -7,9 +7,15 @@ import numpy.typing
 import typing
 __all__ = [
     "Annotation",
-    "ArrayProxy",
     "EdfFile",
+    "EdfWriter",
+    "Proxy2D",
+    "Proxy3D",
     "Signal",
+    "SignalGroup",
+    "WriterSignal",
+    "inspect",
+    "write_edf",
 ]
 
 @typing.final
@@ -23,45 +29,19 @@ class Annotation:
     def duration(self) -> typing.Optional[builtins.float]: ...
     @property
     def text(self) -> builtins.str: ...
+    def __new__(cls, onset: builtins.float, text: builtins.str, duration: typing.Optional[builtins.float] = None) -> Annotation: ...
     def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class ArrayProxy:
-    r"""
-    2D array proxy for numpy-style multi-channel signal access.
-    
-    Supports indexing with `proxy[signal, sample]` where each axis accepts
-    int, slice, or list (signal axis only). All signals must share the same
-    sample rate.
-    """
-    @property
-    def shape(self) -> tuple[builtins.int, builtins.int]:
-        r"""
-        Shape of the proxy: (num_signals, total_samples).
-        """
-    @property
-    def sample_rate(self) -> builtins.float:
-        r"""
-        Common sample rate (Hz) of all signals in this proxy.
-        """
-    def __repr__(self) -> builtins.str: ...
-    def __getitem__(self, key: typing.Any) -> typing.Any:
-        r"""
-        Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
-        
-        | signal_spec | sample_spec | Return type |
-        |---|---|---|
-        | int | int | float |
-        | int | slice | 1D ndarray |
-        | slice/list | int | 1D ndarray |
-        | slice/list | slice | 2D ndarray |
-        """
 
 @typing.final
 class EdfFile:
     r"""
     An open EDF/EDF+ file.
     """
+    @property
+    def closed(self) -> builtins.bool:
+        r"""
+        Whether `close()` has been called.
+        """
     @property
     def num_signals(self) -> builtins.int:
         r"""
@@ -100,8 +80,7 @@ class EdfFile:
     @property
     def start_datetime(self) -> typing.Any:
         r"""
-        Returns `datetime.datetime` if the header date/time could be parsed,
-        or a string like `"04.04.yy 12.57.02"` if it was anonymized.
+        Recording start time as `datetime.datetime`, or raw string if anonymized.
         """
     @property
     def patient_name(self) -> typing.Optional[builtins.str]:
@@ -173,10 +152,62 @@ class EdfFile:
         r"""
         Progress of the background annotation scan: (records_scanned, total_records).
         """
-    def __new__(cls, path: builtins.str) -> EdfFile: ...
+    def __new__(cls, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> EdfFile:
+        r"""
+        Open an EDF/EDF+/BDF file.
+        
+        `variant` forces the file variant instead of trusting the auto-detected
+        one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
+        controls the plain/"+C"/"+D" distinction; an override that changes the
+        EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+        """
     def __enter__(self) -> EdfFile: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
+    def close(self) -> None:
+        r"""
+        Release the underlying memory-mapped file. Idempotent.
+        """
     def __repr__(self) -> builtins.str: ...
+    def annotations_before(self, t: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset strictly before `t`.
+        Uses binary search for efficiency.
+        """
+    def annotations_after(self, t: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset >= `t`.
+        Uses binary search for efficiency.
+        """
+    def annotations_in_range(self, start: builtins.float, end: builtins.float) -> builtins.list[Annotation]:
+        r"""
+        Annotations with onset in [start, end).
+        Uses binary search for efficiency.
+        """
+    def filter_annotations(self, query: builtins.str, regex: builtins.bool = ...) -> builtins.list[Annotation]:
+        r"""
+        Filter annotations by text content.
+        
+        If `regex` is False, returns annotations whose text contains the query
+        as a case-insensitive substring.
+        
+        If `regex` is True, returns annotations whose text matches the query
+        as a case-insensitive regex pattern.
+        
+        Raises `ValueError` if the regex pattern is invalid.
+        """
+    def annotations_by_text(self, text: builtins.str) -> builtins.list[Annotation]:
+        r"""
+        Annotations whose text exactly matches `text` (case-sensitive).
+        """
+    def find_all_signals(self, label: builtins.str, exact: builtins.bool = ...) -> builtins.list[Signal]:
+        r"""
+        Return all signals whose label matches `label`.
+        
+        If `exact` is `False` (default), performs a case-insensitive substring match.
+        If `exact` is `True`, performs a case-sensitive exact equality match.
+        
+        Searches all signals including annotation signals.
+        """
     def signal(self, idx_or_label: typing.Any) -> Signal:
         r"""
         Get a signal by index or label.
@@ -189,7 +220,7 @@ class EdfFile:
         r"""
         Indices of all non-annotation (ordinary) signals.
         """
-    def read_page(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> builtins.list[numpy.typing.NDArray[numpy.float64]]:
+    def read_page(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.float64]]:
         r"""
         Read a page of physical data for multiple signals over a time range.
         
@@ -197,25 +228,188 @@ class EdfFile:
         sample rates will produce arrays of different lengths.
         
         If `signal_indices` is None, reads all ordinary (non-annotation) signals.
-        """
-    def array_proxy(self, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> ArrayProxy:
-        r"""
-        Create a 2D array proxy for numpy-style indexing.
         
-        All selected signals must have the same sample rate.
-        If `signal_indices` is None, uses all ordinary (non-annotation) signals.
+        When `use_time` is false (default), time parameters are converted to flat
+        sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+        the time range using actual record onset times.
         """
-    def signal_indices_by_rate(self) -> dict:
+    def proxy_2d(self, group: SignalGroup, pad_mode: typing.Optional[typing.Any] = None) -> Proxy2D:
         r"""
-        Group ordinary signal indices by sample rate.
+        Build a 2D proxy from a `SignalGroup`.
         
-        Returns a dict mapping sample rate (as int Hz) to a list of signal indices.
+        `pad_mode` controls reads past a channel's valid length when the group
+        is `"open"` (mixed sample rates). Accepts the string `"raise"` (default),
+        `"nan"`, `"zero"`, `"edge"`, or a numeric scalar (interpreted as
+        `Value(x)`). `None` is treated as `"raise"`.
         """
-    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None) -> builtins.list[numpy.typing.NDArray[numpy.int16]]:
+    def proxy_3d(self, group: SignalGroup) -> Proxy3D:
         r"""
-        Read a page of digital (raw int16) data for multiple signals over a time range.
+        Build a 3D proxy from a rectangular `SignalGroup`.
+        
+        Requires `group.kind == "rectangular"` (all channels share a sample
+        rate). Use `signal_groups()` to discover eligible groups, or
+        `signal_group(...)` to construct one from specific indices.
+        """
+    def signal_group(self, indices: typing.Sequence[builtins.int]) -> SignalGroup:
+        r"""
+        Classify an arbitrary list of file-level signal indices into a
+        `SignalGroup`. Use this when you want a group that's a subset of (or
+        crosses) the file's natural rate-based groupings.
+        """
+    def signal_groups(self) -> builtins.list[SignalGroup]:
+        r"""
+        Partition all ordinary signals into groups by sample rate.
+        
+        Returns a list of `SignalGroup` objects, each carrying its sample rate,
+        structural kind, sample-count range, and whether it covers every
+        ordinary signal in the file. Sub-Hz precision is preserved.
+        """
+    def write_to(self, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> None:
+        r"""
+        Write this file to `path`, optionally transcoding to a different variant.
+        
+        Annotations and ordinary signals are copied; the destination's annotation
+        channel is rebuilt from parsed annotations rather than copied verbatim.
+        `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
+        if omitted, uses the source variant.
+        
+        Transcoding caveats:
+        - Records are streamed contiguously, so transcoding from EDF+D to any
+          non-EDF+D variant discards the discontinuity: the original per-record
+          onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
+        - Because the annotation channel is rebuilt from parsed annotations,
+          transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
+          since plain variants have no annotation channel.
+        - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
+          digital range and re-encodes from physical values, losing precision.
+        """
+    def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int32]]:
+        r"""
+        Read a page of digital (raw int32) data for multiple signals over a time range.
         
         If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+        
+        When `use_time` is false (default), time parameters are converted to flat
+        sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
+        the time range using actual record onset times.
+        """
+
+@typing.final
+class EdfWriter:
+    r"""
+    Streaming EDF/BDF writer.
+    
+    Use as a context manager (`with edfarray.EdfWriter(...) as w:`) or call
+    `.finish()` explicitly. `__exit__` calls `finish()` automatically.
+    """
+    def __new__(cls, path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None) -> EdfWriter: ...
+    def __enter__(self) -> EdfWriter: ...
+    def __exit__(self, *_args: typing.Any) -> None: ...
+    def add_annotation(self, annotation: Annotation) -> None:
+        r"""
+        Queue an annotation to be embedded in the next written record.
+        """
+    def write_record(self, physical: typing.Sequence[numpy.typing.NDArray[numpy.float64]], annotations: typing.Optional[typing.Sequence[Annotation]] = None) -> None:
+        r"""
+        Write one data record from physical (float) values.
+        
+        `physical` is a list of 1D float64 numpy arrays (one per user signal),
+        each of length `samples_per_record`. `annotations` is an optional list
+        of annotations to embed in this record's annotation channel (only valid
+        for `+C`/`+D` variants).
+        """
+    def finish(self) -> None:
+        r"""
+        Finalize the file: flush buffers and patch `num_records` in the header.
+        After calling, the writer is no longer usable.
+        """
+    def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class Proxy2D:
+    r"""
+    2D array proxy for numpy-style multi-channel signal access.
+    
+    Supports indexing with `proxy[signal, sample]` where each axis accepts
+    int, slice, or list (signal axis only). All signals must share the same
+    sample rate.
+    """
+    @property
+    def shape(self) -> tuple[builtins.int, builtins.int]:
+        r"""
+        Shape of the proxy: (num_signals, total_samples).
+        """
+    @property
+    def sample_rate(self) -> typing.Optional[builtins.float]:
+        r"""
+        Common sample rate (Hz), or `None` if the underlying group has mixed rates.
+        """
+    @property
+    def valid_lengths(self) -> builtins.list[builtins.int]:
+        r"""
+        Per-channel valid sample counts, in proxy-coordinate order.
+        """
+    @property
+    def pad_mode(self) -> builtins.str:
+        r"""
+        Pad-mode policy as a string: "raise", "nan", "zero", "value", or "edge".
+        """
+    def __repr__(self) -> builtins.str: ...
+    def __getitem__(self, key: typing.Any) -> typing.Any:
+        r"""
+        Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
+        
+        | signal_spec | sample_spec | Return type |
+        |---|---|---|
+        | int | int | float |
+        | int | slice | 1D ndarray |
+        | slice/list | int | 1D ndarray |
+        | slice/list | slice | 2D ndarray |
+        """
+
+@typing.final
+class Proxy3D:
+    r"""
+    3D view over a `Rectangular` signal group, shape
+    `(num_records, num_channels, samples_per_record)`.
+    
+    Indexing semantics match NumPy 3D: `proxy[rec, ch, samp]` returns a scalar
+    when all three are ints, a 2D ndarray when two are slices, etc. Step != 1
+    is not supported.
+    """
+    @property
+    def shape(self) -> tuple[builtins.int, builtins.int, builtins.int]:
+        r"""
+        Shape of the proxy: `(num_records, num_channels, samples_per_record)`.
+        """
+    @property
+    def sample_rate(self) -> builtins.float:
+        r"""
+        Common sample rate (Hz) of the group's channels.
+        """
+    @property
+    def supports_strided_view(self) -> builtins.bool:
+        r"""
+        `True` if the file/group support a zero-copy stride view via
+        [`as_strided`].
+        """
+    def __repr__(self) -> builtins.str: ...
+    def __getitem__(self, key: typing.Any) -> typing.Any:
+        r"""
+        NumPy-style 3D indexing: `proxy[rec, channel, sample]`.
+        
+        Each axis accepts an int or a slice with step 1. Returns a scalar
+        (all three ints), a 1D array (one slice axis), a 2D array (two slice
+        axes), or a 3D array (all slices).
+        """
+    def stride_info(self) -> typing.Any:
+        r"""
+        Zero-copy stride-view metadata as a dict, or `None` when not eligible.
+        
+        Keys: `base_offset`, `record_stride_bytes`, `channel_stride_bytes`,
+        `sample_stride_bytes`, `shape`. Eligibility requires 2-byte samples,
+        a contiguous channel-index range, and no annotation channel inside
+        that span.
         """
 
 @typing.final
@@ -288,12 +482,119 @@ class Signal:
         r"""
         Return the entire signal as a float64 numpy array.
         """
-    def to_digital(self) -> numpy.typing.NDArray[numpy.int16]:
+    def to_digital(self) -> numpy.typing.NDArray[numpy.int32]:
         r"""
-        Return the entire signal as a raw int16 numpy array.
+        Return the entire signal as a raw int32 numpy array.
         """
     def times(self) -> numpy.typing.NDArray[numpy.float64]:
         r"""
         Return timestamps (in seconds) for each sample.
         """
+    def read_at(self, start_sec: builtins.float, end_sec: builtins.float) -> numpy.typing.NDArray[numpy.float64]:
+        r"""
+        Return physical data for samples whose time falls within `[start_sec, end_sec)`.
+        
+        For EDF+D files, this accounts for gaps between records using the
+        record onset times from the annotation index (blocks until scan completes).
+        For EDF and EDF+C, this is equivalent to indexing by flat sample number,
+        i.e. `int(time * sample_rate)`.
+        """
+    def with_cache(self, capacity: builtins.int) -> None:
+        r"""
+        Enable an LRU cache for decoded physical record data.
+        
+        `capacity` is the number of records to cache. A capacity of 0 disables
+        the cache. The cache is per-Signal-instance; cloning or re-fetching from
+        `EdfFile.signal()` starts fresh.
+        """
+
+@typing.final
+class SignalGroup:
+    r"""
+    A set of signal indices grouped for proxy construction, plus the metadata
+    needed to decide whether a 2D or 3D proxy is supported.
+    
+    Created by `EdfFile.signal_groups()`. Within a single EDF file, every group
+    returned by that method is "rectangular" — all channels share a sample rate
+    and total sample count.
+    """
+    @property
+    def indices(self) -> builtins.list[builtins.int]:
+        r"""
+        File-level signal indices in this group.
+        """
+    @property
+    def kind(self) -> builtins.str:
+        r"""
+        Structural kind: `"rectangular"` (all channels share a sample rate)
+        or `"open"` (mixed sample rates; 2D-only).
+        """
+    @property
+    def sample_rate(self) -> typing.Optional[builtins.float]:
+        r"""
+        Common sample rate in Hz, or `None` if the group is `"open"`.
+        """
+    @property
+    def samples_per_record(self) -> typing.Optional[builtins.int]:
+        r"""
+        Common samples-per-record, or `None` if the group is `"open"`.
+        """
+    @property
+    def min_samples(self) -> builtins.int:
+        r"""
+        Minimum total samples across the group's channels.
+        """
+    @property
+    def max_samples(self) -> builtins.int:
+        r"""
+        Maximum total samples across the group's channels.
+        Equal to `min_samples` iff the group is `"rectangular"`.
+        """
+    @property
+    def covers_all_ordinary(self) -> builtins.bool:
+        r"""
+        `True` iff this group spans every ordinary signal in the file.
+        """
+    @property
+    def is_singleton(self) -> builtins.bool:
+        r"""
+        `True` iff the group contains exactly one channel.
+        """
+    @property
+    def is_rectangular(self) -> builtins.bool:
+        r"""
+        `True` iff a 3D proxy can be built from this group.
+        """
+    def __len__(self) -> builtins.int: ...
+    def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class WriterSignal:
+    r"""
+    Per-signal description used by [`EdfWriter`] and [`write_edf`].
+    
+    `physical_min`/`physical_max` define the unit range. `digital_min`/`digital_max`
+    define the integer range used in the binary file (16-bit for EDF, 24-bit for BDF).
+    """
+    def __new__(cls, label: builtins.str, physical_dimension: builtins.str, physical_min: builtins.float, physical_max: builtins.float, digital_min: builtins.int, digital_max: builtins.int, samples_per_record: builtins.int, transducer: builtins.str = ..., prefiltering: builtins.str = ..., reserved: builtins.str = ...) -> WriterSignal: ...
+    def __repr__(self) -> builtins.str: ...
+
+def inspect(path: builtins.str) -> dict:
+    r"""
+    Lightweight metadata extracted from an EDF/EDF+ file header without
+    scanning data records or building an annotation index.
+    
+    Returns a dict with keys:
+    `variant`, `num_signals`, `num_records`, `record_duration`, `duration`,
+    `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
+    """
+
+def write_edf(path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], data: typing.Sequence[numpy.typing.NDArray[numpy.float64]], annotations: typing.Optional[typing.Sequence[Annotation]] = None, start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None) -> None:
+    r"""
+    Write a complete EDF/BDF file in one call.
+    
+    `data` is a list of 1D float64 numpy arrays, one per user signal. Each
+    array's length must be `num_records * samples_per_record` and consistent
+    across signals.
+    """
 

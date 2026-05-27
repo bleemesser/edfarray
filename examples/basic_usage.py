@@ -9,7 +9,6 @@ FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 
 def main():
-    # Open a plain EDF file using the context manager
     with edfarray.EdfFile(str(FIXTURES / "test_generator.edf")) as f:
         print(f"=== {f.variant} file ===")
         print(f"Signals: {f.num_signals}")
@@ -19,17 +18,14 @@ def main():
         print(f"Start: {f.start_datetime}")
         print()
 
-        # Patient metadata (parsed from header subfields)
         print(f"Patient name: {f.patient_name}")
         print(f"Patient sex: {f.patient_sex}")
         print(f"Patient birthdate: {f.patient_birthdate}")
         print()
 
-        # Signal labels
         print(f"Labels: {f.signal_labels()}")
         print()
 
-        # Signal metadata
         for i in range(min(f.num_signals, 5)):
             sig = f.signal(i)
             print(
@@ -41,35 +37,28 @@ def main():
             )
         print()
 
-        # Access by label
         sig = f.signal("F4")
         print(f"F4: {len(sig)} samples at {sig.sample_rate} Hz")
 
-        # Single sample
         print(f"  First sample: {sig[0]:.4f} {sig.physical_dimension}")
 
-        # Slice
         chunk = sig[0:5]
         print(f"  First 5 samples: {chunk}")
 
-        # Strided access (every 10th sample = 10x downsample)
         downsampled = sig[::10]
         print(f"  Downsampled 10x: {len(downsampled)} samples")
 
-        # Full signal as numpy array
         all_data = sig.to_numpy()
         print(f"  Full signal: shape={all_data.shape}, dtype={all_data.dtype}")
 
-        # Raw digital values
         digital = sig.to_digital()
         print(f"  Digital: shape={digital.shape}, dtype={digital.dtype}, "
               f"range=[{digital.min()}, {digital.max()}]")
 
-        # Timestamps
         times = sig.times()
         print(f"  Time range: {times[0]:.3f}s to {times[-1]:.3f}s")
 
-    # EDF+ files with annotations
+    # EDF+ with annotations
     print()
     with edfarray.EdfFile(str(FIXTURES / "test_generator_2.edf")) as f:
         print(f"=== {f.variant} file with annotations ===")
@@ -78,7 +67,7 @@ def main():
             dur = f" (duration={ann.duration}s)" if ann.duration else ""
             print(f"  {ann.onset:>8.3f}s: {ann.text}{dur}")
 
-    # EDF+D (discontinuous) files
+    # EDF+D discontinuous: detect record gaps via timestamps
     print()
     with edfarray.EdfFile(str(FIXTURES / "edfPlusD.edf")) as f:
         print(f"=== {f.variant} (discontinuous) ===")
@@ -98,7 +87,7 @@ def main():
         for t_before, t_after, gap in gaps[:5]:
             print(f"  Gap at {t_before:.3f}s -> {t_after:.3f}s ({gap:.3f}s)")
 
-    # Multi-channel EEG (64 channels)
+    # Multi-channel EEG: signal groups, Proxy2D, Proxy3D
     print()
     with edfarray.EdfFile(str(FIXTURES / "S001R01.edf")) as f:
         print(f"=== Multi-channel EEG ({f.variant}) ===")
@@ -106,10 +95,54 @@ def main():
         print(f"Ordinary signals: {len(ordinary)}")
         print(f"Total signals: {f.num_signals}")
 
-        # Bulk read all channels for 1 second
         pages = f.read_page(0.0, 1.0)
         print(f"read_page(0, 1): {len(pages)} arrays, "
               f"first has {len(pages[0])} samples")
+        print()
+
+        groups = f.signal_groups()
+        print(f"Signal groups: {len(groups)}")
+        for g in groups:
+            print(f"  {g.kind:12s} n={len(g):>3d}  rate={g.sample_rate}Hz  "
+                  f"covers_all={g.covers_all_ordinary}")
+        print()
+
+        group = max(groups, key=len)
+        p2 = f.proxy_2d(group)
+        rate = p2.sample_rate
+        assert rate is not None  # rectangular group => has a sample rate
+        print(f"Proxy2D: shape={p2.shape}, rate={rate}Hz")
+        first_second = p2[:, : int(rate)]
+        print(f"  p2[:, :rate] -> {first_second.shape}, dtype={first_second.dtype}")
+        print(f"  p2[0, 0]     -> {p2[0, 0]:.3f}")
+        print(f"  p2[[0,1,2], 0:5] -> shape {p2[[0, 1, 2], 0:5].shape}")
+        print()
+
+        p3 = f.proxy_3d(group)
+        print(f"Proxy3D: shape={p3.shape}  "
+              f"(num_records, num_channels, samples_per_record)")
+        epoch = p3[0:5, :, :]  # first 5 records, all channels
+        print(f"  p3[0:5, :, :] -> {epoch.shape}, dtype={epoch.dtype}")
+        print(f"  p3[0, 10, 0]  -> {p3[0, 10, 0]:.3f}")
+
+    # Mixed sample rates: Open group requires a PadMode
+    print()
+    with edfarray.EdfFile(str(FIXTURES / "test_generator.edf")) as f:
+        groups = f.signal_groups()
+        print(f"Signal groups: {len(groups)}")
+        for g in groups:
+            print(f"  {g.kind:12s} n={len(g):>3d}  rate={g.sample_rate}Hz  "
+                  f"covers_all={g.covers_all_ordinary}")
+        all_ch = f.signal_group(f.ordinary_signal_indices())
+        print(f"=== Mixed-rate file: {all_ch.kind} group ===")
+        if all_ch.kind == "open":
+            p2 = f.proxy_2d(all_ch, pad_mode="nan")
+            print(f"Proxy2D(pad_mode='nan'): shape={p2.shape}, "
+                  f"rate={p2.sample_rate}")
+            print(f"  valid_lengths: {p2.valid_lengths}")
+            tail = p2[:, p2.shape[1] - 4 : p2.shape[1]]
+            import numpy as np
+            print(f"  NaNs in tail: {int(np.isnan(tail).sum())} / {tail.size}")
 
 
 if __name__ == "__main__":

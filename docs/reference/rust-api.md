@@ -1,6 +1,6 @@
 # Rust Crate
 
-The `edfarray-core` crate provides the pure Rust implementation. The Python bindings are a thin layer on top of this crate. You can use it directly in Rust applications.
+`edfarray-core` is the pure Rust implementation. The Python bindings are a thin layer on top of it, and the crate can also be used directly from Rust.
 
 ## Dependency
 
@@ -15,7 +15,9 @@ edfarray-core = { git = "https://github.com/bleemesser/edfarray.git" }
 - `header` -- `EdfHeader`, `EdfVariant`, `PatientInfo`, `RecordingInfo`, `MaybeDateTime`, `MaybeDate`, `Sex`.
 - `signal` -- `SignalHeader`, per-signal metadata and gain/offset conversion.
 - `proxy` -- `SignalProxy`, array-like view for reading samples from a single signal.
-- `array_proxy` -- `ArrayProxy`, 2D view over multiple same-rate signals.
+- `group` -- `SignalGroup`, `GroupKind`, `PadMode`. Channel grouping by sample rate.
+- `proxy_2d` -- `Proxy2D`, 2D view over a `SignalGroup` with `PadMode`-controlled OOB handling.
+- `proxy_3d` -- `Proxy3D`, `StrideInfo`. 3D view `(n_records, n_channels, spr)` for rectangular groups.
 - `annotation` -- `Annotation`, `AnnotationIndex`, TAL parsing.
 - `record` -- `RecordLayout`, data record byte layout and sample decoding.
 - `mmap` -- `MappedFile`, memory-mapped file with deferred annotation scan.
@@ -46,12 +48,18 @@ fn main() -> edfarray_core::error::Result<()> {
         println!("signal {}: {} samples", indices[i], page.len());
     }
 
-    // 2D array proxy for multi-channel access.
-    let by_rate = edf.signal_indices_by_rate();
-    for (rate, group) in &by_rate {
-        let proxy = edf.array_proxy(Some(group))?;
-        println!("{}Hz group: {} signals x {} samples",
-                 rate, proxy.shape().0, proxy.shape().1);
+    // 2D / 3D proxies for multi-channel access. Build from a SignalGroup.
+    use edfarray_core::group::PadMode;
+    for group in edf.signal_groups() {
+        let p2 = edf.proxy_2d(group.clone(), PadMode::Raise)?;
+        println!("{:?}Hz group: {} signals x {} samples",
+                 group.sample_rate, p2.shape().0, p2.shape().1);
+
+        // Rectangular groups can also be viewed as 3D records-by-channels.
+        if group.is_rectangular() {
+            let p3 = edf.proxy_3d(group)?;
+            println!("  3D shape: {:?}", p3.shape());
+        }
     }
 
     // Annotations (blocks until background scan completes).
@@ -86,11 +94,17 @@ See the `error` module for the full list of variants.
 
 ## Key types
 
-`EdfFile` -- Main entry point. Owns an `Arc<MappedFile>` and provides all public API methods.
+`EdfFile` -- Main entry point. Owns an `Arc<MappedFile>` and provides all public API methods. Opened with `EdfFile::open(path)`, or `EdfFile::open_with_variant(path, variant)` to force the variant for files that omit/misreport the `+C`/`+D` marker (the override controls only the plain/`+C`/`+D` distinction; changing the EDF-vs-BDF sample size is rejected).
 
 `SignalProxy` -- Lightweight view of one signal. Holds an `Arc` reference to the underlying `MappedFile`. Created by `EdfFile::signal()`. Translates global sample indices to record byte offsets and decodes on the fly.
 
-`ArrayProxy` -- 2D view over multiple signals with the same sample rate. Created by `EdfFile::array_proxy()`. Reads are parallelized with rayon. Key methods: `shape()`, `sample_rate()`, `get()`, `read_physical()`, `read_slice()`, `read_digital()`.
+`SignalGroup` -- A set of channels classified by sample rate. `GroupKind::Rectangular` (shared rate) or `GroupKind::Open` (mixed). Built by `EdfFile::signal_groups()` or `SignalGroup::from_indices(header, indices)`. Required input to all proxy constructors.
+
+`PadMode` -- Fill policy for reads past a channel's valid length on `Proxy2D`. Variants: `Raise` (default), `Nan`, `Zero`, `Value(f64)`, `Edge`. Interpreted in the read domain (physical f64 / digital i32). `Nan` is physical-only.
+
+`Proxy2D` -- 2D view over a `SignalGroup`. Created by `EdfFile::proxy_2d(group, pad_mode)`. Accepts any `GroupKind`. Reads are parallelized with rayon. Key methods: `shape()`, `sample_rate() -> Option<f64>`, `valid_lengths()`, `get()`, `read_physical()`, `read_slice()`, `read_digital()`.
+
+`Proxy3D` -- 3D view `(num_records, num_channels, samples_per_record)`. Created by `EdfFile::proxy_3d(group)`. Requires `GroupKind::Rectangular`. Key methods: `shape()`, `sample_rate()`, `get()`, `read_physical_block()`, `read_digital_block()`, `stride_info() -> Option<StrideInfo>` for zero-copy view metadata.
 
 `EdfHeader` -- The complete parsed header, including signal headers, patient info, and recording info. Accessible via `EdfFile::header()`.
 

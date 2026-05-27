@@ -40,7 +40,7 @@ pub enum EdfError {
     },
 
     #[error("signal {index} has digital_min ({min}) >= digital_max ({max})")]
-    InvalidDigitalRange { index: usize, min: i16, max: i16 },
+    InvalidDigitalRange { index: usize, min: i32, max: i32 },
 
     #[error("signal {index} has physical_min ({min}) == physical_max ({max})")]
     InvalidPhysicalRange { index: usize, min: f64, max: f64 },
@@ -59,6 +59,9 @@ pub enum EdfError {
 
     #[error("mixed sample rates: {reason}")]
     MixedSampleRates { reason: String },
+
+    #[error("{name}: {reason}")]
+    InvalidArgument { name: &'static str, reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, EdfError>;

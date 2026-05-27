@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark the async annotation scan.
-
-Measures:
-- Time to open (header parse only, returns immediately)
-- Time to first signal read (should be instant, no annotation dependency)
-- Time to access annotations (blocks until scan completes)
-- annotations_ready status at each point
-"""
+"""Benchmark the background annotation scan in the sync API."""
 
 import time
 from pathlib import Path
@@ -34,7 +27,6 @@ def bench_file(name, sig_idx=0):
     print(f"File: {name} ({size_mb:.1f} MB)")
     print(f"{'─' * 70}")
 
-    # Phase 1: Open (header + layout only, scan starts in background)
     t0 = time.perf_counter()
     f = edfarray.EdfFile(str(path))
     t_open = time.perf_counter() - t0
@@ -45,7 +37,6 @@ def bench_file(name, sig_idx=0):
           f"annotations_ready={ready_after_open}  "
           f"scan_progress={progress_after_open[0]}/{progress_after_open[1]}")
 
-    # Phase 2: Read first page of signal data (no annotation dependency)
     t0 = time.perf_counter()
     sig = f.signal(sig_idx)
     n = min(1000, len(sig))
@@ -58,7 +49,6 @@ def bench_file(name, sig_idx=0):
           f"annotations_ready={ready_after_read}  "
           f"scan_progress={progress_after_read[0]}/{progress_after_read[1]}")
 
-    # Phase 3: Access annotations (blocks until scan completes)
     t0 = time.perf_counter()
     anns = f.annotations
     t_annotations = time.perf_counter() - t0
@@ -68,14 +58,12 @@ def bench_file(name, sig_idx=0):
           f"annotations_ready={ready_after_anns}  "
           f"n_annotations={len(anns)}")
 
-    # Phase 4: Second access (should be instant, scan already done)
     t0 = time.perf_counter()
     _ = f.annotations
     t_second = time.perf_counter() - t0
 
     print(f"  Second annotation read: {format_time(t_second):>12s}   (cached)")
 
-    # Phase 5: Warnings (also depends on scan)
     t0 = time.perf_counter()
     w = f.warnings
     t_warnings = time.perf_counter() - t0
@@ -93,7 +81,7 @@ def bench_file(name, sig_idx=0):
 
 def main():
     print("=" * 70)
-    print("Async Annotation Scan Benchmark")
+    print("Background Annotation Scan Benchmark (sync API)")
     print("=" * 70)
     print()
     print("The annotation scan now runs in a background thread.")

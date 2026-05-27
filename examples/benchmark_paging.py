@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Simulate an EEG viewer paging through a recording.
-
-Models the access pattern of a typical EEG review application:
-- Display all channels simultaneously for a time window (the "page")
-- User pages forward/backward through the recording
-- Measures initial load, sequential paging, and random seek times
-"""
+"""Simulate an EEG viewer paging through a recording."""
 
 import time
 from pathlib import Path
@@ -20,7 +14,7 @@ NUM_RANDOM_SEEKS = 100
 
 
 def bench_edfarray_paging(path, page_duration=PAGE_DURATION_SEC):
-    """Benchmark using the bulk read_page() API -- single call for all channels."""
+    """Benchmark using bulk read_page() API."""
     import edfarray
 
     results = {}
@@ -43,12 +37,10 @@ def bench_edfarray_paging(path, page_duration=PAGE_DURATION_SEC):
         t_end = t_start + page_duration
         return f.read_page(t_start, t_end)
 
-    # Initial page load (cold)
     t0 = time.perf_counter()
     load_page(0)
     results["initial_load"] = time.perf_counter() - t0
 
-    # Sequential forward paging
     n_pages = min(NUM_SEQUENTIAL_PAGES, num_pages)
     times = []
     for i in range(n_pages):
@@ -59,7 +51,6 @@ def bench_edfarray_paging(path, page_duration=PAGE_DURATION_SEC):
     results["sequential_forward_p95"] = np.percentile(times, 95)
     results["sequential_forward_max"] = np.max(times)
 
-    # Sequential backward paging
     times = []
     for i in range(n_pages - 1, -1, -1):
         t0 = time.perf_counter()
@@ -67,7 +58,6 @@ def bench_edfarray_paging(path, page_duration=PAGE_DURATION_SEC):
         times.append(time.perf_counter() - t0)
     results["sequential_backward_median"] = np.median(times)
 
-    # Random seeks
     rng = np.random.default_rng(42)
     random_pages = rng.integers(0, num_pages, size=NUM_RANDOM_SEEKS)
     times = []
@@ -120,12 +110,10 @@ def bench_pyedflib_paging(path, page_duration=PAGE_DURATION_SEC):
             buffers.append(f.readSignal(sig_i, start=s_start, n=n))
         return buffers
 
-    # Initial page load
     t0 = time.perf_counter()
     load_page(0)
     results["initial_load"] = time.perf_counter() - t0
 
-    # Sequential forward paging
     n_pages = min(NUM_SEQUENTIAL_PAGES, num_pages)
     times = []
     for i in range(n_pages):
@@ -136,7 +124,6 @@ def bench_pyedflib_paging(path, page_duration=PAGE_DURATION_SEC):
     results["sequential_forward_p95"] = np.percentile(times, 95)
     results["sequential_forward_max"] = np.max(times)
 
-    # Sequential backward paging
     times = []
     for i in range(n_pages - 1, -1, -1):
         t0 = time.perf_counter()
@@ -144,7 +131,6 @@ def bench_pyedflib_paging(path, page_duration=PAGE_DURATION_SEC):
         times.append(time.perf_counter() - t0)
     results["sequential_backward_median"] = np.median(times)
 
-    # Random seeks
     rng = np.random.default_rng(42)
     random_pages = rng.integers(0, num_pages, size=NUM_RANDOM_SEEKS)
     times = []

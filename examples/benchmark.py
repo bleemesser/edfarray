@@ -10,7 +10,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 
 
 def find_largest_fixture():
-    """Find the largest EDF file in fixtures for benchmarking."""
+    """Find largest EDF fixture."""
     edfs = list(FIXTURES.glob("*.edf"))
     if not edfs:
         raise FileNotFoundError("No EDF fixtures found")
@@ -22,7 +22,6 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
 
     results = {}
 
-    # File open time
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
@@ -34,7 +33,6 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
     sig = f.signal(signal_idx)
     n_samples = len(sig)
 
-    # Read full signal
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
@@ -44,7 +42,6 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
     results["n_samples"] = n_samples
     results["throughput_MSps"] = n_samples / results["read_full"] / 1e6
 
-    # Read 1-second chunk from the middle
     sr = int(sig.sample_rate)
     mid = n_samples // 2
     times = []
@@ -54,7 +51,6 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
         times.append(time.perf_counter() - t0)
     results["read_1s_chunk"] = np.median(times)
 
-    # Random access (1000 single samples)
     rng = np.random.default_rng(42)
     indices = rng.integers(0, n_samples, size=1000)
     t0 = time.perf_counter()
@@ -62,7 +58,6 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
         _ = sig[int(idx)]
     results["random_1000"] = time.perf_counter() - t0
 
-    # Digital read
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
@@ -78,7 +73,6 @@ def bench_pyedflib(path, signal_idx=0, n_iterations=5):
 
     results = {}
 
-    # File open time
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
@@ -90,7 +84,6 @@ def bench_pyedflib(path, signal_idx=0, n_iterations=5):
     f = pyedflib.EdfReader(str(path))
     n_samples = f.getNSamples()[signal_idx]
 
-    # Read full signal
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
@@ -100,7 +93,6 @@ def bench_pyedflib(path, signal_idx=0, n_iterations=5):
     results["n_samples"] = n_samples
     results["throughput_MSps"] = n_samples / results["read_full"] / 1e6
 
-    # Read 1-second chunk from the middle
     sr = int(f.getSampleFrequency(signal_idx))
     mid = n_samples // 2
     times = []
@@ -110,7 +102,6 @@ def bench_pyedflib(path, signal_idx=0, n_iterations=5):
         times.append(time.perf_counter() - t0)
     results["read_1s_chunk"] = np.median(times)
 
-    # Random access (1000 single samples)
     rng = np.random.default_rng(42)
     indices = rng.integers(0, n_samples, size=1000)
     t0 = time.perf_counter()
@@ -118,7 +109,6 @@ def bench_pyedflib(path, signal_idx=0, n_iterations=5):
         _ = f.readSignal(signal_idx, start=int(idx), n=1)
     results["random_1000"] = time.perf_counter() - t0
 
-    # Digital read
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
@@ -139,7 +129,6 @@ def format_time(seconds):
 
 
 def main():
-    # Use a few different file sizes
     test_files = [
         ("test_generator.edf", 0),
         ("test_generator_2.edf", 0),

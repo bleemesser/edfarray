@@ -17,6 +17,16 @@ pub struct PyAnnotation {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyAnnotation {
+    #[new]
+    #[pyo3(signature = (onset, text, duration=None))]
+    fn new(onset: f64, text: String, duration: Option<f64>) -> Self {
+        PyAnnotation {
+            onset,
+            duration,
+            text,
+        }
+    }
+
     fn __repr__(&self) -> String {
         match self.duration {
             Some(d) => format!(

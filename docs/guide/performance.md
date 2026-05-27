@@ -18,6 +18,20 @@ pages = f.read_page(0.0, 10.0, signal_indices=[0, 1, 5])
 
 There's also `read_page_digital()` which returns int16 arrays without the gain/offset conversion.
 
+### Time-aware reading for EDF+D
+
+For EDF+D files with time gaps, use `use_time=True` to resolve the time range to actual sample indices:
+
+```python
+# For EDF+D files: time-aware page read.
+pages = f.read_page(0.0, 10.0, use_time=True)
+# Only samples from records within 0-10s physical time are returned.
+
+# For single-signal time-aware reading:
+sig = f.signal(0)
+data = sig.read_at(0.0, 10.0)  # physical data within 0-10s, gaps excluded
+```
+
 ## `ordinary_signal_indices()`
 
 EDF+ files include annotation channels alongside data channels. `ordinary_signal_indices()` gives you just the data channel indices:

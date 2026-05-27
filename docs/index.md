@@ -2,7 +2,7 @@
 
 An EDF/EDF+ parser written in Rust with numpy-like Python bindings.
 
-Handles EDF, EDF+C, and EDF+D files of any size without loading them into memory. Files are memory-mapped, signals are decoded on the fly, and multi-channel reads are parallelized across cores.
+Handles EDF, EDF+C, and EDF+D files of any size without loading them into memory. Files are memory-mapped, signals are lazily decoded, and multi-channel reads are parallelized across cores.
 
 ## Install
 
@@ -39,6 +39,7 @@ with edfarray.EdfFile("recording.edf") as f:
 - [Working with Signals](guide/signals.md) -- indexing, slicing, physical vs digital
 - [Annotations & Time](guide/annotations.md) -- EDF+ annotations, discontinuous recordings
 - [Performance](guide/performance.md) -- bulk reads, architecture
+- [Writing Files](guide/writing.md) -- create EDF/BDF files from scratch
 
 ## Reference
 

@@ -1,4 +1,4 @@
-"""Validate signal metadata and data access against pyedflib reference values."""
+"""Test signal metadata and data access against pyedflib reference values."""
 
 import numpy as np
 import pytest
@@ -16,7 +16,6 @@ def fixture(request):
 class TestSignalMetadata:
     def test_signal_count(self, fixture):
         edf, ref = fixture
-        # pyedflib hides annotation signals. Our count includes them.
         num_annotation_signals = sum(
             1 for i in range(edf.num_signals)
             if edf.signal(i).label == "EDF Annotations"
@@ -82,7 +81,6 @@ class TestSignalMetadata:
 
 class TestSignalData:
     def test_physical_samples_match_reference(self, fixture):
-        """First 10 physical samples should match pyedflib output."""
         edf, ref = fixture
         for snippet in ref.get("sample_snippets", []):
             sig = edf.signal(snippet["signal_index"])
@@ -91,12 +89,11 @@ class TestSignalData:
             np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-10)
 
     def test_digital_samples_match_reference(self, fixture):
-        """First 10 digital samples should match pyedflib output."""
         edf, ref = fixture
         for snippet in ref.get("sample_snippets", []):
             sig = edf.signal(snippet["signal_index"])
             actual = sig.to_digital()[:len(snippet["digital_first_10"])]
-            expected = np.array(snippet["digital_first_10"], dtype=np.int16)
+            expected = np.array(snippet["digital_first_10"], dtype=np.int32)
             np.testing.assert_array_equal(actual, expected)
 
     def test_single_sample_returns_float(self):
@@ -134,7 +131,7 @@ class TestSignalData:
     def test_to_digital_dtype(self):
         edf, _ = load_fixture("test_generator")
         arr = edf.signal(0).to_digital()
-        assert arr.dtype == np.int16
+        assert arr.dtype == np.int32
 
     def test_times_monotonic(self):
         edf, _ = load_fixture("test_generator")
@@ -175,13 +172,13 @@ class TestBulkReads:
         assert all(isinstance(p, np.ndarray) for p in pages)
         assert all(p.dtype == np.float64 for p in pages)
 
-    def test_read_page_digital_returns_int16(self, fixture):
+    def test_read_page_digital_returns_int32(self, fixture):
         edf, ref = fixture
         if edf.duration < 1.0:
             pytest.skip("too short")
         pages = edf.read_page_digital(0.0, 1.0)
         assert isinstance(pages, list)
-        assert all(p.dtype == np.int16 for p in pages)
+        assert all(p.dtype == np.int32 for p in pages)
 
     def test_read_page_matches_single_signal(self):
         edf, _ = load_fixture("test_generator")
