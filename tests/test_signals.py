@@ -120,6 +120,16 @@ class TestSignalData:
         sig = edf.signal(0)
         assert sig[-1] == sig[len(sig) - 1]
 
+    def test_cache_capacity_matches_uncached(self):
+        edf, _ = load_fixture("test_generator")
+        cached = edf.signal(0, cache_capacity=8)
+        uncached = edf.signal(0)
+        n = min(len(uncached), 500)
+        first = cached[0:n]
+        second = cached[0:n]  # second read should hit the warm cache
+        np.testing.assert_array_equal(first, second)
+        np.testing.assert_array_equal(first, uncached[0:n])
+
     def test_to_numpy_length(self, fixture):
         edf, ref = fixture
         if not ref["signals"]:

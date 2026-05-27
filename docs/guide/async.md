@@ -61,12 +61,15 @@ Time-based reads map seconds to sample indices internally:
 data = await sig.read_at(0.0, 10.0)  # physical values in [0, 10) seconds
 ```
 
-For repeated reads on the same signal, use `cache_capacity` to enable an LRU
-cache of decoded records:
+For repeated reads on the same signal, pass `cache_capacity` to enable an LRU
+cache of decoded physical records (the unit is data records, not samples):
 
 ```python
 sig = f.signal(0, cache_capacity=4)  # cache 4 decoded records
 ```
+
+See [Caching repeated reads](signals.md#caching-repeated-reads) for how to size
+`cache_capacity` and when it helps -- the behavior is identical to the sync API.
 
 ## Concurrent reads
 

@@ -72,7 +72,7 @@ The annotation accessors below block until the background annotation scan comple
 
 ### Methods
 
-`signal(idx_or_label: int | str) -> Signal` -- Get a signal by index or label. Raises `IndexError` for out-of-range indices, `KeyError` for unknown labels.
+`signal(idx_or_label: int | str, cache_capacity: int = 0) -> Signal` -- Get a signal by index or label. Raises `IndexError` for out-of-range indices, `KeyError` for unknown labels. `cache_capacity` enables a per-`Signal` LRU cache of decoded physical records -- see [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
 
 `find_all_signals(label: str, exact: bool = False) -> list[Signal]` -- Return all signals whose label matches `label`. If `exact` is `False` (default), performs a case-insensitive substring match. If `exact` is `True`, performs a case-sensitive exact equality match. Searches all signals including annotation signals. Skips indices that fail to construct a signal proxy.
 
@@ -176,7 +176,8 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 `read_at(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
 
-`with_cache(capacity: int) -> None` -- Enable an LRU cache of decoded physical record data. `capacity` is the number of records to cache. A capacity of 0 disables the cache (default). The cache is per-Signal-instance; cloning or re-fetching from `EdfFile.signal()` starts fresh.
+!!! note "Caching"
+    A per-`Signal` LRU cache is enabled at acquisition via `EdfFile.signal(idx, cache_capacity=N)`, not as a method on the returned `Signal`. See [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
 
 `__len__() -> int` -- Total number of samples.
 

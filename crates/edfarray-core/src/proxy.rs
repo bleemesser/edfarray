@@ -112,13 +112,6 @@ impl SignalProxy {
         self
     }
 
-    /// Enable an LRU cache of decoded physical record values (in-place).
-    pub fn with_cache_mut(&mut self, capacity: usize) {
-        if capacity > 0 {
-            self.cache = Some(Mutex::new(LruCache::new(capacity)));
-        }
-    }
-
     /// Read a single sample as a physical (f64) value.
     pub fn get_physical(&self, idx: usize) -> Result<f64> {
         if idx >= self.total_samples {

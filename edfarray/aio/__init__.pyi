@@ -101,7 +101,26 @@ class EdfFile:
         signal_indices: list[int] | None = None,
         use_time: bool = False,
     ) -> Awaitable[list[npt.NDArray[np.int32]]]: ...
-    def signal(self, idx_or_label: int | str, cache_capacity: int = 0) -> Signal: ...
+    def signal(self, idx_or_label: int | str, cache_capacity: int = 0) -> Signal:
+        r"""
+        Get a signal by index or label.
+
+        ``cache_capacity`` enables an LRU cache of decoded physical records for
+        this signal. The unit is a count of EDF data records (not samples or
+        bytes); one cached record holds ``samples_per_record`` float64 values, so
+        the cache costs roughly ``cache_capacity * samples_per_record * 8`` bytes.
+        0 (the default) disables it.
+
+        Leave it at 0 for one-pass or strictly forward reads -- the OS page cache
+        already serves the raw bytes, so a cache only pays off when you re-decode
+        the *same* records (overlapping windows, back-and-forth seeks, repeated
+        slices). A good starting capacity is a few records more than your largest
+        repeated window spans, i.e. ``ceil(window_samples / samples_per_record) + 2``.
+        The cache only accelerates physical reads -- ``read_digital()`` always
+        re-decodes from the memory map. Caching is per-``Signal``: re-fetching
+        from ``signal()`` starts fresh.
+        """
+        ...
     def signal_group(self, indices: list[int]) -> SignalGroup: ...
     def write_to(self, path: str, variant: str | None = None) -> Awaitable[None]:
         r"""

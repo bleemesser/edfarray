@@ -319,18 +319,38 @@ impl PyEdfFile {
     }
 
     /// Get a signal by index or label.
-    fn signal(&self, idx_or_label: &Bound<'_, PyAny>) -> PyResult<PySignal> {
-        if let Ok(idx) = idx_or_label.extract::<usize>() {
-            let proxy = self.get().signal(idx).map_err(to_py_err)?;
-            Ok(PySignal::new(proxy))
+    ///
+    /// `cache_capacity` enables an LRU cache of decoded physical records for
+    /// this signal. The unit is a count of EDF data records (not samples or
+    /// bytes); one cached record holds `samples_per_record` float64 values, so
+    /// the cache costs roughly `cache_capacity * samples_per_record * 8` bytes.
+    /// 0 (the default) disables it.
+    ///
+    /// Leave it at 0 for one-pass or strictly forward reads -- the OS page cache
+    /// already serves the raw bytes, so a cache only pays off when you re-decode
+    /// the *same* records (overlapping windows, back-and-forth seeks, repeated
+    /// slices). A good starting capacity is a few records more than your largest
+    /// repeated window spans, i.e. `ceil(window_samples / samples_per_record) + 2`.
+    /// The cache only accelerates physical reads -- `to_digital()` always
+    /// re-decodes from the memory map. Caching is per-`Signal`: re-fetching from
+    /// `signal()` starts fresh.
+    #[pyo3(signature = (idx_or_label, cache_capacity=0))]
+    fn signal(&self, idx_or_label: &Bound<'_, PyAny>, cache_capacity: usize) -> PyResult<PySignal> {
+        let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
+            self.get().signal(idx).map_err(to_py_err)?
         } else if let Ok(label) = idx_or_label.extract::<String>() {
-            let proxy = self.get().signal_by_label(&label).map_err(to_py_err)?;
-            Ok(PySignal::new(proxy))
+            self.get().signal_by_label(&label).map_err(to_py_err)?
         } else {
-            Err(pyo3::exceptions::PyTypeError::new_err(
+            return Err(pyo3::exceptions::PyTypeError::new_err(
                 "signal() argument must be int or str",
-            ))
-        }
+            ));
+        };
+        let proxy = if cache_capacity > 0 {
+            proxy.with_cache(cache_capacity)
+        } else {
+            proxy
+        };
+        Ok(PySignal::new(proxy))
     }
 
     /// Labels of all signals in the file.

@@ -65,6 +65,22 @@ digital = sig.to_digital()   # int16, raw digital values from the file
 
 `to_digital()` skips the gain/offset conversion, which is slightly faster for applications that do their own scaling.
 
+## Caching repeated reads
+
+By default a `Signal` decodes samples from the memory map on every access; the OS page cache keeps the raw bytes hot, but the gain/offset decode runs each time. If you re-read the *same* regions repeatedly — overlapping windows, back-and-forth seeks, or the same slice in a loop — you can cache the decoded physical records:
+
+```python
+sig = f.signal("EEG Fpz-Cz", cache_capacity=8)  # cache 8 decoded records
+```
+
+- **Unit.** `cache_capacity` counts EDF *data records*, not samples or bytes. One cached record holds `samples_per_record` float64 values, so memory is roughly `cache_capacity * samples_per_record * 8` bytes. `0` (the default) disables the cache.
+- **When to set it.** Leave it at `0` for one-pass or strictly forward reads — there's nothing to re-decode, so the cache only adds overhead. It pays off only when reads revisit records.
+- **Recommended capacity.** A few records beyond your largest repeated window: `ceil(window_samples / samples_per_record) + 2`. For example, repeatedly reading 5-second windows from a 256 Hz signal with 256 samples/record needs `ceil(5*256 / 256) + 2 = 7`.
+- **Physical only.** The cache accelerates physical reads (`to_numpy()`, slicing). `to_digital()` always re-decodes from the memory map and ignores the cache.
+- **Per-signal.** The cache lives on the `Signal` instance; re-fetching with `f.signal(...)` starts fresh.
+
+The same `cache_capacity` argument works identically on the [async API](async.md).
+
 ## Timestamps
 
 `times()` returns the timestamp in seconds from recording start for every sample:
