@@ -190,24 +190,23 @@ fn parse_single_tal(
         format!("invalid TAL onset at record {record_idx}, byte offset {tal_start}: {reason}")
     })?;
 
-    let duration =
-        if *pos > 0
-            && *pos <= data.len()
-            && data.get(pos.wrapping_sub(1)) == Some(&TAL_DURATION_MARKER)
-        {
-            let dur_str = read_until(data, pos, &[TAL_SEPARATOR]);
-            match parse_duration(&dur_str) {
-                Ok(d) => Some(d),
-                Err(reason) => {
-                    warnings.push(format!(
-                        "invalid TAL duration at record {record_idx}, byte offset {tal_start}: {reason}"
-                    ));
-                    None
-                }
+    let duration = if *pos > 0
+        && *pos <= data.len()
+        && data.get(pos.wrapping_sub(1)) == Some(&TAL_DURATION_MARKER)
+    {
+        let dur_str = read_until(data, pos, &[TAL_SEPARATOR]);
+        match parse_duration(&dur_str) {
+            Ok(d) => Some(d),
+            Err(reason) => {
+                warnings.push(format!(
+                    "invalid TAL duration at record {record_idx}, byte offset {tal_start}: {reason}"
+                ));
+                None
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
 
     let mut annotations = Vec::new();
 

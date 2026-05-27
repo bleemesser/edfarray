@@ -64,12 +64,22 @@ class TestProxy3D:
         with pytest.raises(ValueError):
             f.proxy_3d(group)
 
-    def test_step_not_supported(self):
+    def test_record_axis_step_not_supported(self):
         f = open_edf("test_generator")
         g = largest_rect_group(f)
         p = f.proxy_3d(g)
         with pytest.raises(ValueError):
             p[0:4:2, :, :]
+        with pytest.raises(ValueError):
+            p[:, 0:4:2, :]
+
+    def test_sample_axis_step(self):
+        f = open_edf("test_generator")
+        g = largest_rect_group(f)
+        p = f.proxy_3d(g)
+        full = p[0:5, :, :]
+        assert np.array_equal(p[0:5, :, ::4], full[:, :, ::4])
+        assert np.array_equal(p[0:5, :, ::-1], full[:, :, ::-1])
 
     def test_stride_info_none_when_annotations_interleaved(self):
         f = open_edf("test_generator")

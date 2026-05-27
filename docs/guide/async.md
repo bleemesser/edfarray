@@ -32,6 +32,13 @@ async with await aio.open("recording.edf") as f:
     data = await f.signal(0).read_physical(0, 1000)
 ```
 
+`aio.open` takes the same `variant` override as the sync constructor, for files
+whose `+C`/`+D` marker is missing or wrong:
+
+```python
+f = await aio.open("recording.edf", variant="EDF+D")
+```
+
 Metadata getters (`num_signals`, `variant`, `start_datetime`, etc.) are sync even on the async `EdfFile`. They read from an `Arc`-shared header that was already loaded and return immediately without I/O.
 
 ## Reading signals
@@ -183,7 +190,9 @@ await f.write_to("output.edf", variant="EDF+C")
 ```
 
 Only ordinary signals are copied. Annotations are re-encoded from the parsed
-index rather than copied verbatim.
+index rather than copied verbatim. The same [transcoding caveats](writing.md#round-tripping-an-existing-file)
+apply as for the sync `write_to` (EDF+D loses its discontinuity; transcoding to
+a plain variant drops annotations; downconverting sample size loses precision).
 
 ## Performance and when to choose async
 

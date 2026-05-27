@@ -29,6 +29,16 @@ impl EdfFile {
         Ok(EdfFile { file })
     }
 
+    /// Open a file, forcing the variant rather than trusting the header's
+    /// auto-detected one. Useful for files that omit or misreport the EDF+
+    /// `+C`/`+D` marker. The override only controls the plain/`+C`/`+D`
+    /// distinction; an override that changes the EDF-vs-BDF sample size (set by
+    /// the version field) is rejected.
+    pub fn open_with_variant(path: impl AsRef<Path>, variant: EdfVariant) -> Result<Self> {
+        let file = MappedFile::open_with_variant(path.as_ref(), Some(variant))?;
+        Ok(EdfFile { file })
+    }
+
     /// The parsed file header.
     pub fn header(&self) -> &EdfHeader {
         &self.file.header
@@ -361,11 +371,22 @@ impl EdfFile {
     }
 
     /// Copy this file to `path`. Override `variant` (`None` = keep current) to transcode. Rebuilds annotation channel from parsed annotations.
+    ///
+    /// Transcoding caveats:
+    /// - Records are streamed contiguously, so transcoding from EDF+D to any
+    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    ///   onsets/gaps are replaced by uniform `record_idx * record_duration`
+    ///   timing.
+    /// - The destination annotation channel is rebuilt from parsed annotations,
+    ///   so transcoding to a plain (non-`+`) EDF/BDF variant drops all
+    ///   annotations, since plain variants have no annotation channel.
+    /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
+    ///   digital range and re-encodes from physical values, losing precision.
     pub fn write_to(&self, path: impl AsRef<Path>, variant: Option<EdfVariant>) -> Result<()> {
         use crate::writer::{EdfWriter, WriterSignal, WriterSpec};
         use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-        let target_variant = variant.unwrap_or(self.variant()); // TODO: validate that transcoding logic between ANY edf/bdf/+ variant is correctly implemented here
+        let target_variant = variant.unwrap_or(self.variant());
         let header = &self.file.header;
 
         let start_datetime = match header.start_datetime.as_datetime() {
@@ -388,6 +409,13 @@ impl EdfFile {
             };
             let target_dmin = sh.digital_min.max(dmin);
             let target_dmax = sh.digital_max.min(dmax);
+            if target_dmin >= target_dmax {
+                return Err(EdfError::InvalidDigitalRange {
+                    index: idx,
+                    min: target_dmin,
+                    max: target_dmax,
+                });
+            }
             signals_spec.push(WriterSignal {
                 label: sh.label.clone(),
                 transducer: sh.transducer.clone(),
@@ -570,6 +598,33 @@ mod tests {
 
         let val = sig.get_physical(0).unwrap();
         assert!((val - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn variant_override_same_family() {
+        let file = build_test_file();
+        let edf = EdfFile::open_with_variant(file.path(), EdfVariant::EdfPlusD).unwrap();
+        assert_eq!(edf.variant(), EdfVariant::EdfPlusD);
+        assert!(
+            edf.warnings()
+                .iter()
+                .any(|w| w.contains("variant overridden"))
+        );
+        // Sample data is still readable under the forced variant.
+        assert_eq!(edf.signal(0).unwrap().len(), 8);
+    }
+
+    #[test]
+    fn variant_override_cross_family_rejected() {
+        let file = build_test_file();
+        let result = EdfFile::open_with_variant(file.path(), EdfVariant::Bdf);
+        assert!(matches!(
+            result,
+            Err(EdfError::InvalidArgument {
+                name: "variant",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -914,7 +969,7 @@ mod fixture_tests {
     #[test]
     fn proxy_2d_accepts_open_group() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        // Mixed sample rates → Open group; Proxy2D accepts it.
+        // Mixed sample rates -> Open group; Proxy2D accepts it.
         let indices = edf.ordinary_signal_indices();
         let group = SignalGroup::from_indices(edf.header(), &indices).unwrap();
         let proxy = edf.proxy_2d(group, PadMode::Nan).unwrap();

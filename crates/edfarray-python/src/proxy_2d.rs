@@ -76,6 +76,11 @@ impl PyProxy2D {
     /// | int | slice | 1D ndarray |
     /// | slice/list | int | 1D ndarray |
     /// | slice/list | slice | 2D ndarray |
+    ///
+    /// The sample (time) axis accepts a step (e.g. `p[:, ::4]` to downsample);
+    /// the signal axis does not. A strided sample read still reads the full
+    /// enclosing span and then subsamples, so it costs about the same as the
+    /// unstrided read of that span — it shrinks the result, not the I/O.
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let tuple = if let Ok(t) = key.cast::<PyTuple>() {
             if t.len() != 2 {
@@ -107,24 +112,27 @@ impl PyProxy2D {
 
         if let Some(si) = sig_int {
             let si = normalize_index(si, num_signals)?;
-            let (samp_start, samp_end) = parse_sample_spec(&samp_spec, num_samples)?;
-            let count = samp_end.saturating_sub(samp_start);
-            let data = self
-                .proxy
-                .read_slice(si..si + 1, samp_start..samp_end)
-                .map_err(to_py_err)?;
-            let array = PyArray1::<f64>::zeros(py, count, false);
-            if count > 0 {
+            let samp = parse_sample_spec(&samp_spec, num_samples)?;
+            let array = PyArray1::<f64>::zeros(py, samp.count, false);
+            if samp.count > 0 {
+                let (lo, hi) = samp.window();
+                let data = self
+                    .proxy
+                    .read_slice(si..si + 1, lo..hi)
+                    .map_err(to_py_err)?;
                 unsafe {
-                    array.as_slice_mut()?.copy_from_slice(&data[0]);
+                    let out = array.as_slice_mut()?;
+                    if samp.is_contiguous() {
+                        out.copy_from_slice(&data[0]);
+                    } else {
+                        samp.gather(&data[0], lo, out);
+                    }
                 }
             }
             return Ok(array.into_any().unbind());
         }
 
         let signal_indices = parse_signal_spec(&sig_spec, num_signals)?;
-        let (samp_start, samp_end) = parse_sample_spec(&samp_spec, num_samples)?;
-        let count = samp_end.saturating_sub(samp_start);
 
         if let Some(sa) = samp_int {
             let sa = normalize_index(sa, num_samples)?;
@@ -136,20 +144,78 @@ impl PyProxy2D {
             return Ok(array.into_any().unbind());
         }
 
+        let samp = parse_sample_spec(&samp_spec, num_samples)?;
+        let (lo, hi) = samp.window();
         let data = self
             .proxy
-            .read_physical(&signal_indices, samp_start..samp_end)
+            .read_physical(&signal_indices, lo..hi)
             .map_err(to_py_err)?;
         let n_sig = signal_indices.len();
-        let array = PyArray2::<f64>::zeros(py, (n_sig, count), false);
+        let array = PyArray2::<f64>::zeros(py, (n_sig, samp.count), false);
         unsafe {
             let slice = array.as_slice_mut()?;
             for (i, row) in data.iter().enumerate() {
-                let row_start = i * count;
-                slice[row_start..row_start + row.len()].copy_from_slice(row);
+                let dst = &mut slice[i * samp.count..i * samp.count + samp.count];
+                if samp.is_contiguous() {
+                    dst.copy_from_slice(row);
+                } else {
+                    samp.gather(row, lo, dst);
+                }
             }
         }
         Ok(array.into_any().unbind())
+    }
+}
+
+/// A parsed sample-axis slice that may carry a step. `count` is the number of
+/// emitted elements; `window()` gives the contiguous span to read.
+struct SampleSlice {
+    start: isize,
+    step: isize,
+    count: usize,
+}
+
+impl SampleSlice {
+    fn is_contiguous(&self) -> bool {
+        self.step == 1
+    }
+
+    /// Minimal contiguous `[lo, hi)` sample window covering every emitted index.
+    fn window(&self) -> (usize, usize) {
+        if self.count == 0 {
+            return (0, 0);
+        }
+        let last = self.start + (self.count as isize - 1) * self.step;
+        let (lo, hi) = if self.step >= 0 {
+            (self.start, last)
+        } else {
+            (last, self.start)
+        };
+        (lo as usize, hi as usize + 1)
+    }
+
+    /// Gather strided samples from `buf` (which covers the window starting at
+    /// `lo`) into `out` (length `count`).
+    fn gather(&self, buf: &[f64], lo: usize, out: &mut [f64]) {
+        for (k, slot) in out.iter_mut().enumerate() {
+            let abs = (self.start + k as isize * self.step) as usize;
+            *slot = buf[abs - lo];
+        }
+    }
+}
+
+/// Number of elements in `range(start, stop, step)`, matching Python semantics.
+fn range_len(start: isize, stop: isize, step: isize) -> usize {
+    if step > 0 {
+        if stop > start {
+            (((stop - start) + step - 1) / step) as usize
+        } else {
+            0
+        }
+    } else if start > stop {
+        (((start - stop) + (-step) - 1) / (-step)) as usize
+    } else {
+        0
     }
 }
 
@@ -164,16 +230,21 @@ fn normalize_index(idx: isize, len: usize) -> PyResult<usize> {
     Ok(normalized as usize)
 }
 
-fn parse_sample_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<(usize, usize)> {
+fn parse_sample_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<SampleSlice> {
     if let Ok(slice) = spec.cast::<PySlice>() {
         let indices = slice.indices(length as isize)?;
-        if indices.step != 1 {
-            return Err(PyValueError::new_err("step != 1 not supported in Proxy2D"));
-        }
-        Ok((indices.start as usize, indices.stop as usize))
+        Ok(SampleSlice {
+            start: indices.start,
+            step: indices.step,
+            count: range_len(indices.start, indices.stop, indices.step),
+        })
     } else if let Ok(idx) = spec.extract::<isize>() {
         let idx = normalize_index(idx, length)?;
-        Ok((idx, idx + 1))
+        Ok(SampleSlice {
+            start: idx as isize,
+            step: 1,
+            count: 1,
+        })
     } else {
         Err(PyTypeError::new_err("sample index must be int or slice"))
     }

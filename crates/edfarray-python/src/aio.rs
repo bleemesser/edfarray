@@ -432,6 +432,16 @@ impl PyAsyncEdfFile {
     }
 
     /// Write to `path`, optionally transcoding to a different variant.
+    ///
+    /// Transcoding caveats:
+    /// - Records are streamed contiguously, so transcoding from EDF+D to any
+    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    ///   onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
+    /// - Because the annotation channel is rebuilt from parsed annotations,
+    ///   transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
+    ///   since plain variants have no annotation channel.
+    /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
+    ///   digital range and re-encodes from physical values, losing precision.
     #[pyo3(signature = (path, variant=None))]
     fn write_to<'py>(
         &self,
@@ -922,14 +932,29 @@ fn write_edf_async<'py>(
     })
 }
 
+/// Open an EDF/EDF+/BDF file.
+///
+/// `variant` forces the file variant instead of trusting the auto-detected
+/// one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
+/// controls the plain/"+C"/"+D" distinction; an override that changes the
+/// EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
 #[pyfunction]
 #[pyo3(name = "open")]
-fn open_async<'py>(py: Python<'py>, path: String) -> PyResult<Bound<'py, PyAny>> {
+#[pyo3(signature = (path, variant=None))]
+fn open_async<'py>(
+    py: Python<'py>,
+    path: String,
+    variant: Option<&str>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let forced = variant.map(parse_variant).transpose()?;
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let edf = tokio::task::spawn_blocking(move || EdfFile::open(&path))
-            .await
-            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
-            .map_err(to_py_err)?;
+        let edf = tokio::task::spawn_blocking(move || match forced {
+            None => EdfFile::open(&path),
+            Some(v) => EdfFile::open_with_variant(&path, v),
+        })
+        .await
+        .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+        .map_err(to_py_err)?;
         Python::attach(|py| {
             Py::new(
                 py,

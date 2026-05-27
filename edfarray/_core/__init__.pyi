@@ -80,8 +80,7 @@ class EdfFile:
     @property
     def start_datetime(self) -> typing.Any:
         r"""
-        Returns `datetime.datetime` if the header date/time could be parsed,
-        or a string like `"04.04.yy 12.57.02"` if it was anonymized.
+        Recording start time as `datetime.datetime`, or raw string if anonymized.
         """
     @property
     def patient_name(self) -> typing.Optional[builtins.str]:
@@ -153,16 +152,20 @@ class EdfFile:
         r"""
         Progress of the background annotation scan: (records_scanned, total_records).
         """
-    def __new__(cls, path: builtins.str) -> EdfFile: ...
+    def __new__(cls, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> EdfFile:
+        r"""
+        Open an EDF/EDF+/BDF file.
+        
+        `variant` forces the file variant instead of trusting the auto-detected
+        one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
+        controls the plain/"+C"/"+D" distinction; an override that changes the
+        EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+        """
     def __enter__(self) -> EdfFile: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
     def close(self) -> None:
         r"""
-        Explicitly release the underlying memory-mapped file.
-        
-        After calling `close()`, any further method calls on this `EdfFile`
-        will raise. Existing `Signal` and `ArrayProxy` objects keep their own
-        references and remain usable. Idempotent.
+        Release the underlying memory-mapped file. Idempotent.
         """
     def __repr__(self) -> builtins.str: ...
     def annotations_before(self, t: builtins.float) -> builtins.list[Annotation]:
@@ -269,6 +272,16 @@ class EdfFile:
         channel is rebuilt from parsed annotations rather than copied verbatim.
         `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
         if omitted, uses the source variant.
+        
+        Transcoding caveats:
+        - Records are streamed contiguously, so transcoding from EDF+D to any
+          non-EDF+D variant discards the discontinuity: the original per-record
+          onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
+        - Because the annotation channel is rebuilt from parsed annotations,
+          transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
+          since plain variants have no annotation channel.
+        - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
+          digital range and re-encodes from physical values, losing precision.
         """
     def read_page_digital(self, start_sec: builtins.float, end_sec: builtins.float, signal_indices: typing.Optional[typing.Sequence[builtins.int]] = None, use_time: builtins.bool = ...) -> builtins.list[numpy.typing.NDArray[numpy.int32]]:
         r"""

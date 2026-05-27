@@ -215,8 +215,9 @@ impl EdfHeader {
             });
         }
 
-        // TODO: this variant selection seems very fragile. Is our parsing method here officially specced?
-        // If not, we should ensure the file open path has a manual variant specifier to override if a file does not self-document it.
+        // Variant detection follows the EDF+/BDF spec (version field + reserved
+        // marker). Files that omit/misreport the +C/+D marker can be corrected
+        // via EdfFile::open_with_variant.
         let variant = EdfVariant::parse(&data[0..8], &reserved);
         let start_datetime = parse_start_datetime(&start_date_str, &start_time_str);
 

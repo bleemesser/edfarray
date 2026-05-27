@@ -3,10 +3,12 @@
 ## EdfFile
 
 ```python
-edfarray.EdfFile(path: str)
+edfarray.EdfFile(path: str, variant: str | None = None)
 ```
 
 Opens an EDF/EDF+ file at the given path. Parses the header synchronously and starts a background annotation scan for EDF+ files. Signal reads work immediately after construction.
+
+`variant` forces the file variant instead of trusting the auto-detected one, for files that omit or misreport the EDF+ `"+C"`/`"+D"` marker. It only controls the plain/`"+C"`/`"+D"` distinction; an override that changes the EDF-vs-BDF sample size (set by the version field) raises `ValueError`. A mismatch with the detected variant is recorded in `warnings`.
 
 Supports the context manager protocol (`with` statement).
 
@@ -90,7 +92,7 @@ The annotation accessors below block until the background annotation scan comple
 
 `proxy_3d(group: SignalGroup) -> Proxy3D` -- Build a 3D proxy `(num_records, num_channels, samples_per_record)`. Requires `group.kind == "rectangular"`. Errors otherwise.
 
-`write_to(path: str, variant: str | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations.
+`write_to(path: str, variant: str | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations. Transcoding caveats: records are re-emitted contiguously, so **EDF+D -> any non-EDF+D variant** discards the discontinuity (onsets become uniform `record_idx * record_duration`); **any `+` variant -> a plain variant** drops all annotations (plain EDF/BDF has no annotation channel); and **downconverting sample size** (BDF 24-bit -> EDF 16-bit) clamps the digital range and re-encodes from physical values, losing precision.
 
 `close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal`, `Proxy2D`, and `Proxy3D` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
 
@@ -229,7 +231,7 @@ Returned by `EdfFile.proxy_2d(group, pad_mode=...)`. A 2D view over a `SignalGro
 
 `proxy[list, slice]` -- Fancy indexing on the signal axis. The list contains proxy-coordinate signal indices.
 
-Step values other than 1 are not supported. Reads past a channel's valid length are governed by `pad_mode`: `"raise"` (default) raises `IndexError`; other modes fill (`"nan"` is physical-only).
+The sample (time) axis accepts a step (e.g. `proxy[:, ::4]` to downsample; negative steps supported); the signal axis requires step 1. A strided sample read still reads the full enclosing span and then subsamples, so it shrinks the result, not the I/O. Reads past a channel's valid length are governed by `pad_mode`: `"raise"` (default) raises `IndexError`; other modes fill (`"nan"` is physical-only).
 
 ---
 
@@ -251,7 +253,7 @@ Returned by `EdfFile.proxy_3d(group)`. A 3D view over a `Rectangular` `SignalGro
 
 ### Indexing
 
-`proxy[rec, ch, samp]` -- Each axis accepts an int or a slice with step 1. Returns a scalar (all ints), 1D / 2D / 3D `numpy.ndarray` depending on how many axes are sliced.
+`proxy[rec, ch, samp]` -- Each axis accepts an int or a slice. The sample axis additionally accepts a step (e.g. `proxy[:, :, ::4]`; negative steps supported); the record and channel axes require step 1. Returns a scalar (all ints), 1D / 2D / 3D `numpy.ndarray` depending on how many axes are non-int. The enclosing record block is materialized regardless of sample step, so striding shrinks the result, not the work.
 
 ---
 

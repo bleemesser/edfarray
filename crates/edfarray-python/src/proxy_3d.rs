@@ -61,9 +61,12 @@ impl PyProxy3D {
 
     /// NumPy-style 3D indexing: `proxy[rec, channel, sample]`.
     ///
-    /// Each axis accepts an int or a slice with step 1. Returns a scalar
-    /// (all three ints), a 1D array (one slice axis), a 2D array (two slice
-    /// axes), or a 3D array (all slices).
+    /// Each axis accepts an int or a slice; the sample axis additionally
+    /// accepts a step (e.g. `p[:, :, ::4]` to downsample), while the record
+    /// and channel axes require step 1. Returns a scalar (all three ints), a
+    /// 1D array (one non-int axis), a 2D array (two), or a 3D array (all).
+    /// The full enclosing record block is materialized regardless of the
+    /// sample step, so striding shrinks the result, not the work.
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let tuple = key.cast::<PyTuple>().map_err(|_| {
             PyIndexError::new_err("Proxy3D requires exactly 3 indices: [record, channel, sample]")
@@ -80,9 +83,9 @@ impl PyProxy3D {
 
         let rec = AxisSpec::parse(&rec_spec, n_rec, "record")?;
         let ch = AxisSpec::parse(&ch_spec, n_ch, "channel")?;
-        let samp = AxisSpec::parse(&samp_spec, spr, "sample")?;
+        let samp = AxisSpec::parse_sample(&samp_spec, spr)?;
 
-        // Fast path: all ints → scalar.
+        // Fast path: all ints -> scalar.
         if let (AxisSpec::Int(ri), AxisSpec::Int(ci), AxisSpec::Int(si)) = (rec, ch, samp) {
             let v = self.proxy.get(ri, ci, si).map_err(to_py_err)?;
             return Ok(v.into_pyobject(py)?.into_any().unbind());
@@ -91,7 +94,6 @@ impl PyProxy3D {
         // Otherwise materialize the smallest enclosing block and squeeze ints.
         let rec_range = rec.to_range();
         let ch_range = ch.to_range();
-        let samp_range = samp.to_range();
         let block = self
             .proxy
             .read_physical_block(rec_range.clone(), ch_range.clone())
@@ -100,15 +102,26 @@ impl PyProxy3D {
         let nr = rec_range.len();
         let nc = ch_range.len();
         let ns_full = spr;
-        let s_start = samp_range.start;
-        let ns = samp_range.len();
+        let ns = samp.count();
 
-        // Slice the sample axis out of the materialized record-major buffer.
+        // Slice (and possibly stride) the sample axis out of the record-major
+        // block. The block already holds every sample per record, so striding
+        // is an in-memory gather with no extra reads.
         let mut out = Vec::with_capacity(nr * nc * ns);
         for ri in 0..nr {
             for ci in 0..nc {
-                let row_base = (ri * nc + ci) * ns_full + s_start;
-                out.extend_from_slice(&block[row_base..row_base + ns]);
+                let row_base = (ri * nc + ci) * ns_full;
+                match samp {
+                    AxisSpec::Strided { .. } => {
+                        for k in 0..ns {
+                            out.push(block[row_base + samp.nth(k)]);
+                        }
+                    }
+                    _ => {
+                        let s_start = samp.to_range().start;
+                        out.extend_from_slice(&block[row_base + s_start..row_base + s_start + ns]);
+                    }
+                }
             }
         }
 
@@ -168,9 +181,17 @@ impl PyProxy3D {
 enum AxisSpec {
     Int(usize),
     Range(usize, usize),
+    /// Strided slice, only produced for the sample axis. `start`/`step` follow
+    /// Python slice semantics; `count` is the number of emitted elements.
+    Strided {
+        start: isize,
+        step: isize,
+        count: usize,
+    },
 }
 
 impl AxisSpec {
+    /// Parse a record/channel axis: int or step-1 slice only.
     fn parse(spec: &Bound<'_, PyAny>, length: usize, axis: &str) -> PyResult<Self> {
         if let Ok(idx) = spec.extract::<isize>() {
             let n = normalize(idx, length, axis)?;
@@ -190,15 +211,68 @@ impl AxisSpec {
         )))
     }
 
+    /// Parse the sample axis: int or slice, with an arbitrary step allowed.
+    fn parse_sample(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<Self> {
+        if let Ok(idx) = spec.extract::<isize>() {
+            let n = normalize(idx, length, "sample")?;
+            return Ok(AxisSpec::Int(n));
+        }
+        if let Ok(s) = spec.cast::<PySlice>() {
+            let i = s.indices(length as isize)?;
+            if i.step == 1 {
+                return Ok(AxisSpec::Range(i.start as usize, i.stop as usize));
+            }
+            return Ok(AxisSpec::Strided {
+                start: i.start,
+                step: i.step,
+                count: range_len(i.start, i.stop, i.step),
+            });
+        }
+        Err(PyTypeError::new_err("sample index must be int or slice"))
+    }
+
     fn to_range(self) -> std::ops::Range<usize> {
         match self {
             AxisSpec::Int(i) => i..i + 1,
             AxisSpec::Range(s, e) => s..e,
+            AxisSpec::Strided { .. } => unreachable!("strided axis has no contiguous range"),
+        }
+    }
+
+    fn count(self) -> usize {
+        match self {
+            AxisSpec::Int(_) => 1,
+            AxisSpec::Range(s, e) => e - s,
+            AxisSpec::Strided { count, .. } => count,
+        }
+    }
+
+    /// Absolute index of the k-th emitted element along a strided sample axis.
+    fn nth(self, k: usize) -> usize {
+        match self {
+            AxisSpec::Strided { start, step, .. } => (start + k as isize * step) as usize,
+            AxisSpec::Int(i) => i,
+            AxisSpec::Range(s, _) => s + k,
         }
     }
 
     fn is_int(self) -> bool {
         matches!(self, AxisSpec::Int(_))
+    }
+}
+
+/// Number of elements in `range(start, stop, step)`, matching Python semantics.
+fn range_len(start: isize, stop: isize, step: isize) -> usize {
+    if step > 0 {
+        if stop > start {
+            (((stop - start) + step - 1) / step) as usize
+        } else {
+            0
+        }
+    } else if start > stop {
+        (((start - stop) + (-step) - 1) / (-step)) as usize
+    } else {
+        0
     }
 }
 

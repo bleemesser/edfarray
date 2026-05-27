@@ -7,7 +7,7 @@ use memmap2::Mmap;
 
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
-use crate::header::EdfHeader;
+use crate::header::{EdfHeader, EdfVariant};
 use crate::proxy::SignalProxy;
 use crate::record::RecordLayout;
 
@@ -43,6 +43,15 @@ impl std::fmt::Debug for MappedFile {
 impl MappedFile {
     /// Open EDF file. Spawns background annotation scan for files with annotation signals.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
+        Self::open_with_variant(path, None)
+    }
+
+    /// Open a file, optionally forcing the EDF/BDF variant instead of trusting
+    /// the header's auto-detected one. The override only controls the
+    /// plain/`+C`/`+D` distinction; the EDF-vs-BDF sample size is always taken
+    /// from the version field, so an override whose sample-size family disagrees
+    /// is rejected.
+    pub fn open_with_variant(path: &Path, variant: Option<EdfVariant>) -> Result<Arc<Self>> {
         let file = std::fs::File::open(path).map_err(|e| EdfError::FileOpen {
             path: path.to_path_buf(),
             source: e,
@@ -54,6 +63,24 @@ impl MappedFile {
         })?;
 
         let mut header = EdfHeader::parse(&mmap)?;
+        if let Some(forced) = variant {
+            let detected = header.variant;
+            if forced.sample_size_bytes() != detected.sample_size_bytes() {
+                return Err(EdfError::InvalidArgument {
+                    name: "variant",
+                    reason: format!(
+                        "cannot override {detected} as {forced}: EDF/BDF sample size is \
+                         determined by the version field and cannot be overridden"
+                    ),
+                });
+            }
+            if forced != detected {
+                header.warnings.push(format!(
+                    "variant overridden from detected {detected} to {forced}"
+                ));
+            }
+            header.variant = forced;
+        }
         header.recover_num_records_from_file_size(mmap.len());
         let layout = RecordLayout::from_header(&header);
 

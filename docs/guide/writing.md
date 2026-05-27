@@ -83,11 +83,24 @@ Useful for transcoding:
 
 ```python
 f = edfarray.EdfFile("input.edfd")
-f.write_to("output.edf", variant="EDF+C")  # collapse a discontinuous file (annotations preserved)
+f.write_to("output.edf", variant="EDF+C")  # collapse a discontinuous file
 ```
 
 Only ordinary signals are copied; the annotation channel is rebuilt from the
-parsed annotations rather than copied verbatim.
+parsed annotations rather than copied verbatim. If `variant` is omitted the
+source variant is kept.
+
+!!! warning "Transcoding caveats"
+    Records are re-emitted contiguously, so transcoding changes more than the
+    header tag:
+
+    - **EDF+D -> any non-EDF+D variant** discards the discontinuity. The
+      original per-record onsets/gaps are replaced by uniform
+      `record_idx * record_duration` timing.
+    - **Any `+` variant -> a plain (non-`+`) variant** drops all annotations,
+      because plain EDF/BDF has no annotation channel.
+    - **Downconverting sample size** (e.g. BDF 24-bit -> EDF 16-bit) clamps the
+      digital range and re-encodes from physical values, losing precision.
 
 ## Annotation channel sizing
 

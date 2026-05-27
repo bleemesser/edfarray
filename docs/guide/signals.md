@@ -130,7 +130,19 @@ proxy[3, 1000]                          # single float
 proxy[3, 1000:2000]                     # 1D ndarray
 proxy[:, 1000:2000]                     # 2D ndarray (all signals × 1000 samples)
 proxy[[0, 3, 7], 0:500]                 # fancy indexing on the signal axis
+proxy[:, 0:2000:4]                      # strided sample axis (downsample by 4)
+proxy[:, ::-1]                          # negative step also works
 ```
+
+The **sample (time) axis** accepts a step, so `proxy[:, ::4]` downsamples in
+time. The **signal axis** does not — use a list for arbitrary signal selection.
+
+!!! note "Striding does not reduce I/O"
+    A strided sample read still reads the full enclosing span from the
+    memory-mapped file and then subsamples it, because EDF stores samples
+    contiguously per record. So `proxy[:, ::4]` costs about the same as
+    `proxy[:, :]` — it shrinks the returned array, not the work. Step `1`
+    (contiguous) reads take an unchanged fast path with no overhead.
 
 For `Open` groups, supply a `pad_mode`:
 
@@ -156,7 +168,13 @@ proxy.shape                             # (num_records, num_channels, spr)
 proxy[0, :, :]                          # one record, shape (n_chan, spr)
 proxy[0:30, :, :]                       # first 30 records, shape (30, n_chan, spr)
 proxy[5, 2, 100]                        # scalar
+proxy[0:30, :, ::4]                     # strided sample axis (downsample by 4)
 ```
+
+As with `Proxy2D`, the **sample axis** accepts a step while the **record** and
+**channel** axes require step `1`. The enclosing record block is materialized
+regardless, so sample striding is a cheap in-memory gather — it never reads
+more than the unstrided slice would.
 
 `Proxy3D` is rejected for `Open` groups. Use `Proxy2D` with a pad mode instead,
 or pick a single-rate group from `signal_groups()`.

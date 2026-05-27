@@ -12,6 +12,7 @@ use crate::group::PySignalGroup;
 use crate::proxy_2d::{PyProxy2D, parse_pad_mode};
 use crate::proxy_3d::PyProxy3D;
 use crate::signal::PySignal;
+use crate::writer::parse_variant;
 
 /// An open EDF/EDF+ file.
 #[gen_stub_pyclass]
@@ -29,9 +30,19 @@ impl PyEdfFile {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyEdfFile {
+    /// Open an EDF/EDF+/BDF file.
+    ///
+    /// `variant` forces the file variant instead of trusting the auto-detected
+    /// one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
+    /// controls the plain/"+C"/"+D" distinction; an override that changes the
+    /// EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
     #[new]
-    fn new(path: &str) -> PyResult<Self> {
-        let inner = EdfFile::open(path).map_err(to_py_err)?;
+    #[pyo3(signature = (path, variant=None))]
+    fn new(path: &str, variant: Option<&str>) -> PyResult<Self> {
+        let inner = match variant {
+            None => EdfFile::open(path).map_err(to_py_err)?,
+            Some(v) => EdfFile::open_with_variant(path, parse_variant(v)?).map_err(to_py_err)?,
+        };
         Ok(PyEdfFile { inner: Some(inner) })
     }
 
@@ -437,6 +448,16 @@ impl PyEdfFile {
     /// channel is rebuilt from parsed annotations rather than copied verbatim.
     /// `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
     /// if omitted, uses the source variant.
+    ///
+    /// Transcoding caveats:
+    /// - Records are streamed contiguously, so transcoding from EDF+D to any
+    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    ///   onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
+    /// - Because the annotation channel is rebuilt from parsed annotations,
+    ///   transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
+    ///   since plain variants have no annotation channel.
+    /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
+    ///   digital range and re-encodes from physical values, losing precision.
     #[pyo3(signature = (path, variant=None))]
     fn write_to(&self, path: &str, variant: Option<&str>) -> PyResult<()> {
         use edfarray_core::header::EdfVariant;

@@ -103,7 +103,21 @@ class EdfFile:
     ) -> Awaitable[list[npt.NDArray[np.int32]]]: ...
     def signal(self, idx_or_label: int | str, cache_capacity: int = 0) -> Signal: ...
     def signal_group(self, indices: list[int]) -> SignalGroup: ...
-    def write_to(self, path: str, variant: str | None = None) -> Awaitable[None]: ...
+    def write_to(self, path: str, variant: str | None = None) -> Awaitable[None]:
+        r"""
+        Write to `path`, optionally transcoding to a different variant.
+
+        Transcoding caveats:
+        - Records are streamed contiguously, so transcoding from EDF+D to any
+          non-EDF+D variant discards the discontinuity: the original per-record
+          onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
+        - Because the annotation channel is rebuilt from parsed annotations,
+          transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
+          since plain variants have no annotation channel.
+        - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
+          digital range and re-encodes from physical values, losing precision.
+        """
+        ...
 
     def __repr__(self) -> str: ...
     async def __aenter__(self) -> EdfFile: ...
@@ -145,7 +159,16 @@ class Signal:
     def times(self) -> Awaitable[npt.NDArray[np.float64]]: ...
 
 
-def open(path: str) -> Awaitable[EdfFile]: ...
+def open(path: str, variant: str | None = None) -> Awaitable[EdfFile]:
+    r"""
+    Open an EDF/EDF+/BDF file.
+
+    `variant` forces the file variant instead of trusting the auto-detected
+    one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
+    controls the plain/"+C"/"+D" distinction; an override that changes the
+    EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+    """
+    ...
 def inspect(path: str) -> Awaitable[dict[str, Any]]: ...
 
 

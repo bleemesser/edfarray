@@ -30,6 +30,23 @@ with edfarray.EdfFile("recording.edf") as f:
     print(f.num_signals)
 ```
 
+### Forcing the variant
+
+The variant (`EDF` vs `EDF+C` vs `EDF+D`, and the BDF equivalents) is detected
+from the header. Some writers omit or misreport the `+C`/`+D` marker; pass
+`variant` to override the detected value:
+
+```python
+# This file is really discontinuous but its header doesn't say so.
+f = edfarray.EdfFile("recording.edf", variant="EDF+D")
+```
+
+The override only controls the plain/`+C`/`+D` distinction. The EDF-vs-BDF
+sample size is fixed by the version field and cannot be changed, so an override
+that crosses that boundary (e.g. forcing `BDF` on an EDF file) raises
+`ValueError`. When an override disagrees with the detected variant, a note is
+added to `f.warnings`.
+
 ## File metadata
 
 ```python

@@ -138,11 +138,24 @@ class TestArrayProxy:
         with pytest.raises(IndexError, match="2 indices"):
             proxy[0]
 
-    def test_step_not_supported(self):
+    def test_signal_axis_step_not_supported(self):
         f = open_edf("test_generator")
         proxy, _ = get_same_rate_proxy(f)
         with pytest.raises(ValueError, match="step"):
-            proxy[0, 0:100:2]
+            proxy[0:4:2, 0:100]
+
+    def test_sample_axis_step(self):
+        f = open_edf("test_generator")
+        proxy, _ = get_same_rate_proxy(f)
+        full = proxy[:, 0:1000]
+        assert np.array_equal(proxy[:, 0:1000:4], full[:, ::4])
+        assert np.array_equal(proxy[0, 0:1000:4], full[0, ::4])
+
+    def test_sample_axis_negative_step(self):
+        f = open_edf("test_generator")
+        proxy, _ = get_same_rate_proxy(f)
+        ref = proxy[:, 0:1001]
+        assert np.array_equal(proxy[:, 1000:0:-1], ref[:, 1000:0:-1])
 
     def test_negative_sample_index(self):
         f = open_edf("test_generator")
