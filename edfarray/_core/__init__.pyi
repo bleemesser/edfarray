@@ -365,6 +365,11 @@ class Proxy2D:
         | int | slice | 1D ndarray |
         | slice/list | int | 1D ndarray |
         | slice/list | slice | 2D ndarray |
+        
+        The sample (time) axis accepts a step (e.g. `p[:, ::4]` to downsample);
+        the signal axis does not. A strided sample read still reads the full
+        enclosing span and then subsamples, so it costs about the same as the
+        unstrided read of that span — it shrinks the result, not the I/O.
         """
 
 @typing.final
@@ -398,9 +403,12 @@ class Proxy3D:
         r"""
         NumPy-style 3D indexing: `proxy[rec, channel, sample]`.
         
-        Each axis accepts an int or a slice with step 1. Returns a scalar
-        (all three ints), a 1D array (one slice axis), a 2D array (two slice
-        axes), or a 3D array (all slices).
+        Each axis accepts an int or a slice; the sample axis additionally
+        accepts a step (e.g. `p[:, :, ::4]` to downsample), while the record
+        and channel axes require step 1. Returns a scalar (all three ints), a
+        1D array (one non-int axis), a 2D array (two), or a 3D array (all).
+        The full enclosing record block is materialized regardless of the
+        sample step, so striding shrinks the result, not the work.
         """
     def stride_info(self) -> typing.Any:
         r"""
