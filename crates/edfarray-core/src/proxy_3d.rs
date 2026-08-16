@@ -201,13 +201,26 @@ impl Proxy3D {
         let channel_offset_in_record = self.file.layout.signal_offsets[first];
         let spr = self.samples_per_record;
 
-        Some(StrideInfo {
+        let info = StrideInfo {
             base_offset: data_offset + channel_offset_in_record,
             record_stride_bytes: record_size,
             channel_stride_bytes: spr * 2,
             sample_stride_bytes: 2,
             shape: (self.num_records, n_ch, spr),
-        })
+        };
+
+        // Consumers build a zero-copy view from these numbers, so they must be bounded by the
+        // real mapping rather than by what the header claims.
+        let last_byte = info
+            .base_offset
+            .checked_add(self.num_records.checked_sub(1)?.checked_mul(record_size)?)?
+            .checked_add((n_ch - 1).checked_mul(spr * 2)?)?
+            .checked_add(spr.checked_mul(2)?)?;
+        if last_byte > self.file.len() {
+            return None;
+        }
+
+        Some(info)
     }
 
     fn resolve_channel(&self, proxy_idx: usize) -> Result<usize> {

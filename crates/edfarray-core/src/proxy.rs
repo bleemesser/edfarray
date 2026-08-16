@@ -71,7 +71,7 @@ impl SignalProxy {
         }
         let samples_per_record = file.header.signals[signal_idx].num_samples;
         let num_records = file.header.num_records.max(0) as usize;
-        let total_samples = num_records * samples_per_record;
+        let total_samples = num_records.saturating_mul(samples_per_record);
 
         Ok(SignalProxy {
             signal_idx,
@@ -246,8 +246,11 @@ impl SignalProxy {
     pub fn sample_time(&self, idx: usize) -> f64 {
         let (rec_idx, offset) = self.resolve_index(idx);
         let record_onset = self.file.record_onset(rec_idx);
-        let sample_offset = offset as f64 / self.sample_rate();
-        record_onset + sample_offset
+        let rate = self.sample_rate();
+        if rate <= 0.0 || !rate.is_finite() {
+            return record_onset;
+        }
+        record_onset + offset as f64 / rate
     }
 
     /// Fill a buffer with timestamps for a range of samples.
@@ -259,16 +262,38 @@ impl SignalProxy {
         Ok(())
     }
 
-    /// Read physical samples in `[start_sec, end_sec)`. Accounts for EDF+D gaps.
-    pub fn read_at(&self, start_sec: f64, end_sec: f64) -> Result<Vec<f64>> {
-        let (s_start, s_end) = if self.file.header.variant.is_plus_d() {
+    /// Sample range covering `[start_sec, end_sec)` for a uniformly timed recording.
+    ///
+    /// Half-open and ceil-rounded at both ends, matching the EDF+D path in
+    /// `MappedFile::sample_range_for_time` so both variants return the same count.
+    pub fn uniform_sample_range(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
+        let sr = self.sample_rate();
+        if sr <= 0.0 || !sr.is_finite() {
+            return (0, 0);
+        }
+        let to_index = |t: f64| -> usize {
+            let idx = (t.max(0.0) * sr).ceil();
+            if idx >= self.total_samples as f64 {
+                self.total_samples
+            } else {
+                idx as usize
+            }
+        };
+        (to_index(start_sec), to_index(end_sec))
+    }
+
+    /// Sample range covering `[start_sec, end_sec)`, accounting for EDF+D gaps.
+    pub fn sample_range_for_time(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
+        if self.file.header.variant.is_plus_d() {
             self.file.sample_range_for_time(self, start_sec, end_sec)
         } else {
-            let sr = self.sample_rate();
-            let s_start = (start_sec.max(0.0) * sr) as usize;
-            let s_end = ((end_sec.max(0.0) * sr) as usize).min(self.total_samples);
-            (s_start, s_end)
-        };
+            self.uniform_sample_range(start_sec, end_sec)
+        }
+    }
+
+    /// Read physical samples in `[start_sec, end_sec)`. Accounts for EDF+D gaps.
+    pub fn read_at(&self, start_sec: f64, end_sec: f64) -> Result<Vec<f64>> {
+        let (s_start, s_end) = self.sample_range_for_time(start_sec, end_sec);
         if s_start >= s_end {
             return Ok(Vec::new());
         }
@@ -279,6 +304,10 @@ impl SignalProxy {
     }
 
     fn resolve_index(&self, idx: usize) -> (usize, usize) {
+        // A header may declare zero samples per record; that signal has no samples to resolve.
+        if self.samples_per_record == 0 {
+            return (0, 0);
+        }
         let rec_idx = idx / self.samples_per_record;
         let offset = idx % self.samples_per_record;
         (rec_idx, offset)

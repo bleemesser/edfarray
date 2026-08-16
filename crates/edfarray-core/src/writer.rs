@@ -254,21 +254,36 @@ impl EdfWriter {
             });
         }
 
-        let sample_size = self.sample_size_bytes();
-        let writer = self.inner.as_mut().expect("writer open");
-
+        // Validate everything before emitting a single byte: a rejection after a partial write
+        // leaves a corrupt trailing record that finish() would then finalize.
         for (i, sig) in self.spec.signals.iter().enumerate() {
-            let samples = physical[i];
-            if samples.len() != sig.samples_per_record {
+            if physical[i].len() != sig.samples_per_record {
                 return Err(EdfError::InvalidArgument {
                     name: "physical",
                     reason: format!(
                         "signal {i}: expected {} samples, got {}",
                         sig.samples_per_record,
-                        samples.len()
+                        physical[i].len()
                     ),
                 });
             }
+        }
+
+        if !self.spec.variant.is_plus()
+            && !(annotations.is_empty() && self.pending_annotations.is_empty())
+        {
+            return Err(EdfError::InvalidArgument {
+                name: "annotations",
+                reason: "annotations not supported for plain EDF/BDF; use a +C/+D variant"
+                    .to_string(),
+            });
+        }
+
+        let sample_size = self.sample_size_bytes();
+        let writer = self.inner.as_mut().expect("writer open");
+
+        for (i, sig) in self.spec.signals.iter().enumerate() {
+            let samples = physical[i];
             let (gain, offset) = sig.gain_offset();
             let dmin = sig.digital_min;
             let dmax = sig.digital_max;
@@ -302,12 +317,6 @@ impl EdfWriter {
                 &combined,
                 self.ann_bytes_per_record,
             )?;
-        } else if !combined.is_empty() {
-            return Err(EdfError::InvalidArgument {
-                name: "annotations",
-                reason: "annotations not supported for plain EDF/BDF; use a +C/+D variant"
-                    .to_string(),
-            });
         }
 
         self.num_records_written += 1;
@@ -338,7 +347,16 @@ impl EdfWriter {
                 path: self.path.clone(),
                 source: e,
             })?;
-        let nrec_field = format_ascii_field(&self.num_records_written.to_string(), 8);
+        let nrec = self.num_records_written.to_string();
+        if nrec.len() > 8 {
+            return Err(EdfError::InvalidArgument {
+                name: "num_records",
+                reason: format!(
+                    "wrote {nrec} records, which does not fit the 8-byte EDF header field"
+                ),
+            });
+        }
+        let nrec_field = format_ascii_field(&nrec, 8);
         file.write_all(&nrec_field)
             .map_err(|e| EdfError::FileOpen {
                 path: self.path.clone(),
@@ -456,11 +474,18 @@ fn digital_bounds(sample_size_bytes: usize) -> (i64, i64) {
     }
 }
 
+/// Format a header field to exactly `size` bytes, space padded.
+///
+/// EDF header fields are printable ASCII. Non-ASCII input is replaced rather than truncated
+/// mid-codepoint, which would emit an invalid byte sequence.
 fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
-    let bytes = value.as_bytes();
     let mut out = vec![b' '; size];
-    let n = bytes.len().min(size);
-    out[..n].copy_from_slice(&bytes[..n]);
+    for (dst, ch) in out.iter_mut().zip(value.chars()) {
+        *dst = match ch {
+            c if c.is_ascii() && !c.is_ascii_control() => c as u8,
+            _ => b'?',
+        };
+    }
     out
 }
 
@@ -649,7 +674,20 @@ fn write_annotation_channel<W: Write>(
             tal.extend_from_slice(format_tal_duration(dur).as_bytes());
         }
         tal.push(TAL_SEPARATOR);
-        tal.extend_from_slice(ann.text.as_bytes());
+        for &b in ann.text.as_bytes() {
+            // TAL structure is delimited by these bytes, so text containing them would produce
+            // a block that reads back as different annotations.
+            if b == TAL_SEPARATOR || b == TAL_TERMINATOR || b == TAL_DURATION_MARKER {
+                return Err(EdfError::InvalidArgument {
+                    name: "annotations",
+                    reason: format!(
+                        "annotation text contains reserved TAL byte {b:#04x}: {:?}",
+                        ann.text
+                    ),
+                });
+            }
+            tal.push(b);
+        }
         tal.push(TAL_SEPARATOR);
         tal.push(TAL_TERMINATOR);
 

@@ -216,12 +216,9 @@ impl EdfFile {
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
                 let (s_start, s_end) = if use_time {
-                    self.file.sample_range_for_time(&proxy, start_sec, end_sec)
+                    proxy.sample_range_for_time(start_sec, end_sec)
                 } else {
-                    let sr = proxy.sample_rate();
-                    let s_start = (start_sec.max(0.0) * sr) as usize;
-                    let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
-                    (s_start, s_end)
+                    proxy.uniform_sample_range(start_sec, end_sec)
                 };
                 self.read_samples(&proxy, s_start, s_end)
             })
@@ -243,12 +240,9 @@ impl EdfFile {
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
                 let (s_start, s_end) = if use_time {
-                    self.file.sample_range_for_time(&proxy, start_sec, end_sec)
+                    proxy.sample_range_for_time(start_sec, end_sec)
                 } else {
-                    let sr = proxy.sample_rate();
-                    let s_start = (start_sec.max(0.0) * sr) as usize;
-                    let s_end = ((end_sec.max(0.0) * sr) as usize).min(proxy.len());
-                    (s_start, s_end)
+                    proxy.uniform_sample_range(start_sec, end_sec)
                 };
                 self.read_digital_samples(&proxy, s_start, s_end)
             })
@@ -550,7 +544,7 @@ impl EdfFile {
                 .metadata()
                 .map(|m| m.len() as usize)
                 .unwrap_or(expected_header_bytes);
-            header.recover_num_records_from_file_size(file_size);
+            header.reconcile_num_records_with_file_size(file_size);
         }
 
         let signal_labels: Vec<String> = header.signals.iter().map(|s| s.label.clone()).collect();

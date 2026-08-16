@@ -200,6 +200,15 @@ impl EdfHeader {
             return Err(EdfError::NoSignals);
         }
 
+        // Everything downstream divides by this (sample rates, time-to-sample mapping, group
+        // bucketing), so a non-finite or negative value would poison the whole file with NaN.
+        if !record_duration_secs.is_finite() || record_duration_secs < 0.0 {
+            return Err(EdfError::InvalidHeaderField {
+                field: "record_duration",
+                reason: format!("must be finite and non-negative, got {record_duration_secs}"),
+            });
+        }
+
         let expected_header_bytes = MAIN_HEADER_SIZE + SIGNAL_HEADER_SIZE * num_signals;
         if header_bytes != expected_header_bytes {
             return Err(EdfError::HeaderSizeMismatch {
@@ -224,7 +233,12 @@ impl EdfHeader {
         let signal_data = &data[MAIN_HEADER_SIZE..header_bytes];
         let mut signals = Vec::with_capacity(num_signals);
         for i in 0..num_signals {
-            signals.push(SignalHeader::parse(signal_data, i, num_signals)?);
+            signals.push(SignalHeader::parse(
+                signal_data,
+                i,
+                num_signals,
+                &mut warnings,
+            )?);
         }
 
         let patient = parse_patient_id(&patient_id, variant, &mut warnings);
@@ -263,32 +277,45 @@ impl EdfHeader {
         self.num_records.max(0) as f64 * self.record_duration_secs
     }
 
-    /// Recover `num_records` from file size when header has -1 (EDF-L). No-op otherwise.
-    pub fn recover_num_records_from_file_size(&mut self, file_size: usize) {
-        if self.num_records >= 0 {
-            return;
-        }
+    /// Reconcile `num_records` with the actual file size.
+    ///
+    /// Recovers the count from the file size when the header declares -1 (EDF-L), and clamps it
+    /// when the header declares more records than the file can hold. A header count is never
+    /// trusted on its own: downstream sizing (sample counts, output buffers) is derived from it.
+    pub fn reconcile_num_records_with_file_size(&mut self, file_size: usize) {
         let record_size = self.record_size();
         if record_size == 0 {
-            self.warnings
-                .push("EDF-L: cannot recover num_records (record size is zero)".to_string());
+            if self.num_records < 0 {
+                self.warnings
+                    .push("EDF-L: cannot recover num_records (record size is zero)".to_string());
+            }
             self.num_records = 0;
             return;
         }
-        let header_bytes = self.header_bytes;
-        let data_bytes = file_size.saturating_sub(header_bytes);
-        let recovered = data_bytes / record_size;
+
+        let data_bytes = file_size.saturating_sub(self.header_bytes);
+        let available = (data_bytes / record_size) as i64;
         let trailing = data_bytes % record_size;
-        self.num_records = recovered as i64;
-        if trailing != 0 {
+
+        if self.num_records < 0 {
+            self.num_records = available;
+            if trailing != 0 {
+                self.warnings.push(format!(
+                    "EDF-L: recovered num_records={available} from file size; \
+                     {trailing} trailing bytes ignored"
+                ));
+            } else {
+                self.warnings.push(format!(
+                    "EDF-L: recovered num_records={available} from file size"
+                ));
+            }
+        } else if self.num_records > available {
             self.warnings.push(format!(
-                "EDF-L: recovered num_records={recovered} from file size; \
-                 {trailing} trailing bytes ignored"
+                "header declares num_records={} but file holds only {available}; \
+                 clamped to {available}",
+                self.num_records
             ));
-        } else {
-            self.warnings.push(format!(
-                "EDF-L: recovered num_records={recovered} from file size"
-            ));
+            self.num_records = available;
         }
     }
 }

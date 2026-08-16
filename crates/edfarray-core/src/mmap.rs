@@ -21,6 +21,39 @@ enum AnnotationState {
     Complete(AnnotationIndex),
 }
 
+/// Lock accessors that tolerate poisoning. A panicking scan thread must not make every later
+/// annotation access panic in turn.
+fn write_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write().unwrap_or_else(|e| e.into_inner())
+}
+
+fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Marks the annotation scan finished on drop, including during a panic unwind.
+struct ScanCompletion {
+    file: Arc<MappedFile>,
+}
+
+impl Drop for ScanCompletion {
+    fn drop(&mut self) {
+        {
+            let mut state = write_lock(&self.file.annotations);
+            if !matches!(*state, AnnotationState::Complete(_)) {
+                *state = AnnotationState::Complete(
+                    self.file
+                        .fallback_index("annotation scan panicked".to_string()),
+                );
+            }
+        }
+        let (lock, cvar) = &self.file.scan_done;
+        let mut done = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *done = true;
+        cvar.notify_all();
+    }
+}
+
 /// Memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
 pub struct MappedFile {
     mmap: Mmap,
@@ -81,7 +114,7 @@ impl MappedFile {
             }
             header.variant = forced;
         }
-        header.recover_num_records_from_file_size(mmap.len());
+        header.reconcile_num_records_with_file_size(mmap.len());
         let layout = RecordLayout::from_header(&header);
 
         let has_annotations = header.signals.iter().any(|s| s.is_annotation);
@@ -122,7 +155,7 @@ impl MappedFile {
         let progress = Arc::new(AtomicUsize::new(0));
 
         {
-            let mut state = self.annotations.write().unwrap();
+            let mut state = write_lock(&self.annotations);
             *state = AnnotationState::Scanning {
                 progress: Arc::clone(&progress),
                 total: num_records,
@@ -131,6 +164,12 @@ impl MappedFile {
 
         let file = Arc::clone(self);
         thread::spawn(move || {
+            // Signals completion even if the scan panics, future annotation access
+            // access would otherwise block forever on scan_done.
+            let guard = ScanCompletion {
+                file: Arc::clone(&file),
+            };
+
             let index = AnnotationIndex::build_with_progress(
                 &file.mmap,
                 &file.header,
@@ -138,49 +177,47 @@ impl MappedFile {
                 &progress,
             );
 
-            match index {
-                Ok(idx) => {
-                    let mut state = file.annotations.write().unwrap();
-                    *state = AnnotationState::Complete(idx);
-                }
-                Err(e) => {
-                    let mut state = file.annotations.write().unwrap();
-                    *state = AnnotationState::Complete(AnnotationIndex {
-                        annotations: Vec::new(),
-                        record_onsets: (0..num_records)
-                            .map(|i| i as f64 * file.header.record_duration_secs)
-                            .collect(),
-                        starttime_subsecond: 0.0,
-                        warnings: vec![format!("annotation scan failed: {e}")],
-                    });
-                }
-            }
+            let resolved = match index {
+                Ok(idx) => idx,
+                Err(e) => file.fallback_index(format!("annotation scan failed: {e}")),
+            };
+            *write_lock(&file.annotations) = AnnotationState::Complete(resolved);
 
-            let (lock, cvar) = &file.scan_done;
-            let mut done = lock.lock().unwrap();
-            *done = true;
-            cvar.notify_all();
+            drop(guard);
         });
+    }
+
+    /// Synthetic index used when the scan cannot produce a real one: uniform record onsets and
+    /// no annotations.
+    fn fallback_index(&self, warning: String) -> AnnotationIndex {
+        let num_records = self.header.num_records.max(0) as usize;
+        AnnotationIndex {
+            annotations: Vec::new(),
+            record_onsets: (0..num_records)
+                .map(|i| i as f64 * self.header.record_duration_secs)
+                .collect(),
+            starttime_subsecond: 0.0,
+            warnings: vec![warning],
+        }
     }
 
     /// Block until annotation scan completes. No-op if already done.
     pub fn wait_for_annotations(&self) {
         let (lock, cvar) = &self.scan_done;
-        let mut done = lock.lock().unwrap();
+        let mut done = lock.lock().unwrap_or_else(|e| e.into_inner());
         while !*done {
-            done = cvar.wait(done).unwrap();
+            done = cvar.wait(done).unwrap_or_else(|e| e.into_inner());
         }
     }
 
     /// Check whether the annotation scan has completed without blocking.
     pub fn annotations_ready(&self) -> bool {
-        let done = self.scan_done.0.lock().unwrap();
-        *done
+        *self.scan_done.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Annotation scan progress: `(records_scanned, total_records)`. Non-blocking.
     pub fn scan_progress(&self) -> (usize, usize) {
-        let state = self.annotations.read().unwrap();
+        let state = read_lock(&self.annotations);
         match &*state {
             AnnotationState::NotStarted => (0, 0),
             AnnotationState::Scanning { progress, total } => {
@@ -196,10 +233,12 @@ impl MappedFile {
     /// Block until the annotation scan is complete, then call `f` with the index.
     pub fn with_annotations<T>(&self, f: impl FnOnce(&AnnotationIndex) -> T) -> T {
         self.wait_for_annotations();
-        let state = self.annotations.read().unwrap();
+        let state = read_lock(&self.annotations);
         match &*state {
             AnnotationState::Complete(idx) => f(idx),
-            _ => unreachable!("annotations must be complete after wait"),
+            // ScanCompletion guarantees a Complete state once scan_done is set, but fall back
+            // rather than panic if that ever fails.
+            _ => f(&self.fallback_index("annotation scan did not complete".to_string())),
         }
     }
 
@@ -279,9 +318,14 @@ impl MappedFile {
         (s_start, s_end)
     }
 
-    /// Raw bytes of the entire file (the mmap backing).
-    pub fn data(&self) -> &[u8] {
-        &self.mmap
+    /// Size of the mapping in bytes.
+    pub fn len(&self) -> usize {
+        self.mmap.len()
+    }
+
+    /// Whether the mapping is empty.
+    pub fn is_empty(&self) -> bool {
+        self.mmap.is_empty()
     }
 
     /// Extract the raw bytes of a single data record.
@@ -293,8 +337,11 @@ impl MappedFile {
                 count: num_records,
             });
         }
-        let start = self.header.data_offset() + rec_idx * self.layout.record_size;
-        let end = start + self.layout.record_size;
+        let start = self
+            .header
+            .data_offset()
+            .saturating_add(rec_idx.saturating_mul(self.layout.record_size));
+        let end = start.saturating_add(self.layout.record_size);
         self.mmap.get(start..end).ok_or(EdfError::RecordOutOfRange {
             index: rec_idx,
             count: num_records,

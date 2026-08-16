@@ -23,7 +23,12 @@ pub struct SignalHeader {
 
 impl SignalHeader {
     /// Parse the header fields for signal at `index` from the per-signal header bytes.
-    pub fn parse(data: &[u8], index: usize, num_signals: usize) -> Result<Self> {
+    pub fn parse(
+        data: &[u8],
+        index: usize,
+        num_signals: usize,
+        warnings: &mut Vec<String>,
+    ) -> Result<Self> {
         let label = read_signal_field(data, index, num_signals, 0, 16)?;
         let transducer = read_signal_field(data, index, num_signals, 16, 80)?;
         let physical_dimension = read_signal_field(data, index, num_signals, 96, 8)?;
@@ -37,16 +42,14 @@ impl SignalHeader {
         let num_samples = parse_signal_usize(data, index, num_signals, 216, 8, "num_samples")?;
         let reserved = read_signal_field(data, index, num_signals, 224, 32)?;
 
-        if digital_min >= digital_max {
-            return Err(EdfError::InvalidDigitalRange {
-                index,
-                min: digital_min,
-                max: digital_max,
-            });
-        }
+        let is_annotation = label.starts_with(EDF_ANNOTATIONS_LABEL);
 
+        // If a degenerate range is present, pass digital values through instead
         let phys_scale = physical_min.abs().max(physical_max.abs());
-        if (physical_min - physical_max).abs() <= phys_scale * f64::EPSILON {
+        let phys_degenerate = (physical_min - physical_max).abs() <= phys_scale * f64::EPSILON;
+        let digital_degenerate = digital_min == digital_max;
+
+        if !physical_min.is_finite() || !physical_max.is_finite() {
             return Err(EdfError::InvalidPhysicalRange {
                 index,
                 min: physical_min,
@@ -54,9 +57,29 @@ impl SignalHeader {
             });
         }
 
-        let gain = (physical_max - physical_min) / (digital_max as f64 - digital_min as f64);
-        let offset = physical_min - gain * digital_min as f64;
-        let is_annotation = label.starts_with(EDF_ANNOTATIONS_LABEL);
+        let (gain, offset) = if digital_degenerate || phys_degenerate {
+            if !is_annotation {
+                let which = if digital_degenerate {
+                    format!("digital range [{digital_min}, {digital_max}]")
+                } else {
+                    format!("physical range [{physical_min}, {physical_max}]")
+                };
+                warnings.push(format!(
+                    "signal {index} ({label}) has a degenerate {which}; \
+                     reading digital values unscaled"
+                ));
+            }
+            (1.0, 0.0)
+        } else {
+            if digital_min > digital_max && !is_annotation {
+                warnings.push(format!(
+                    "signal {index} ({label}) has inverted digital range \
+                     [{digital_min}, {digital_max}]; scaling with negative gain"
+                ));
+            }
+            let gain = (physical_max - physical_min) / (digital_max as f64 - digital_min as f64);
+            (gain, physical_min - gain * digital_min as f64)
+        };
 
         Ok(SignalHeader {
             label,
@@ -195,7 +218,7 @@ mod tests {
             (b"", 32),         // reserved
         ];
         let data = build_signal_header_bytes(1, &fields);
-        let sig = SignalHeader::parse(&data, 0, 1).unwrap();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut Vec::new()).unwrap();
 
         assert_eq!(sig.label, "EEG Fp1");
         assert_eq!(sig.transducer, "AgAgCl");
@@ -224,12 +247,12 @@ mod tests {
             (b"", 32),
         ];
         let data = build_signal_header_bytes(1, &fields);
-        let sig = SignalHeader::parse(&data, 0, 1).unwrap();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut Vec::new()).unwrap();
         assert!(sig.is_annotation);
     }
 
     #[test]
-    fn invalid_digital_range_rejected() {
+    fn inverted_digital_range_warns_and_scales() {
         let fields: Vec<(&[u8], usize)> = vec![
             (b"EEG", 16),
             (b"", 80),
@@ -243,8 +266,55 @@ mod tests {
             (b"", 32),
         ];
         let data = build_signal_header_bytes(1, &fields);
-        let err = SignalHeader::parse(&data, 0, 1).unwrap_err();
-        assert!(matches!(err, EdfError::InvalidDigitalRange { .. }));
+        let mut warnings = Vec::new();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut warnings).unwrap();
+        assert!(sig.gain < 0.0);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("inverted"));
+    }
+
+    #[test]
+    fn degenerate_physical_range_passes_digital_through() {
+        let fields: Vec<(&[u8], usize)> = vec![
+            (b"EEG", 16),
+            (b"", 80),
+            (b"uV", 8),
+            (b"0", 8), // physical_min == physical_max
+            (b"0", 8),
+            (b"-100", 8),
+            (b"100", 8),
+            (b"", 80),
+            (b"256", 8),
+            (b"", 32),
+        ];
+        let data = build_signal_header_bytes(1, &fields);
+        let mut warnings = Vec::new();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut warnings).unwrap();
+        assert_eq!(sig.gain, 1.0);
+        assert_eq!(sig.offset, 0.0);
+        assert_eq!(sig.digital_to_physical(42), 42.0);
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn degenerate_annotation_range_is_silent() {
+        let fields: Vec<(&[u8], usize)> = vec![
+            (b"EDF Annotations", 16),
+            (b"", 80),
+            (b"", 8),
+            (b"0", 8),
+            (b"0", 8),
+            (b"0", 8),
+            (b"0", 8),
+            (b"", 80),
+            (b"30", 8),
+            (b"", 32),
+        ];
+        let data = build_signal_header_bytes(1, &fields);
+        let mut warnings = Vec::new();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut warnings).unwrap();
+        assert!(sig.is_annotation);
+        assert!(warnings.is_empty());
     }
 
     #[test]
@@ -262,7 +332,7 @@ mod tests {
             (b"", 32),
         ];
         let data = build_signal_header_bytes(1, &fields);
-        let sig = SignalHeader::parse(&data, 0, 1).unwrap();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut Vec::new()).unwrap();
 
         let phys = sig.digital_to_physical(0);
         assert!(phys.abs() < 0.1); // near zero for midpoint

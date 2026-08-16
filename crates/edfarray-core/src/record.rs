@@ -10,6 +10,11 @@ pub struct RecordLayout {
     pub sample_size_bytes: usize,
 }
 
+/// Number of samples a decode will write: bounded by both the input bytes and the output buffer.
+fn decoded_count(raw: &[u8], width: usize, out_len: usize) -> usize {
+    (raw.len() / width).min(out_len)
+}
+
 impl RecordLayout {
     /// Build the record layout from a parsed header.
     pub fn from_header(header: &EdfHeader) -> Self {
@@ -18,10 +23,12 @@ impl RecordLayout {
         let mut counts = Vec::with_capacity(header.num_signals);
         let mut offset = 0usize;
 
+        // Saturating: a header declaring absurd sample counts must not wrap the layout into
+        // small offsets that would then pass bounds checks against real data.
         for sig in &header.signals {
             offsets.push(offset);
             counts.push(sig.num_samples);
-            offset += sig.num_samples * sample_size_bytes;
+            offset = offset.saturating_add(sig.num_samples.saturating_mul(sample_size_bytes));
         }
 
         RecordLayout {
@@ -54,46 +61,53 @@ impl RecordLayout {
             })
     }
 
-    /// Decode raw bytes into physical f64 values. Two-pass for autovectorization.
+    /// Decode raw bytes into physical values, writing `min(out.len(), raw/sample_size)` samples.
+    ///
+    /// Two-pass for autovectorization. Extra capacity in `out` is left untouched.
     pub fn decode_physical(&self, raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
-        match self.sample_size_bytes {
+        let n = match self.sample_size_bytes {
             2 => {
-                for (i, chunk) in raw.chunks_exact(2).enumerate() {
-                    out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
+                let n = decoded_count(raw, 2, out.len());
+                for (chunk, dst) in raw.chunks_exact(2).zip(out[..n].iter_mut()) {
+                    *dst = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
                 }
+                n
             }
             3 => {
-                for (i, chunk) in raw.chunks_exact(3).enumerate() {
+                let n = decoded_count(raw, 3, out.len());
+                for (chunk, dst) in raw.chunks_exact(3).zip(out[..n].iter_mut()) {
                     let raw24 =
                         (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
-                    let signed = (raw24 << 8) >> 8;
-                    out[i] = signed as f64;
+                    *dst = ((raw24 << 8) >> 8) as f64;
                 }
+                n
             }
-            _ => unreachable!("invalid sample size"),
-        }
-        for val in out.iter_mut() {
+            _ => 0,
+        };
+        for val in out[..n].iter_mut() {
             *val = *val * gain + offset;
         }
     }
 
-    /// Decode raw little-endian bytes into digital i32 values.
+    /// Decode raw little-endian bytes into digital values, writing
+    /// `min(out.len(), raw/sample_size)` samples.
     pub fn decode_digital(&self, raw: &[u8], out: &mut [i32]) {
         match self.sample_size_bytes {
             2 => {
-                for (i, chunk) in raw.chunks_exact(2).enumerate() {
-                    out[i] = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
+                let n = decoded_count(raw, 2, out.len());
+                for (chunk, dst) in raw.chunks_exact(2).zip(out[..n].iter_mut()) {
+                    *dst = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
                 }
             }
             3 => {
-                for (i, chunk) in raw.chunks_exact(3).enumerate() {
+                let n = decoded_count(raw, 3, out.len());
+                for (chunk, dst) in raw.chunks_exact(3).zip(out[..n].iter_mut()) {
                     let raw24 =
                         (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
-                    let signed = (raw24 << 8) >> 8;
-                    out[i] = signed;
+                    *dst = (raw24 << 8) >> 8;
                 }
             }
-            _ => unreachable!("invalid sample size"),
+            _ => {}
         }
     }
 }
