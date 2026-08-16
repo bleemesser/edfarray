@@ -154,6 +154,20 @@ impl EdfWriter {
                 reason: format!("must be > 0, got {}", spec.record_duration_secs),
             });
         }
+        // The 8-byte startdate field stores only two year digits, read back with an 85-pivot.
+        // Outside this range the year cannot round-trip, so refuse rather than write a date
+        // that reads back a century off.
+        let year = spec.start_datetime.year();
+        if !(1985..=2084).contains(&year) {
+            return Err(EdfError::InvalidArgument {
+                name: "start_datetime",
+                reason: format!(
+                    "year {year} cannot be represented in the EDF startdate field; \
+                     must be within 1985..=2084"
+                ),
+            });
+        }
+
         let sample_size = spec.variant.sample_size_bytes();
         for (i, sig) in spec.signals.iter().enumerate() {
             sig.validate(i, sample_size)?;

@@ -87,12 +87,14 @@ impl AnnotationIndex {
             let record_data = &data[rec_offset..rec_end];
             let mut found_timekeeping = false;
 
-            for &sig_idx in &annotation_indices {
+            for (sig_pos, &sig_idx) in annotation_indices.iter().enumerate() {
                 let sig_bytes = layout.signal_bytes(record_data, sig_idx)?;
                 let tals = parse_tals(sig_bytes, rec_idx, &mut warnings);
 
                 for (tal_idx, ann) in tals.into_iter().enumerate() {
-                    if tal_idx == 0 && !found_timekeeping && ann.text.is_empty() {
+                    // EDF+ puts the record's time-keeping TAL first in the *first* annotation
+                    // signal. Accepting it from a later signal would consume a real event.
+                    if sig_pos == 0 && tal_idx == 0 && ann.text.is_empty() {
                         record_onsets.push(ann.onset);
                         found_timekeeping = true;
                         continue;
@@ -104,7 +106,14 @@ impl AnnotationIndex {
             }
 
             if !found_timekeeping {
-                if header.variant.is_plus() {
+                if header.variant.is_plus_d() {
+                    // For EDF+D the onset is the only record of where this record sits in time,
+                    // so a uniform fallback silently invents timing.
+                    warnings.push(format!(
+                        "missing time-keeping annotation in EDF+D record {rec_idx}; \
+                         assuming contiguous timing, gap positions may be wrong"
+                    ));
+                } else if header.variant.is_plus() {
                     warnings.push(format!(
                         "missing time-keeping annotation in record {rec_idx}, using calculated onset"
                     ));
@@ -115,14 +124,28 @@ impl AnnotationIndex {
             progress.store(rec_idx + 1, Ordering::Relaxed);
         }
 
-        // First TAL onset encodes subsecond start time. Subtract it to normalize all onsets.
-        let starttime_subsecond = record_onsets.first().copied().unwrap_or(0.0);
+        // EDF+ requires the first record's time-keeping onset to be the subsecond part of the
+        // start time, so it is in [0, 1). Subtracting it makes every onset relative to the file
+        // start. A value outside that range means the file is not compliant (pyedflib rejects
+        // such files outright), so normalizing by it would silently shift every annotation.
+        let first_onset = record_onsets.first().copied().unwrap_or(0.0);
+        let starttime_subsecond = if (0.0..1.0).contains(&first_onset) {
+            first_onset
+        } else {
+            warnings.push(format!(
+                "first record onset {first_onset} is not a subsecond start offset; \
+                 onsets left as stored in the file"
+            ));
+            0.0
+        };
 
-        for onset in &mut record_onsets {
-            *onset -= starttime_subsecond;
-        }
-        for ann in &mut annotations {
-            ann.onset -= starttime_subsecond;
+        if starttime_subsecond != 0.0 {
+            for onset in &mut record_onsets {
+                *onset -= starttime_subsecond;
+            }
+            for ann in &mut annotations {
+                ann.onset -= starttime_subsecond;
+            }
         }
 
         validate_record_onsets(
