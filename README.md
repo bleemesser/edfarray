@@ -1,6 +1,6 @@
 # edfarray
 
-A Rust-backed EDF/EDF+ file parser with numpy-like Python bindings. Handles EDF, EDF+C (contiguous), and EDF+D (discontinuous) recordings.
+An EDF/EDF+ file parsing library with numpy-like Python bindings. Handles EDF, EDF+C (contiguous), and EDF+D (discontinuous) recordings.
 
 **Read the [documentation](https://bleemesser.github.io/edfarray/)**
 
@@ -16,32 +16,32 @@ pip install edfarray
 import edfarray
 
 with edfarray.EdfFile("recording.edf") as f:
-    print(f.variant)       # "EDF", "EDF+C", or "EDF+D"
-    print(f.num_signals)   # number of signals (including annotation channels)
-    print(f.duration)      # total duration in seconds
+    print(f.variant) # "EDF", "EDF+C", or "EDF+D"
+    print(f.num_signals) # number of signals (including annotation channels)
+    print(f.duration) # total duration in seconds
 
     # Access a signal by index or label
     sig = f.signal("EEG Fpz-Cz")
-    print(sig.sample_rate) # e.g. 256.0
-    print(len(sig))        # total number of samples
+    print(sig.sample_rate)
+    print(len(sig))
 
     # Numpy-style indexing
-    first_sample = sig[0]         # single float
-    chunk = sig[1000:2000]        # numpy float64 array
-    downsampled = sig[::4]        # strided access
+    first_sample = sig[0] # single float
+    chunk = sig[1000:2000] # numpy float64 array
+    downsampled = sig[::4] # strided access
 
-    # Bulk access -- all channels for a time window, parallelized with rayon
+    # Bulk access to all channels for a time window, parallelized with rayon
     pages = f.read_page(0.0, 10.0)
 
     # 2D / 3D proxies for multi-channel numpy access. Build from a SignalGroup,
     # which is discovered via signal_groups() (partitions by sample rate).
-    group = max(f.signal_groups(), key=len)   # the largest same-rate group
-    p2 = f.proxy_2d(group)                    # shape: (n_signals, n_samples)
-    data = p2[:, 0:10000]                     # 2D numpy array
+    group = max(f.signal_groups(), key=len) # the largest same-rate group
+    p2 = f.proxy_2d(group) # shape: (n_signals, n_samples)
+    data = p2[:, 0:10000] # 2D numpy array
 
     # For uniform-rate groups, a 3D record view is natural for ML batching.
-    p3 = f.proxy_3d(group)                    # shape: (n_records, n_chan, spr)
-    epoch = p3[0:30, :, :]                    # first 30 records, all channels
+    p3 = f.proxy_3d(group) # shape: (n_records, n_chan, spr)
+    epoch = p3[0:30, :, :] # first 30 records, all channels
 
     # Annotations (EDF+ only)
     for ann in f.annotations:
@@ -64,7 +64,7 @@ Compared against [pyedflib](https://github.com/holgern/pyedflib) (Python binding
 
 Single-signal reads:
 
-```
+```text
 File                      Operation              edfarray     pyedflib    speedup
 ---------------------------------------------------------------------------------
 test_generator.edf        Read full signal         183 us      8.07 ms      44x
@@ -77,7 +77,7 @@ S001R01.edf               Read full signal          11 us       450 us      39x
 
 EEG viewer paging (all channels, 10s window):
 
-```
+```text
 File                      Operation              edfarray     pyedflib    speedup
 ---------------------------------------------------------------------------------
 test_generator.edf        Page forward (median)     57 us      1.15 ms      20x
