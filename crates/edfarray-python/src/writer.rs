@@ -45,6 +45,7 @@ impl PyWriterSignal {
         prefiltering = String::new(),
         reserved = String::new(),
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         label: String,
         physical_dimension: String,
@@ -193,6 +194,7 @@ impl PyEdfWriter {
         recording_id = None,
         annotation_bytes_per_record = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         path: String,
         variant: &str,
@@ -256,6 +258,7 @@ impl PyEdfWriter {
     #[pyo3(signature = (physical, annotations=None))]
     fn write_record(
         &mut self,
+        py: Python<'_>,
         physical: Vec<PyReadonlyArray1<f64>>,
         annotations: Option<Vec<PyAnnotation>>,
     ) -> PyResult<()> {
@@ -271,7 +274,7 @@ impl PyEdfWriter {
                 PyTypeError::new_err(format!("physical arrays must be contiguous: {e}"))
             })?;
         let anns_owned = annotations.map(|a| anns_to_core(&a)).unwrap_or_default();
-        w.write_record_with_annotations(&slices, &anns_owned)
+        py.detach(|| w.write_record_with_annotations(&slices, &anns_owned))
             .map_err(to_py_err)
     }
 
@@ -315,6 +318,7 @@ impl PyEdfWriter {
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn write_edf_py(
+    py: Python<'_>,
     path: String,
     variant: &str,
     record_duration: f64,
@@ -344,7 +348,8 @@ pub fn write_edf_py(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| PyTypeError::new_err(format!("data arrays must be contiguous: {e}")))?;
     let anns_owned = annotations.map(|a| anns_to_core(&a)).unwrap_or_default();
-    write_edf(&path, spec, &slices, &anns_owned).map_err(to_py_err)
+    py.detach(|| write_edf(&path, spec, &slices, &anns_owned))
+        .map_err(to_py_err)
 }
 
 // suppress unused-imports lint when used only via gen_stub macros

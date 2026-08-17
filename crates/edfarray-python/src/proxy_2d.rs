@@ -116,9 +116,8 @@ impl PyProxy2D {
             let array = PyArray1::<f64>::zeros(py, samp.count, false);
             if samp.count > 0 {
                 let (lo, hi) = samp.window();
-                let data = self
-                    .proxy
-                    .read_slice(si..si + 1, lo..hi)
+                let data = py
+                    .detach(|| self.proxy.read_slice(si..si + 1, lo..hi))
                     .map_err(to_py_err)?;
                 unsafe {
                     let out = array.as_slice_mut()?;
@@ -136,9 +135,8 @@ impl PyProxy2D {
 
         if let Some(sa) = samp_int {
             let sa = normalize_index(sa, num_samples)?;
-            let vals = self
-                .proxy
-                .read_signals_at_sample(&signal_indices, sa)
+            let vals = py
+                .detach(|| self.proxy.read_signals_at_sample(&signal_indices, sa))
                 .map_err(to_py_err)?;
             let array = PyArray1::<f64>::from_vec(py, vals);
             return Ok(array.into_any().unbind());
@@ -146,9 +144,8 @@ impl PyProxy2D {
 
         let samp = parse_sample_spec(&samp_spec, num_samples)?;
         let (lo, hi) = samp.window();
-        let data = self
-            .proxy
-            .read_physical(&signal_indices, lo..hi)
+        let data = py
+            .detach(|| self.proxy.read_physical(&signal_indices, lo..hi))
             .map_err(to_py_err)?;
         let n_sig = signal_indices.len();
         let array = PyArray2::<f64>::zeros(py, (n_sig, samp.count), false);

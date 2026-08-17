@@ -113,11 +113,10 @@ impl Proxy3D {
         let per_channel = per_channel?;
 
         for ri in 0..n_rec {
-            for ci in 0..n_ch {
+            for (ci, channel) in per_channel.iter().enumerate() {
                 let dst_base = (ri * n_ch + ci) * spr;
                 let src_base = ri * spr;
-                out[dst_base..dst_base + spr]
-                    .copy_from_slice(&per_channel[ci][src_base..src_base + spr]);
+                out[dst_base..dst_base + spr].copy_from_slice(&channel[src_base..src_base + spr]);
             }
         }
         Ok(out)
@@ -159,11 +158,10 @@ impl Proxy3D {
         let per_channel = per_channel?;
 
         for ri in 0..n_rec {
-            for ci in 0..n_ch {
+            for (ci, channel) in per_channel.iter().enumerate() {
                 let dst_base = (ri * n_ch + ci) * spr;
                 let src_base = ri * spr;
-                out[dst_base..dst_base + spr]
-                    .copy_from_slice(&per_channel[ci][src_base..src_base + spr]);
+                out[dst_base..dst_base + spr].copy_from_slice(&channel[src_base..src_base + spr]);
             }
         }
         Ok(out)

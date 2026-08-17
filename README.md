@@ -87,7 +87,19 @@ S001R01.edf               Page forward (median)    114 us      5.30 ms      47x
 (64 channels)              Random seek (median)     81 us      5.34 ms      66x
 ```
 
-^ `examples/benchmark.py`, `examples/benchmark_paging.py` (M3 Pro MacBook Pro, release build)
+Large files, where the data does not fit in the page cache. One full channel read from a 4.0 GiB, 64-channel recording:
+
+```text
+Cache state    edfarray   pyedflib    speedup
+---------------------------------------------
+Warm             113 ms    1021 ms        9.1x
+Cold             659 ms    5624 ms        8.5x
+```
+
+EDF interleaves channels within each record, so reading one channel touches every record in the file. edfarray checks how much of the range is already resident and switches to a bounded sequential read when it is not, which is what keeps the cold number close to the warm one. Forcing the memory map (`strategy="mmap"`) instead takes 3959 ms and causes 131,073 major page faults.
+
+^ `examples/benchmark.py`, `examples/benchmark_paging.py`, `scripts/bench_large.py`
+(M3 Pro MacBook Pro, release build)
 
 ## Building from source
 

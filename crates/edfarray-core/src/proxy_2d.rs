@@ -193,7 +193,7 @@ fn read_physical_with_pad(
     pad: PadMode,
 ) -> Result<Vec<f64>> {
     let proxy = SignalProxy::new(Arc::clone(file), sig_idx)?;
-    let req_end = s_end.min(usize::MAX);
+    let req_end = s_end;
     let req_start = s_start.min(req_end);
 
     if matches!(pad, PadMode::Raise) {

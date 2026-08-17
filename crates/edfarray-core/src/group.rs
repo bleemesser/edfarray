@@ -11,9 +11,10 @@ pub enum GroupKind {
 }
 
 /// Fill-value policy when 2D proxy reads extend past a channel's valid length.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum PadMode {
     /// Raise `SampleOutOfRange` on overflow. Default.
+    #[default]
     Raise,
     /// Pad with `f64::NAN`. Physical reads only.
     Nan,
@@ -23,12 +24,6 @@ pub enum PadMode {
     Value(f64),
     /// Replicate last valid sample per channel.
     Edge,
-}
-
-impl Default for PadMode {
-    fn default() -> Self {
-        PadMode::Raise
-    }
 }
 
 /// Signal indices grouped for proxy construction with supporting metadata.

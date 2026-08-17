@@ -45,7 +45,7 @@ When you call `read_page()` without specifying `signal_indices`, it defaults to 
 
 ## Architecture
 
-edfarray uses memory-mapped I/O via `memmap2`. The file is mapped into the process's address space on open, and the OS page cache handles bringing data in and out of physical RAM. This means:
+edfarray reads through a memory map (`memmap2`) by default. The file is mapped into the process's address space on open, and the OS page cache brings data in and out of physical RAM. This means:
 
 - Opening large files is near-instant. The header is parsed synchronously (fixed-size, fast), and the annotation scan runs in a background thread.
 - Signal reads work immediately after open, without waiting for the annotation scan.
@@ -53,7 +53,33 @@ edfarray uses memory-mapped I/O via `memmap2`. The file is mapped into the proce
 - Random seeks (jumping to a timestamp) only fault in the pages you touch.
 - Multiple signals reading from the same data records share cached pages.
 
-On open, edfarray parses the header and record layout synchronously (microseconds), then spawns a background thread to build the annotation index by scanning the file's TAL data. `madvise(MADV_WILLNEED)` hints are used before bulk reads to prime the page cache.
+On open, edfarray parses the header and record layout synchronously (microseconds), then spawns a background thread to build the annotation index by scanning the file's TAL data. `madvise` hints prime the page cache before bulk reads and mark the annotation scan as a sequential pass.
+
+### Memmap failure case
+
+EDF interleaves channels inside each data record, so reading one channel touches a small slice
+of every record. For a 64-channel, 256 Hz file each record is 32 KB and one channel's slice is
+512 B: the kernel must fault in the whole file to hand back a sixty-fourth of it. When the data
+is already cached that is nearly free, which is why warm benchmarks never show it. When it is
+not cached, it costs one major page fault per record.
+
+edfarray detects this. Before a large read it samples how much of the target range is resident
+(`mincore`); if the range is big and mostly not cached, it reads sequentially through a bounded
+buffer instead of faulting through the mapping. It also re-checks periodically during a long
+read, so a read that starts warm and loses its pages to memory pressure switches over partway
+rather than paying a fault per record for the rest of the file.
+
+Measured on a 4 GiB, 64-channel file, reading one full channel:
+
+| Cache state | Mapping only | Automatic | pyedflib |
+| --- | --- | --- | --- |
+| Warm | 107 ms | 113 ms | 1021 ms |
+| Cold | 3959 ms | 659 ms | 5624 ms |
+
+Cold, the mapping-only path takes 131,073 major faults (one per record); the automatic path
+takes 2. You can force either mode with `f.signal(0, strategy="mmap")` or `strategy="stream"`;
+the default is `"auto"`. Streaming is slower than a warm mapping, so `"stream"` is only the
+right explicit choice when you know the data will not be cached.
 
 ## Async annotation scan
 
@@ -78,6 +104,16 @@ f.warnings            # waits, then returns warnings including annotation parse 
 
 For plain EDF files (no annotation signals), there is no scan at all -- record onsets are computed directly from the header. For EDF+C files, signal reads never block because record onsets are uniform. Only EDF+D files need the scan results for correct time mapping via `sample_time()` / `times()`.
 
+The scan reads every data record, so on a very large file it competes with your own reads for
+page cache. Pass `scan_annotations=False` to skip it at open; the index is then built on first
+annotation access, on the calling thread:
+
+```python
+f = edfarray.EdfFile("large_recording.edf", scan_annotations=False)
+data = f.signal(0).to_numpy()   # no scan happens
+f.annotations                   # builds the index now, blocking until done
+```
+
 ## Why it's fast
 
 Three things contribute to the performance on multi-channel page reads:
@@ -86,7 +122,11 @@ Three things contribute to the performance on multi-channel page reads:
 
 2. SIMD-friendly decode. The i16-to-f64 conversion is split into a widening pass and a multiply-add pass, which the compiler autovectorizes.
 
-3. Zero-copy from mmap. Signal bytes are read directly from the memory-mapped file into the output buffer. No intermediate copies.
+3. No intermediate copies. Signal bytes are decoded from the mapping straight into the output
+   buffer. (The streaming path described above copies once into its read buffer, which is the
+   price of bounded memory use.)
+
+Reads release the GIL, so decoding scales across Python threads as well as rayon workers.
 
 ## Single-signal access
 

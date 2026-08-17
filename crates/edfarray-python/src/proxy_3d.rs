@@ -94,9 +94,11 @@ impl PyProxy3D {
         // Otherwise materialize the smallest enclosing block and squeeze ints.
         let rec_range = rec.to_range();
         let ch_range = ch.to_range();
-        let block = self
-            .proxy
-            .read_physical_block(rec_range.clone(), ch_range.clone())
+        let block = py
+            .detach(|| {
+                self.proxy
+                    .read_physical_block(rec_range.clone(), ch_range.clone())
+            })
             .map_err(to_py_err)?;
 
         let nr = rec_range.len();

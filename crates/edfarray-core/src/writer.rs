@@ -148,7 +148,7 @@ impl EdfWriter {
         if spec.signals.is_empty() {
             return Err(EdfError::NoSignals);
         }
-        if !(spec.record_duration_secs > 0.0) || !spec.record_duration_secs.is_finite() {
+        if !spec.record_duration_secs.is_finite() || spec.record_duration_secs <= 0.0 {
             return Err(EdfError::InvalidArgument {
                 name: "record_duration_secs",
                 reason: format!("must be > 0, got {}", spec.record_duration_secs),
@@ -187,7 +187,7 @@ impl EdfWriter {
                 .annotation_bytes_per_record
                 .unwrap_or(DEFAULT_MIN_ANNOTATION_BYTES);
             // Round up to a multiple of sample_size.
-            ((bytes + sample_size - 1) / sample_size) * sample_size
+            bytes.div_ceil(sample_size) * sample_size
         } else {
             0
         };
@@ -284,7 +284,7 @@ impl EdfWriter {
         }
 
         if !self.spec.variant.is_plus()
-            && !(annotations.is_empty() && self.pending_annotations.is_empty())
+            && (!annotations.is_empty() || !self.pending_annotations.is_empty())
         {
             return Err(EdfError::InvalidArgument {
                 name: "annotations",
@@ -420,7 +420,7 @@ pub fn write_edf(
                 reason: "must be > 0".to_string(),
             });
         }
-        if data[i].len() % sig.samples_per_record != 0 {
+        if !data[i].len().is_multiple_of(sig.samples_per_record) {
             return Err(EdfError::InvalidArgument {
                 name: "data",
                 reason: format!(
@@ -466,14 +466,14 @@ pub fn write_edf(
         }
     }
 
-    for r in 0..num_records {
+    for (r, record_annotations) in by_record.iter().enumerate().take(num_records) {
         let mut row: Vec<&[f64]> = Vec::with_capacity(signals_count);
-        for i in 0..signals_count {
-            let spr = writer.spec.signals[i].samples_per_record;
+        for (sig, channel) in writer.spec.signals.iter().zip(data.iter()) {
+            let spr = sig.samples_per_record;
             let start = r * spr;
-            row.push(&data[i][start..start + spr]);
+            row.push(&channel[start..start + spr]);
         }
-        writer.write_record_with_annotations(&row, &by_record[r])?;
+        writer.write_record_with_annotations(&row, record_annotations)?;
     }
 
     writer.finish()?;
@@ -971,7 +971,7 @@ mod tests {
         let path = dir.path().join("overflow.edf");
         let mut spec = sample_spec(EdfVariant::EdfPlusC);
         spec.annotation_bytes_per_record = Some(40);
-        let data = vec![0.0f64; 256 * 1];
+        let data = vec![0.0f64; 256];
         let big_text = "X".repeat(200);
         let anns = vec![Annotation {
             onset: 0.0,

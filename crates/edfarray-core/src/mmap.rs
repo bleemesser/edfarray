@@ -3,7 +3,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 
+pub use memmap2::Advice;
 use memmap2::Mmap;
+
+/// Upper bound on a single `WillNeed` hint. Advising more than the kernel can retain evicts
+/// pages the caller is still using.
+const MAX_WILLNEED_BYTES: usize = 64 << 20;
 
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
@@ -19,6 +24,36 @@ enum AnnotationState {
         total: usize,
     },
     Complete(AnnotationIndex),
+}
+
+#[cfg(unix)]
+fn page_size() -> usize {
+    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }.max(1)
+}
+
+/// Positional read that fills `buf` entirely.
+fn read_exact_at(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        file.read_exact_at(buf, offset)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let mut done = 0usize;
+        while done < buf.len() {
+            let n = file.seek_read(&mut buf[done..], offset + done as u64)?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "short read",
+                ));
+            }
+            done += n;
+        }
+        Ok(())
+    }
 }
 
 /// Lock accessors that tolerate poisoning. A panicking scan thread must not make every later
@@ -57,10 +92,24 @@ impl Drop for ScanCompletion {
 /// Memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
 pub struct MappedFile {
     mmap: Mmap,
+    /// Kept open alongside the mapping for positional reads on the streaming path.
+    file: std::fs::File,
     pub header: EdfHeader,
     pub layout: RecordLayout,
     annotations: RwLock<AnnotationState>,
     scan_done: (Mutex<bool>, Condvar),
+    /// Serializes on-demand index construction when the eager scan is disabled.
+    scan_guard: Mutex<()>,
+}
+
+/// How the annotation index is built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScanMode {
+    /// Scan in the background as soon as the file is opened.
+    #[default]
+    Eager,
+    /// Build the index on first annotation access, on the calling thread.
+    Lazy,
 }
 
 impl std::fmt::Debug for MappedFile {
@@ -85,6 +134,18 @@ impl MappedFile {
     /// from the version field, so an override whose sample-size family disagrees
     /// is rejected.
     pub fn open_with_variant(path: &Path, variant: Option<EdfVariant>) -> Result<Arc<Self>> {
+        Self::open_with_options(path, variant, ScanMode::default())
+    }
+
+    /// Open a file, choosing when the annotation index is built.
+    ///
+    /// [`ScanMode::Lazy`] avoids touching every record at open time, which matters for large
+    /// files where the scan would otherwise compete with the caller's reads for page cache.
+    pub fn open_with_options(
+        path: &Path,
+        variant: Option<EdfVariant>,
+        scan_mode: ScanMode,
+    ) -> Result<Arc<Self>> {
         let file = std::fs::File::open(path).map_err(|e| EdfError::FileOpen {
             path: path.to_path_buf(),
             source: e,
@@ -136,13 +197,15 @@ impl MappedFile {
 
         let mapped = Arc::new(MappedFile {
             mmap,
+            file,
             header,
             layout,
             annotations: RwLock::new(initial_state),
             scan_done: (Mutex::new(!has_annotations), Condvar::new()),
+            scan_guard: Mutex::new(()),
         });
 
-        if has_annotations {
+        if has_annotations && scan_mode == ScanMode::Eager {
             mapped.start_annotation_scan();
         }
 
@@ -170,21 +233,31 @@ impl MappedFile {
                 file: Arc::clone(&file),
             };
 
-            let index = AnnotationIndex::build_with_progress(
-                &file.mmap,
-                &file.header,
-                &file.layout,
-                &progress,
-            );
-
-            let resolved = match index {
-                Ok(idx) => idx,
-                Err(e) => file.fallback_index(format!("annotation scan failed: {e}")),
-            };
+            let resolved = file.build_annotation_index(&progress);
             *write_lock(&file.annotations) = AnnotationState::Complete(resolved);
 
             drop(guard);
         });
+    }
+
+    /// Scan every record's annotation channel and build the index.
+    ///
+    /// The scan walks the whole file once, so it tells the kernel to read ahead aggressively
+    /// and drop pages behind the cursor rather than growing the page cache by the file size.
+    fn build_annotation_index(&self, progress: &AtomicUsize) -> AnnotationIndex {
+        let num_records = self.header.num_records.max(0) as usize;
+        self.advise_records(0, num_records, Advice::Sequential);
+
+        let index =
+            AnnotationIndex::build_with_progress(&self.mmap, &self.header, &self.layout, progress);
+
+        // Leave the mapping without a lingering sequential hint, since callers read randomly.
+        self.advise_records(0, num_records, Advice::Normal);
+
+        match index {
+            Ok(idx) => idx,
+            Err(e) => self.fallback_index(format!("annotation scan failed: {e}")),
+        }
     }
 
     /// Synthetic index used when the scan cannot produce a real one: uniform record onsets and
@@ -201,8 +274,27 @@ impl MappedFile {
         }
     }
 
-    /// Block until annotation scan completes. No-op if already done.
+    /// Block until the annotation index is available, building it here if the scan was deferred.
     pub fn wait_for_annotations(&self) {
+        if self.annotations_ready() {
+            return;
+        }
+
+        {
+            // Only one thread builds a deferred index; the rest fall through to the wait below.
+            let _guard = self.scan_guard.lock().unwrap_or_else(|e| e.into_inner());
+            let deferred = matches!(&*read_lock(&self.annotations), AnnotationState::NotStarted);
+            if deferred && !self.annotations_ready() {
+                let progress = AtomicUsize::new(0);
+                let index = self.build_annotation_index(&progress);
+                *write_lock(&self.annotations) = AnnotationState::Complete(index);
+                let (lock, cvar) = &self.scan_done;
+                *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                cvar.notify_all();
+                return;
+            }
+        }
+
         let (lock, cvar) = &self.scan_done;
         let mut done = lock.lock().unwrap_or_else(|e| e.into_inner());
         while !*done {
@@ -269,9 +361,8 @@ impl MappedFile {
 
         let samples_per_record = proxy.header().num_samples;
         let sample_rate = proxy.sample_rate();
-        let total_samples = num_records * samples_per_record;
+        let total_samples = num_records.saturating_mul(samples_per_record);
 
-        // Clamp and validate time range.
         let start_sec = start_sec.max(0.0);
         let end_sec = end_sec.max(0.0);
 
@@ -279,43 +370,42 @@ impl MappedFile {
             return (0, 0);
         }
 
-        let onsets: Vec<f64> = self.with_annotations(|idx| idx.record_onsets.clone());
+        // Borrowed, not cloned: read_page calls this once per channel, and the onset table has
+        // one entry per record.
+        self.with_annotations(|idx| {
+            let onsets = &idx.record_onsets;
 
-        if onsets.is_empty() {
-            let s_start = (start_sec * sample_rate) as usize;
-            let s_end = ((end_sec * sample_rate) as usize).min(total_samples);
-            return (s_start, s_end);
-        }
+            if onsets.is_empty() {
+                let s_start = (start_sec * sample_rate) as usize;
+                let s_end = ((end_sec * sample_rate) as usize).min(total_samples);
+                return (s_start, s_end);
+            }
 
-        let first_rec =
-            onsets.partition_point(|&o| o + self.header.record_duration_secs <= start_sec);
-        let end_rec_pt = onsets.partition_point(|&o| o < end_sec);
+            let first_rec =
+                onsets.partition_point(|&o| o + self.header.record_duration_secs <= start_sec);
+            let end_rec_pt = onsets.partition_point(|&o| o < end_sec);
 
-        if end_rec_pt == 0 {
-            return (0, 0);
-        }
+            if end_rec_pt == 0 {
+                return (0, 0);
+            }
 
-        let last_rec = end_rec_pt.saturating_sub(1).min(num_records - 1);
-        let first_rec = first_rec.min(num_records - 1);
+            let last_rec = end_rec_pt.saturating_sub(1).min(num_records - 1);
+            let first_rec = first_rec.min(num_records - 1);
 
-        if first_rec > last_rec {
-            return (0, 0);
-        }
+            if first_rec > last_rec {
+                return (0, 0);
+            }
 
-        let rec_onset = onsets[first_rec];
-        let start_offset = (((start_sec - rec_onset) * sample_rate).ceil() as isize)
-            .clamp(0, samples_per_record as isize) as usize;
-        let s_start = first_rec * samples_per_record + start_offset;
+            let start_offset = (((start_sec - onsets[first_rec]) * sample_rate).ceil() as isize)
+                .clamp(0, samples_per_record as isize) as usize;
+            let s_start = first_rec * samples_per_record + start_offset;
 
-        let last_rec_onset = onsets[last_rec];
-        let end_offset = (((end_sec - last_rec_onset) * sample_rate).ceil() as isize)
-            .clamp(0, samples_per_record as isize) as usize;
-        let s_end = last_rec * samples_per_record + end_offset;
+            let end_offset = (((end_sec - onsets[last_rec]) * sample_rate).ceil() as isize)
+                .clamp(0, samples_per_record as isize) as usize;
+            let s_end = last_rec * samples_per_record + end_offset;
 
-        let s_start = s_start.min(total_samples);
-        let s_end = s_end.min(total_samples);
-
-        (s_start, s_end)
+            (s_start.min(total_samples), s_end.min(total_samples))
+        })
     }
 
     /// Size of the mapping in bytes.
@@ -348,23 +438,113 @@ impl MappedFile {
         })
     }
 
-    /// Hint to the OS that we'll soon need the bytes for the given record range.
-    #[cfg(unix)]
-    pub fn advise_willneed(&self, start_record: usize, end_record: usize) {
-        let data_offset = self.header.data_offset();
-        let byte_start = data_offset + start_record * self.layout.record_size;
-        let byte_end = data_offset + end_record * self.layout.record_size;
-        let byte_end = byte_end.min(self.mmap.len());
-        if byte_start < byte_end
-            && let Some(slice) = self.mmap.get(byte_start..byte_end)
+    /// Read `count` records starting at `start_record` into `buf` with a positional read.
+    ///
+    /// This is the streaming alternative to faulting the records in through the mapping. It
+    /// costs one syscall per chunk instead of one page fault per record, and its resident set
+    /// is just `buf`.
+    pub fn read_records_into(
+        &self,
+        start_record: usize,
+        count: usize,
+        buf: &mut [u8],
+    ) -> Result<()> {
+        let Some((start, end)) = self.record_byte_range(start_record, start_record + count) else {
+            return Ok(());
+        };
+        let want = (end - start).min(buf.len());
+        read_exact_at(&self.file, &mut buf[..want], start as u64).map_err(|e| {
+            EdfError::InvalidArgument {
+                name: "record range",
+                reason: format!("failed to read records at byte {start}: {e}"),
+            }
+        })
+    }
+
+    /// Fraction of the pages backing a record range that are already resident, sampled.
+    ///
+    /// Returns 1.0 when residency cannot be determined, so callers keep the mmap path by
+    /// default rather than streaming on a guess.
+    pub fn residency(&self, start_record: usize, end_record: usize) -> f64 {
+        #[cfg(unix)]
         {
-            let _ = unsafe {
-                libc::madvise(
-                    slice.as_ptr() as *mut libc::c_void,
-                    byte_end - byte_start,
-                    libc::MADV_WILLNEED,
-                )
+            let Some((start, end)) = self.record_byte_range(start_record, end_record) else {
+                return 1.0;
             };
+            let page = page_size();
+            let pages = (end - start).div_ceil(page);
+            if pages == 0 {
+                return 1.0;
+            }
+            const SAMPLES: usize = 64;
+            let step = (pages / SAMPLES).max(1);
+            let base = self.mmap.as_ptr();
+            let mut checked = 0usize;
+            let mut resident = 0usize;
+            let mut page_idx = 0usize;
+            while page_idx < pages && checked < SAMPLES {
+                let offset = start + page_idx * page;
+                // Align to a page boundary; mincore rejects unaligned addresses.
+                let aligned = offset - (base as usize + offset) % page;
+                let mut vec = [0u8; 1];
+                let rc = unsafe {
+                    libc::mincore(
+                        base.add(aligned) as *mut libc::c_void,
+                        page,
+                        vec.as_mut_ptr() as *mut _,
+                    )
+                };
+                if rc != 0 {
+                    return 1.0;
+                }
+                resident += (vec[0] & 1) as usize;
+                checked += 1;
+                page_idx += step;
+            }
+            if checked == 0 {
+                return 1.0;
+            }
+            resident as f64 / checked as f64
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (start_record, end_record);
+            1.0
+        }
+    }
+
+    /// Byte range spanned by a record range, clamped to the mapping.
+    fn record_byte_range(&self, start_record: usize, end_record: usize) -> Option<(usize, usize)> {
+        let data_offset = self.header.data_offset();
+        let start = data_offset.checked_add(start_record.checked_mul(self.layout.record_size)?)?;
+        let end = data_offset
+            .checked_add(end_record.checked_mul(self.layout.record_size)?)?
+            .min(self.mmap.len());
+        (start < end).then_some((start, end))
+    }
+
+    /// Apply an access-pattern hint to the records in `[start_record, end_record)`.
+    ///
+    /// Advisory only: failures are ignored, and the call is a no-op on non-Unix platforms.
+    /// `Advice::WillNeed` is capped at [`MAX_WILLNEED_BYTES`] because advising a huge span
+    /// asks the kernel to fault in more than it can keep, which is counterproductive under
+    /// memory pressure.
+    pub fn advise_records(&self, start_record: usize, end_record: usize, advice: Advice) {
+        #[cfg(unix)]
+        {
+            let Some((start, mut end)) = self.record_byte_range(start_record, end_record) else {
+                return;
+            };
+            if matches!(advice, Advice::WillNeed) {
+                end = end.min(start.saturating_add(MAX_WILLNEED_BYTES));
+            }
+            // memmap2 aligns the address down to a page boundary; a hand-rolled madvise on an
+            // unaligned address fails with EINVAL.
+            let _ = self.mmap.advise_range(advice, start, end - start);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (start_record, end_record, advice);
         }
     }
 }

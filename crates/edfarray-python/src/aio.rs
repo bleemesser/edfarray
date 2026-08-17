@@ -38,6 +38,7 @@ impl PyAsyncWriterSignal {
         prefiltering = String::new(),
         reserved = String::new(),
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         label: String,
         physical_dimension: String,
@@ -753,6 +754,7 @@ impl PyAsyncEdfWriter {
         recording_id = None,
         annotation_bytes_per_record = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn create<'py>(
         _cls: &Bound<'_, pyo3::types::PyType>,
         py: Python<'py>,

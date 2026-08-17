@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::PySlice;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
+use edfarray_core::error::EdfError;
 use edfarray_core::proxy::SignalProxy;
 
 use crate::errors::to_py_err;
@@ -122,23 +123,22 @@ impl PySignal {
                 let count = stop.saturating_sub(start);
                 let array = PyArray1::<f64>::zeros(py, count, false);
                 if count > 0 {
-                    unsafe {
-                        let slice = array.as_slice_mut()?;
-                        self.proxy
-                            .read_physical(start, stop, slice)
-                            .map_err(to_py_err)?;
-                    }
+                    let slice = unsafe { array.as_slice_mut()? };
+                    py.detach(|| self.proxy.read_physical(start, stop, slice))
+                        .map_err(to_py_err)?;
                 }
                 Ok(array.into_any().unbind())
             } else {
                 let indices: Vec<usize> = StridedRange::new(start, stop, step).collect();
                 let array = PyArray1::<f64>::zeros(py, indices.len(), false);
-                unsafe {
-                    let slice = array.as_slice_mut()?;
-                    for (i, &idx) in indices.iter().enumerate() {
-                        slice[i] = self.proxy.get_physical(idx).map_err(to_py_err)?;
+                let slice = unsafe { array.as_slice_mut()? };
+                py.detach(|| -> Result<(), EdfError> {
+                    for (dst, &idx) in slice.iter_mut().zip(indices.iter()) {
+                        *dst = self.proxy.get_physical(idx)?;
                     }
-                }
+                    Ok(())
+                })
+                .map_err(to_py_err)?;
                 Ok(array.into_any().unbind())
             }
         } else {
@@ -151,10 +151,9 @@ impl PySignal {
         let len = self.proxy.len();
         let array = PyArray1::<f64>::zeros(py, len, false);
         if len > 0 {
-            unsafe {
-                let slice = array.as_slice_mut()?;
-                self.proxy.read_physical(0, len, slice).map_err(to_py_err)?;
-            }
+            let slice = unsafe { array.as_slice_mut()? };
+            py.detach(|| self.proxy.read_physical(0, len, slice))
+                .map_err(to_py_err)?;
         }
         Ok(array)
     }
@@ -164,10 +163,9 @@ impl PySignal {
         let len = self.proxy.len();
         let array = PyArray1::<i32>::zeros(py, len, false);
         if len > 0 {
-            unsafe {
-                let slice = array.as_slice_mut()?;
-                self.proxy.read_digital(0, len, slice).map_err(to_py_err)?;
-            }
+            let slice = unsafe { array.as_slice_mut()? };
+            py.detach(|| self.proxy.read_digital(0, len, slice))
+                .map_err(to_py_err)?;
         }
         Ok(array)
     }
@@ -177,11 +175,9 @@ impl PySignal {
         let len = self.proxy.len();
         let array = PyArray1::<f64>::zeros(py, len, false);
         if len > 0 {
-            let mut buf = vec![0.0f64; len];
-            self.proxy.read_times(0, len, &mut buf).map_err(to_py_err)?;
-            unsafe {
-                array.as_slice_mut()?.copy_from_slice(&buf);
-            }
+            let slice = unsafe { array.as_slice_mut()? };
+            py.detach(|| self.proxy.read_times(0, len, slice))
+                .map_err(to_py_err)?;
         }
         Ok(array)
     }
@@ -198,7 +194,9 @@ impl PySignal {
         start_sec: f64,
         end_sec: f64,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        let buf = self.proxy.read_at(start_sec, end_sec).map_err(to_py_err)?;
+        let buf = py
+            .detach(|| self.proxy.read_at(start_sec, end_sec))
+            .map_err(to_py_err)?;
         let len = buf.len();
         let array = PyArray1::<f64>::zeros(py, len, false);
         if len > 0 {
@@ -244,16 +242,16 @@ impl Iterator for StridedRange {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.step > 0 && self.current < self.stop {
-            let val = self.current as usize;
-            self.current += self.step;
-            Some(val)
-        } else if self.step < 0 && self.current > self.stop {
-            let val = self.current as usize;
-            self.current += self.step;
-            Some(val)
+        let in_range = if self.step > 0 {
+            self.current < self.stop
         } else {
-            None
+            self.step < 0 && self.current > self.stop
+        };
+        if !in_range {
+            return None;
         }
+        let val = self.current as usize;
+        self.current += self.step;
+        Some(val)
     }
 }

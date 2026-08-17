@@ -11,7 +11,7 @@ use crate::annotation::Annotation;
 use crate::error::{EdfError, Result};
 use crate::group::{PadMode, SignalGroup};
 use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
-use crate::mmap::MappedFile;
+use crate::mmap::{Advice, MappedFile, ScanMode};
 use crate::proxy::SignalProxy;
 use crate::proxy_2d::Proxy2D;
 use crate::proxy_3d::Proxy3D;
@@ -36,6 +36,17 @@ impl EdfFile {
     /// the version field) is rejected.
     pub fn open_with_variant(path: impl AsRef<Path>, variant: EdfVariant) -> Result<Self> {
         let file = MappedFile::open_with_variant(path.as_ref(), Some(variant))?;
+        Ok(EdfFile { file })
+    }
+
+    /// Open a file, optionally forcing the variant and choosing when the annotation index is
+    /// built. See [`ScanMode`].
+    pub fn open_with_options(
+        path: impl AsRef<Path>,
+        variant: Option<EdfVariant>,
+        scan_mode: ScanMode,
+    ) -> Result<Self> {
+        let file = MappedFile::open_with_options(path.as_ref(), variant, scan_mode)?;
         Ok(EdfFile { file })
     }
 
@@ -249,20 +260,41 @@ impl EdfFile {
             .collect()
     }
 
-    /// OS read-ahead hint for records covering the time range.
-    #[cfg(unix)]
+    /// OS read-ahead hint for the records covering a time range.
     fn advise_time_range(&self, start_sec: f64, end_sec: f64) {
-        let dur = self.file.header.record_duration_secs;
-        if dur <= 0.0 {
-            return;
+        let (first, last) = self.record_range_for_time(start_sec, end_sec);
+        if first < last {
+            self.file.advise_records(first, last, Advice::WillNeed);
         }
-        let first = (start_sec / dur) as usize;
-        let last = ((end_sec / dur).ceil() as usize).min(self.num_records());
-        self.file.advise_willneed(first, last);
     }
 
-    #[cfg(not(unix))]
-    fn advise_time_range(&self, _start_sec: f64, _end_sec: f64) {}
+    /// Record range covering `[start_sec, end_sec)`.
+    ///
+    /// EDF+D record onsets are non-uniform, so they must be looked up rather than derived from
+    /// the record duration.
+    fn record_range_for_time(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
+        let num_records = self.num_records();
+        let dur = self.file.header.record_duration_secs;
+
+        if self.file.header.variant.is_plus_d() {
+            return self.file.with_annotations(|idx| {
+                let onsets = &idx.record_onsets;
+                if onsets.is_empty() {
+                    return (0, 0);
+                }
+                let first = onsets.partition_point(|&o| o + dur <= start_sec);
+                let last = onsets.partition_point(|&o| o < end_sec);
+                (first.min(num_records), last.min(num_records))
+            });
+        }
+
+        if dur <= 0.0 {
+            return (0, 0);
+        }
+        let first = ((start_sec.max(0.0) / dur) as usize).min(num_records);
+        let last = (((end_sec.max(0.0) / dur).ceil()) as usize).min(num_records);
+        (first, last)
+    }
 
     fn read_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<f64>> {
         if s_start >= proxy.len() || s_start >= s_end {
@@ -462,14 +494,14 @@ impl EdfFile {
             .map(|p| vec![0.0f64; p.header().num_samples])
             .collect();
 
-        for r in 0..num_records {
-            for (i, p) in proxies.iter().enumerate() {
+        for (r, record_annotations) in by_record.iter().enumerate().take(num_records) {
+            for (buf, p) in bufs.iter_mut().zip(proxies.iter()) {
                 let spr = p.header().num_samples;
                 let start = r * spr;
-                p.read_physical(start, start + spr, &mut bufs[i])?;
+                p.read_physical(start, start + spr, buf)?;
             }
             let row: Vec<&[f64]> = bufs.iter().map(|b| b.as_slice()).collect();
-            writer.write_record_with_annotations(&row, &by_record[r])?;
+            writer.write_record_with_annotations(&row, record_annotations)?;
         }
 
         writer.finish()?;
@@ -777,7 +809,7 @@ mod tests {
         for i in 0..(actual_records * samples_per_record) {
             buf.extend_from_slice(&(i as i16).to_le_bytes());
         }
-        buf.extend(std::iter::repeat(0u8).take(trailing_bytes));
+        buf.extend(std::iter::repeat_n(0u8, trailing_bytes));
 
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(&buf).unwrap();
@@ -1120,7 +1152,7 @@ mod fixture_tests {
         // "dc" is a substring of DC01, DC04, DC03, DC02 (indices 12, 13, 14, 15)
         let indices = edf.find_all_signals("dc", false);
         assert!(
-            indices.len() >= 1,
+            !indices.is_empty(),
             "partial match should find at least one signal"
         );
         // Verify all returned indices have labels containing "dc" (case-insensitive)

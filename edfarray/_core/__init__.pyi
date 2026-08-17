@@ -152,7 +152,7 @@ class EdfFile:
         r"""
         Progress of the background annotation scan: (records_scanned, total_records).
         """
-    def __new__(cls, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> EdfFile:
+    def __new__(cls, path: builtins.str, variant: typing.Optional[builtins.str] = None, scan_annotations: builtins.bool = ...) -> EdfFile:
         r"""
         Open an EDF/EDF+/BDF file.
         
@@ -160,6 +160,11 @@ class EdfFile:
         one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
         controls the plain/"+C"/"+D" distinction; an override that changes the
         EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+        
+        By default the annotation index is built by a background scan started at open. That
+        scan reads every data record, so for very large files it competes with your own reads
+        for page cache. Pass `scan_annotations=False` to defer it until annotations are first
+        accessed, at which point it runs on the calling thread.
         """
     def __enter__(self) -> EdfFile: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
@@ -208,7 +213,7 @@ class EdfFile:
         
         Searches all signals including annotation signals.
         """
-    def signal(self, idx_or_label: typing.Any, cache_capacity: builtins.int = ...) -> Signal:
+    def signal(self, idx_or_label: typing.Any, cache_capacity: builtins.int = ..., strategy: typing.Optional[builtins.str] = None) -> Signal:
         r"""
         Get a signal by index or label.
         
@@ -226,6 +231,10 @@ class EdfFile:
         The cache only accelerates physical reads -- `to_digital()` always
         re-decodes from the memory map. Caching is per-`Signal`: re-fetching from
         `signal()` starts fresh.
+        
+        `strategy` overrides how bytes are fetched: `"auto"` (default) streams large reads that
+        are not already cached and uses the memory map otherwise, `"mmap"` always maps, and
+        `"stream"` always reads sequentially through a bounded buffer.
         """
     def signal_labels(self) -> builtins.list[builtins.str]:
         r"""

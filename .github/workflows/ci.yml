@@ -19,6 +19,8 @@ jobs:
       - run: uv sync
       - run: uv run pytest
       - run: cargo test -p edfarray-core
+      - run: cargo test -p edfarray-core --release
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   build-linux:
     if: startsWith(github.ref, 'refs/tags/')

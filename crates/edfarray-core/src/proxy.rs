@@ -1,52 +1,103 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::error::{EdfError, Result};
 use crate::mmap::MappedFile;
 use crate::signal::SignalHeader;
 
-/// LRU cache of decoded physical records. Keyed by record index, disabled via `Option::None` on `SignalProxy`.
+/// Minimum record-span size before streaming is considered. Below this the mmap path wins on
+/// syscall overhead alone.
+const STREAM_MIN_BYTES: usize = 32 << 20;
+
+/// Bytes read per positional read on the streaming path.
+const STREAM_CHUNK_BYTES: usize = 8 << 20;
+
+/// Sampled residency above which the data is treated as already cached, so faulting it in is
+/// nearly free and the mapping is the faster path.
+const RESIDENT_ENOUGH: f64 = 0.5;
+
+/// How often a long mmap read re-checks residency of the remaining span.
+const RESIDENCY_RECHECK_RECORDS: usize = 1024;
+
+/// How a read gets its bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReadStrategy {
+    /// Stream large non-resident reads, use the mapping otherwise.
+    #[default]
+    Auto,
+    /// Always read through the memory mapping.
+    Mmap,
+    /// Always read sequentially through a bounded buffer.
+    Stream,
+}
+
+/// LRU cache of decoded physical records, keyed by record index.
+///
+/// Recency is tracked by a monotonic counter rather than a queue, so lookups and insertions do
+/// not scan. Eviction scans once per insertion, which only happens on a miss at capacity.
 #[derive(Debug)]
 struct LruCache {
     capacity: usize,
-    map: HashMap<usize, Vec<f64>>,
-    order: VecDeque<usize>,
+    map: HashMap<usize, CacheEntry>,
+    clock: u64,
+}
+
+#[derive(Debug)]
+struct CacheEntry {
+    data: Vec<f64>,
+    used: u64,
 }
 
 impl LruCache {
     fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "LruCache capacity must be > 0");
         Self {
-            capacity,
+            capacity: capacity.max(1),
             map: HashMap::with_capacity(capacity),
-            order: VecDeque::with_capacity(capacity),
+            clock: 0,
         }
     }
 
     fn get(&mut self, rec_idx: usize) -> Option<&[f64]> {
-        if let Some(pos) = self.order.iter().position(|&x| x == rec_idx) {
-            self.order.remove(pos);
-            self.order.push_front(rec_idx);
-            self.map.get(&rec_idx).map(|v| v.as_slice())
-        } else {
-            None
-        }
+        self.clock += 1;
+        let clock = self.clock;
+        let entry = self.map.get_mut(&rec_idx)?;
+        entry.used = clock;
+        Some(&entry.data)
     }
 
     fn put(&mut self, rec_idx: usize, data: Vec<f64>) {
-        if let Some(pos) = self.order.iter().position(|&x| x == rec_idx) {
-            self.order.remove(pos);
-            self.map.insert(rec_idx, data);
-            self.order.push_front(rec_idx);
-        } else {
-            if self.map.len() >= self.capacity {
-                if let Some(lru) = self.order.pop_back() {
-                    self.map.remove(&lru);
-                }
-            }
-            self.map.insert(rec_idx, data);
-            self.order.push_front(rec_idx);
+        self.clock += 1;
+        if !self.map.contains_key(&rec_idx)
+            && self.map.len() >= self.capacity
+            && let Some(&lru) = self.map.iter().min_by_key(|(_, e)| e.used).map(|(k, _)| k)
+        {
+            self.map.remove(&lru);
         }
+        self.map.insert(
+            rec_idx,
+            CacheEntry {
+                data,
+                used: self.clock,
+            },
+        );
+    }
+
+    /// Reusable scratch buffer for a decode that is about to be cached.
+    fn take_buffer(&mut self, len: usize) -> Vec<f64> {
+        let mut buf = if self.map.len() >= self.capacity {
+            self.map
+                .iter()
+                .min_by_key(|(_, e)| e.used)
+                .map(|(k, _)| *k)
+                .and_then(|lru| self.map.remove(&lru))
+                .map(|e| e.data)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        buf.clear();
+        buf.resize(len, 0.0);
+        buf
     }
 }
 
@@ -58,6 +109,7 @@ pub struct SignalProxy {
     total_samples: usize,
     samples_per_record: usize,
     cache: Option<Mutex<LruCache>>,
+    strategy: ReadStrategy,
 }
 
 impl SignalProxy {
@@ -79,6 +131,7 @@ impl SignalProxy {
             total_samples,
             samples_per_record,
             cache: None,
+            strategy: ReadStrategy::default(),
         })
     }
 
@@ -103,6 +156,12 @@ impl SignalProxy {
             .sample_rate(self.file.header.record_duration_secs)
     }
 
+    /// Force how reads fetch bytes, overriding the automatic choice.
+    pub fn with_strategy(mut self, strategy: ReadStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
     /// Enable LRU cache for physical reads. `capacity` is record count, not bytes. `read_digital` bypasses cache. Capacity 0 disables.
     pub fn with_cache(mut self, capacity: usize) -> Self {
         if capacity == 0 {
@@ -123,12 +182,11 @@ impl SignalProxy {
         let (rec_idx, offset) = self.resolve_index(idx);
 
         // Check warm cache. On miss, do not populate for single-sample access.
-        if let Some(cache) = &self.cache {
-            if let Some(cached) = cache.lock().unwrap().get(rec_idx) {
-                if offset < cached.len() {
-                    return Ok(cached[offset]);
-                }
-            }
+        if let Some(cache) = &self.cache
+            && let Some(cached) = cache.lock().unwrap().get(rec_idx)
+            && offset < cached.len()
+        {
+            return Ok(cached[offset]);
         }
 
         let record_data = self.file.record_bytes(rec_idx)?;
@@ -196,14 +254,19 @@ impl SignalProxy {
                 .layout
                 .signal_bytes(record_data, self.signal_idx)?;
 
-            if let Some(cached) = self.cache.as_ref().unwrap().lock().unwrap().get(rec_idx) {
-                out[out_pos..out_pos + count].copy_from_slice(&cached[offset..offset + count]);
-                out_pos += count;
-                remaining_start += count;
-                continue;
-            }
+            // One lock acquisition per record: the hit path returns under it, and the miss path
+            // takes an evicted buffer to decode into so the hot loop does not allocate.
+            let mut full_decoded = {
+                let mut cache = self.cache.as_ref().unwrap().lock().unwrap();
+                if let Some(cached) = cache.get(rec_idx) {
+                    out[out_pos..out_pos + count].copy_from_slice(&cached[offset..offset + count]);
+                    out_pos += count;
+                    remaining_start += count;
+                    continue;
+                }
+                cache.take_buffer(self.samples_per_record)
+            };
 
-            let mut full_decoded = vec![0.0f64; self.samples_per_record];
             {
                 let h = self.header();
                 self.file
@@ -211,15 +274,16 @@ impl SignalProxy {
                     .decode_physical(sig_bytes, h.gain, h.offset, &mut full_decoded);
             }
 
-            let dst = &mut out[out_pos..out_pos + count];
-            dst.copy_from_slice(&full_decoded[offset..offset + count]);
+            out[out_pos..out_pos + count].copy_from_slice(&full_decoded[offset..offset + count]);
             out_pos += count;
             remaining_start += count;
 
-            {
-                let mut cache = self.cache.as_ref().unwrap().lock().unwrap();
-                cache.put(rec_idx, full_decoded);
-            }
+            self.cache
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .put(rec_idx, full_decoded);
         }
 
         Ok(())
@@ -343,14 +407,36 @@ impl SignalProxy {
         decode_fn: impl Fn(&[u8], usize, usize, &mut [T]),
         out: &mut [T],
     ) -> Result<()> {
+        if self.should_stream(start, end) {
+            return self.read_range_streaming(start, end, decode_fn, out);
+        }
+
         let mut remaining_start = start;
         let mut out_pos = 0;
+        let mut since_check = 0usize;
 
         while remaining_start < end {
             let (rec_idx, offset) = self.resolve_index(remaining_start);
             let available = self.samples_per_record - offset;
             let needed = end - remaining_start;
             let count = available.min(needed);
+
+            // Residency can collapse mid-read when the machine is under memory pressure: pages
+            // faulted in at the start get evicted before the read finishes. Re-check
+            // periodically and switch the remainder to streaming rather than paying a fault
+            // per record for the rest of the file.
+            since_check += 1;
+            if since_check >= RESIDENCY_RECHECK_RECORDS {
+                since_check = 0;
+                if self.should_stream(remaining_start, end) {
+                    return self.read_range_streaming(
+                        remaining_start,
+                        end,
+                        decode_fn,
+                        &mut out[out_pos..],
+                    );
+                }
+            }
 
             let record_data = self.file.record_bytes(rec_idx)?;
             let sig_bytes = self
@@ -362,6 +448,87 @@ impl SignalProxy {
 
             remaining_start += count;
             out_pos += count;
+        }
+
+        Ok(())
+    }
+
+    /// Whether a read should stream through a bounded buffer instead of the mapping.
+    ///
+    /// EDF interleaves channels within a record, so reading one channel touches a slice of
+    /// every record: the kernel must fault in the whole span to hand back a fraction of it.
+    /// When that span is large and not already resident, one page fault per record costs far
+    /// more than reading the same bytes sequentially.
+    fn should_stream(&self, start: usize, end: usize) -> bool {
+        match self.strategy {
+            ReadStrategy::Mmap => return false,
+            ReadStrategy::Stream => return true,
+            ReadStrategy::Auto => {}
+        }
+        if self.samples_per_record == 0 || !cfg!(unix) {
+            return false;
+        }
+        let (first_rec, _) = self.resolve_index(start);
+        let (last_rec, _) = self.resolve_index(end.saturating_sub(1));
+        let span_bytes = (last_rec - first_rec + 1).saturating_mul(self.file.layout.record_size);
+        if span_bytes < STREAM_MIN_BYTES {
+            return false;
+        }
+        self.file.residency(first_rec, last_rec + 1) < RESIDENT_ENOUGH
+    }
+
+    /// Decode a sample range by reading records sequentially into a bounded buffer.
+    fn read_range_streaming<T>(
+        &self,
+        start: usize,
+        end: usize,
+        decode_fn: impl Fn(&[u8], usize, usize, &mut [T]),
+        out: &mut [T],
+    ) -> Result<()> {
+        let record_size = self.file.layout.record_size;
+        let num_records = self.file.header.num_records.max(0) as usize;
+        if record_size == 0 {
+            return Ok(());
+        }
+
+        let chunk_records = (STREAM_CHUNK_BYTES / record_size).max(1);
+        let mut buf = vec![0u8; chunk_records * record_size];
+
+        let mut remaining_start = start;
+        let mut out_pos = 0;
+
+        while remaining_start < end {
+            let (rec_idx, _) = self.resolve_index(remaining_start);
+            let (last_rec, _) = self.resolve_index(end - 1);
+            let n_records = chunk_records
+                .min(last_rec + 1 - rec_idx)
+                .min(num_records.saturating_sub(rec_idx));
+            if n_records == 0 {
+                break;
+            }
+
+            let filled = &mut buf[..n_records * record_size];
+            self.file.read_records_into(rec_idx, n_records, filled)?;
+
+            for i in 0..n_records {
+                let (cur_rec, offset) = self.resolve_index(remaining_start);
+                debug_assert_eq!(cur_rec, rec_idx + i);
+                let available = self.samples_per_record - offset;
+                let count = available.min(end - remaining_start);
+
+                let record_data = &filled[i * record_size..(i + 1) * record_size];
+                let sig_bytes = self
+                    .file
+                    .layout
+                    .signal_bytes(record_data, self.signal_idx)?;
+                decode_fn(sig_bytes, offset, count, &mut out[out_pos..out_pos + count]);
+
+                remaining_start += count;
+                out_pos += count;
+                if remaining_start >= end {
+                    break;
+                }
+            }
         }
 
         Ok(())
@@ -430,6 +597,39 @@ mod tests {
 
         let val = proxy.get_physical(11).unwrap();
         assert!((val - 11.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn streaming_matches_mmap_for_every_subrange() {
+        let file = build_test_file(37, 5);
+        let mapped = MappedFile::open(file.path()).unwrap();
+        let via_mmap = SignalProxy::new(Arc::clone(&mapped), 0)
+            .unwrap()
+            .with_strategy(ReadStrategy::Mmap);
+        let via_stream = SignalProxy::new(mapped, 0)
+            .unwrap()
+            .with_strategy(ReadStrategy::Stream);
+
+        let total = via_mmap.len();
+        for start in [0, 1, 4, 5, 6, 17, total - 1] {
+            for end in [start, start + 1, start + 7, total] {
+                if end > total {
+                    continue;
+                }
+                let n = end - start;
+                let mut a = vec![0.0f64; n];
+                let mut b = vec![0.0f64; n];
+                via_mmap.read_physical(start, end, &mut a).unwrap();
+                via_stream.read_physical(start, end, &mut b).unwrap();
+                assert_eq!(a, b, "physical mismatch for {start}..{end}");
+
+                let mut c = vec![0i32; n];
+                let mut d = vec![0i32; n];
+                via_mmap.read_digital(start, end, &mut c).unwrap();
+                via_stream.read_digital(start, end, &mut d).unwrap();
+                assert_eq!(c, d, "digital mismatch for {start}..{end}");
+            }
+        }
     }
 
     #[test]
@@ -547,9 +747,23 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn lru_zero_capacity_panics() {
-        let _ = LruCache::new(0);
+    fn lru_zero_capacity_holds_one_record() {
+        let mut cache = LruCache::new(0);
+        cache.put(0, vec![1.0, 2.0]);
+        assert_eq!(cache.get(0), Some([1.0, 2.0].as_slice()));
+    }
+
+    #[test]
+    fn lru_evicts_least_recently_used() {
+        let mut cache = LruCache::new(2);
+        cache.put(0, vec![0.0]);
+        cache.put(1, vec![1.0]);
+        assert!(cache.get(0).is_some());
+        cache.put(2, vec![2.0]);
+        // record 1 was the least recently used, so it goes; record 0 was just touched
+        assert!(cache.get(1).is_none());
+        assert!(cache.get(0).is_some());
+        assert!(cache.get(2).is_some());
     }
 
     #[test]

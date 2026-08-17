@@ -5,6 +5,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pyme
 
 use edfarray_core::file::EdfFile;
 use edfarray_core::header::Sex;
+use edfarray_core::mmap::ScanMode;
+use edfarray_core::proxy::ReadStrategy;
 
 use crate::annotations::PyAnnotation;
 use crate::errors::to_py_err;
@@ -36,13 +38,28 @@ impl PyEdfFile {
     /// one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
     /// controls the plain/"+C"/"+D" distinction; an override that changes the
     /// EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+    ///
+    /// By default the annotation index is built by a background scan started at open. That
+    /// scan reads every data record, so for very large files it competes with your own reads
+    /// for page cache. Pass `scan_annotations=False` to defer it until annotations are first
+    /// accessed, at which point it runs on the calling thread.
     #[new]
-    #[pyo3(signature = (path, variant=None))]
-    fn new(path: &str, variant: Option<&str>) -> PyResult<Self> {
-        let inner = match variant {
-            None => EdfFile::open(path).map_err(to_py_err)?,
-            Some(v) => EdfFile::open_with_variant(path, parse_variant(v)?).map_err(to_py_err)?,
+    #[pyo3(signature = (path, variant=None, scan_annotations=true))]
+    fn new(
+        py: Python<'_>,
+        path: &str,
+        variant: Option<&str>,
+        scan_annotations: bool,
+    ) -> PyResult<Self> {
+        let variant = variant.map(parse_variant).transpose()?;
+        let scan_mode = if scan_annotations {
+            ScanMode::Eager
+        } else {
+            ScanMode::Lazy
         };
+        let inner = py
+            .detach(|| EdfFile::open_with_options(path, variant, scan_mode))
+            .map_err(to_py_err)?;
         Ok(PyEdfFile { inner: Some(inner) })
     }
 
@@ -334,8 +351,17 @@ impl PyEdfFile {
     /// The cache only accelerates physical reads -- `to_digital()` always
     /// re-decodes from the memory map. Caching is per-`Signal`: re-fetching from
     /// `signal()` starts fresh.
-    #[pyo3(signature = (idx_or_label, cache_capacity=0))]
-    fn signal(&self, idx_or_label: &Bound<'_, PyAny>, cache_capacity: usize) -> PyResult<PySignal> {
+    ///
+    /// `strategy` overrides how bytes are fetched: `"auto"` (default) streams large reads that
+    /// are not already cached and uses the memory map otherwise, `"mmap"` always maps, and
+    /// `"stream"` always reads sequentially through a bounded buffer.
+    #[pyo3(signature = (idx_or_label, cache_capacity=0, strategy=None))]
+    fn signal(
+        &self,
+        idx_or_label: &Bound<'_, PyAny>,
+        cache_capacity: usize,
+        strategy: Option<&str>,
+    ) -> PyResult<PySignal> {
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
             self.get().signal(idx).map_err(to_py_err)?
         } else if let Ok(label) = idx_or_label.extract::<String>() {
@@ -344,6 +370,10 @@ impl PyEdfFile {
             return Err(pyo3::exceptions::PyTypeError::new_err(
                 "signal() argument must be int or str",
             ));
+        };
+        let proxy = match strategy {
+            None => proxy,
+            Some(s) => proxy.with_strategy(parse_strategy(s)?),
         };
         let proxy = if cache_capacity > 0 {
             proxy.with_cache(cache_capacity)
@@ -383,9 +413,8 @@ impl PyEdfFile {
         use_time: bool,
     ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<f64>>>> {
         let indices = signal_indices.unwrap_or_else(|| self.get().ordinary_signal_indices());
-        let buffers = self
-            .get()
-            .read_page(&indices, start_sec, end_sec, use_time)
+        let buffers = py
+            .detach(|| self.get().read_page(&indices, start_sec, end_sec, use_time))
             .map_err(to_py_err)?;
         let mut arrays = Vec::with_capacity(buffers.len());
         for buf in buffers {
@@ -516,9 +545,11 @@ impl PyEdfFile {
         use_time: bool,
     ) -> PyResult<Vec<Bound<'py, numpy::PyArray1<i32>>>> {
         let indices = signal_indices.unwrap_or_else(|| self.get().ordinary_signal_indices());
-        let buffers = self
-            .get()
-            .read_page_digital(&indices, start_sec, end_sec, use_time)
+        let buffers = py
+            .detach(|| {
+                self.get()
+                    .read_page_digital(&indices, start_sec, end_sec, use_time)
+            })
             .map_err(to_py_err)?;
         let mut arrays = Vec::with_capacity(buffers.len());
         for buf in buffers {
@@ -551,4 +582,16 @@ pub fn inspect<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>>
     dict.set_item("signal_labels", meta.signal_labels)?;
     dict.set_item("sample_rates", meta.sample_rates)?;
     Ok(dict)
+}
+
+/// Parse the `strategy` argument accepted by `EdfFile.signal`.
+fn parse_strategy(value: &str) -> PyResult<ReadStrategy> {
+    match value {
+        "auto" => Ok(ReadStrategy::Auto),
+        "mmap" => Ok(ReadStrategy::Mmap),
+        "stream" => Ok(ReadStrategy::Stream),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "strategy must be 'auto', 'mmap', or 'stream', got {other:?}"
+        ))),
+    }
 }
