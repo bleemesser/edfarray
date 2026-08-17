@@ -3,18 +3,43 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 
-pub use memmap2::Advice;
 use memmap2::Mmap;
-
-/// Upper bound on a single `WillNeed` hint. Advising more than the kernel can retain evicts
-/// pages the caller is still using.
-const MAX_WILLNEED_BYTES: usize = 64 << 20;
 
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
 use crate::header::{EdfHeader, EdfVariant};
 use crate::proxy::SignalProxy;
 use crate::record::RecordLayout;
+
+/// Upper bound on a single `WillNeed` hint. Advising more than the kernel can retain evicts
+/// pages the caller is still using.
+#[cfg(unix)]
+const MAX_WILLNEED_BYTES: usize = 64 << 20;
+
+/// Access-pattern hint for a range of records.
+///
+/// Advisory only. `memmap2` exposes advice on unix alone, so every variant is a no-op on
+/// other platforms rather than being absent from the type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Advice {
+    /// No special treatment; undoes an earlier hint.
+    Normal,
+    /// The range will be read front to back once.
+    Sequential,
+    /// The range will be needed soon.
+    WillNeed,
+}
+
+#[cfg(unix)]
+impl From<Advice> for memmap2::Advice {
+    fn from(advice: Advice) -> Self {
+        match advice {
+            Advice::Normal => memmap2::Advice::Normal,
+            Advice::Sequential => memmap2::Advice::Sequential,
+            Advice::WillNeed => memmap2::Advice::WillNeed,
+        }
+    }
+}
 
 /// Internal state machine for the background annotation scan.
 enum AnnotationState {
@@ -547,7 +572,7 @@ impl MappedFile {
             }
             // memmap2 aligns the address down to a page boundary; a hand-rolled madvise on an
             // unaligned address fails with EINVAL.
-            let _ = self.mmap.advise_range(advice, start, end - start);
+            let _ = self.mmap.advise_range(advice.into(), start, end - start);
         }
         #[cfg(not(unix))]
         {

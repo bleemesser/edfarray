@@ -11,12 +11,15 @@ categories = ["parser-implementations", "science::neuroscience"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false }
-libc = "0.2.183"
 log = { version = "0.4.29", default-features = false }
 memmap2 = { version = "0.9.10", default-features = false }
 rayon = "1.11.0"
 regex = "1.12.3"
 thiserror = { version = "2.0.18", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+# Only used for madvise/mincore/sysconf, all of which are unix-only.
+libc = "0.2.183"
 
 [dev-dependencies]
 proptest = "1.10.0"
