@@ -403,6 +403,13 @@ class Proxy2D:
         r"""
         dtype of the physical values this proxy decodes to.
         """
+    def read_digital(self, signals: typing.Sequence[builtins.int], start: builtins.int, stop: builtins.int) -> numpy.typing.NDArray[numpy.int32]:
+        r"""
+        Read raw digital values for `signals` over samples `[start, stop)`.
+        
+        The counterpart to physical indexing, which `__getitem__` provides. Returns a 2D int32
+        array. `pad_mode="nan"` has no int32 representation and raises here.
+        """
     def __array__(self, dtype: typing.Optional[typing.Any] = None, copy: typing.Optional[builtins.bool] = None) -> typing.Any:
         r"""
         Support `numpy.asarray(proxy)` by materializing every channel.
@@ -460,6 +467,13 @@ class Proxy3D:
     def dtype(self) -> typing.Any:
         r"""
         dtype of the physical values this proxy decodes to.
+        """
+    def read_digital(self, record_start: builtins.int, record_stop: builtins.int, channel_start: builtins.int, channel_stop: builtins.int) -> numpy.typing.NDArray[numpy.int32]:
+        r"""
+        Read raw digital values for a record and channel range.
+        
+        The counterpart to physical indexing, which `__getitem__` provides. Returns a 3D int32
+        array shaped `(records, channels, samples_per_record)`.
         """
     def __array__(self, dtype: typing.Optional[typing.Any] = None, copy: typing.Optional[builtins.bool] = None) -> typing.Any:
         r"""

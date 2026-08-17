@@ -23,8 +23,6 @@ impl RecordLayout {
         let mut counts = Vec::with_capacity(header.num_signals);
         let mut offset = 0usize;
 
-        // Saturating: a header declaring absurd sample counts must not wrap the layout into
-        // small offsets that would then pass bounds checks against real data.
         for sig in &header.signals {
             offsets.push(offset);
             counts.push(sig.num_samples);
@@ -32,7 +30,7 @@ impl RecordLayout {
         }
 
         RecordLayout {
-            record_size: offset,
+            record_size: header.record_size(),
             signal_offsets: offsets,
             signal_sample_counts: counts,
             sample_size_bytes,

@@ -28,6 +28,7 @@ enum AnnotationState {
 
 #[cfg(unix)]
 fn page_size() -> usize {
+    // SAFETY: sysconf takes an integer and returns one, with no memory or lifetime contract.
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }.max(1)
 }
 
@@ -151,6 +152,10 @@ impl MappedFile {
             source: e,
         })?;
 
+        // SAFETY: mapping a file is unsafe because another process can change its contents or
+        // length underneath us. Concurrent writes can produce torn reads, and truncation makes
+        // touching a vanished page raise SIGBUS, which no Rust code can catch. Callers are told
+        // not to read a file being rewritten in place; see docs/reference/contracts.md.
         let mmap = unsafe { Mmap::map(&file) }.map_err(|e| EdfError::MmapFailed {
             path: path.to_path_buf(),
             source: e,
@@ -487,6 +492,8 @@ impl MappedFile {
                 // Align to a page boundary; mincore rejects unaligned addresses.
                 let aligned = offset - (base as usize + offset) % page;
                 let mut vec = [0u8; 1];
+                // SAFETY: `aligned` is page-aligned and within the mapping, `page` is one
+                // page, and `vec` has room for the one byte mincore writes per page.
                 let rc = unsafe {
                     libc::mincore(
                         base.add(aligned) as *mut libc::c_void,

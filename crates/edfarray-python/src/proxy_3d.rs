@@ -50,6 +50,33 @@ impl PyProxy3D {
         self.proxy.stride_info().is_some()
     }
 
+    /// Read raw digital values for a record and channel range.
+    ///
+    /// The counterpart to physical indexing, which `__getitem__` provides. Returns a 3D int32
+    /// array shaped `(records, channels, samples_per_record)`.
+    fn read_digital<'py>(
+        &self,
+        py: Python<'py>,
+        record_start: usize,
+        record_stop: usize,
+        channel_start: usize,
+        channel_stop: usize,
+    ) -> PyResult<Bound<'py, numpy::PyArray3<i32>>> {
+        let records = record_start..record_stop;
+        let channels = channel_start..channel_stop;
+        let (n_rec, n_ch) = (records.len(), channels.len());
+        let spr = self.proxy.shape().2;
+        let block = py
+            .detach(|| self.proxy.read_digital_block(records, channels))
+            .map_err(to_py_err)?;
+        let array = numpy::PyArray3::<i32>::zeros(py, (n_rec, n_ch, spr), false);
+        if !block.is_empty() {
+            let slice = unsafe { array.as_slice_mut()? };
+            slice.copy_from_slice(&block);
+        }
+        Ok(array)
+    }
+
     /// Always 3.
     #[getter]
     fn ndim(&self) -> usize {

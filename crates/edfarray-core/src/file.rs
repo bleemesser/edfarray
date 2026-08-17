@@ -10,7 +10,7 @@ use regex::RegexBuilder;
 use crate::annotation::Annotation;
 use crate::error::{EdfError, Result};
 use crate::group::{PadMode, SignalGroup};
-use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo};
+use crate::header::{EdfHeader, EdfVariant, PatientInfo, RecordingInfo, read_usize};
 use crate::mmap::{Advice, MappedFile, ScanMode};
 use crate::proxy::SignalProxy;
 use crate::proxy_2d::Proxy2D;
@@ -220,20 +220,13 @@ impl EdfFile {
         end_sec: f64,
         use_time: bool,
     ) -> Result<Vec<Vec<f64>>> {
-        self.advise_time_range(start_sec, end_sec);
-        let file = &self.file;
-        signal_indices
-            .par_iter()
-            .map(|&idx| {
-                let proxy = SignalProxy::new(Arc::clone(file), idx)?;
-                let (s_start, s_end) = if use_time {
-                    proxy.sample_range_for_time(start_sec, end_sec)
-                } else {
-                    proxy.uniform_sample_range(start_sec, end_sec)
-                };
-                self.read_samples(&proxy, s_start, s_end)
-            })
-            .collect()
+        self.read_page_inner(
+            signal_indices,
+            start_sec,
+            end_sec,
+            use_time,
+            |proxy, (start, end)| self.read_samples(proxy, start, end),
+        )
     }
 
     /// Read digital data for signals over `[start_sec, end_sec)`. Parallel via rayon.
@@ -244,18 +237,40 @@ impl EdfFile {
         end_sec: f64,
         use_time: bool,
     ) -> Result<Vec<Vec<i32>>> {
+        self.read_page_inner(
+            signal_indices,
+            start_sec,
+            end_sec,
+            use_time,
+            |proxy, (start, end)| self.read_digital_samples(proxy, start, end),
+        )
+    }
+
+    /// Resolve the time range once per signal and decode each in parallel.
+    fn read_page_inner<T, F>(
+        &self,
+        signal_indices: &[usize],
+        start_sec: f64,
+        end_sec: f64,
+        use_time: bool,
+        decode: F,
+    ) -> Result<Vec<Vec<T>>>
+    where
+        T: Send,
+        F: Fn(&SignalProxy, (usize, usize)) -> Result<Vec<T>> + Send + Sync,
+    {
         self.advise_time_range(start_sec, end_sec);
         let file = &self.file;
         signal_indices
             .par_iter()
             .map(|&idx| {
                 let proxy = SignalProxy::new(Arc::clone(file), idx)?;
-                let (s_start, s_end) = if use_time {
+                let range = if use_time {
                     proxy.sample_range_for_time(start_sec, end_sec)
                 } else {
                     proxy.uniform_sample_range(start_sec, end_sec)
                 };
-                self.read_digital_samples(&proxy, s_start, s_end)
+                decode(&proxy, range)
             })
             .collect()
     }
@@ -509,25 +524,6 @@ impl EdfFile {
     }
 }
 
-fn read_usize(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<usize> {
-    let s = read_field(data, offset, size, name)?;
-    s.parse::<usize>()
-        .map_err(|_| EdfError::InvalidHeaderField {
-            field: name,
-            reason: format!("not a valid unsigned integer: {s:?}"),
-        })
-}
-
-fn read_field(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<String> {
-    let bytes = data
-        .get(offset..offset + size)
-        .ok_or(EdfError::InvalidHeaderField {
-            field: name,
-            reason: "header truncated".to_string(),
-        })?;
-    Ok(String::from_utf8_lossy(bytes).trim().to_string())
-}
-
 /// Header metadata without annotation scan or persistent mmap.
 #[derive(Debug, Clone)]
 pub struct EdfMetadata {
@@ -721,7 +717,7 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].indices, vec![0]);
         assert!(groups[0].covers_all_ordinary);
-        assert!(groups[0].is_singleton);
+        assert!(groups[0].is_singleton());
     }
 
     #[test]

@@ -27,24 +27,26 @@ pub enum PadMode {
 }
 
 /// Signal indices grouped for proxy construction with supporting metadata.
+///
+/// Fields are crate-visible rather than public: the invariants tie them together, and
+/// `Proxy3D` relies on a `Rectangular` group always carrying a sample rate and
+/// samples-per-record. Build one with [`SignalGroup::from_indices`].
 #[derive(Debug, Clone)]
 pub struct SignalGroup {
     /// File-level signal indices.
-    pub indices: Vec<usize>,
+    pub(crate) indices: Vec<usize>,
     /// Structural classification.
-    pub kind: GroupKind,
+    pub(crate) kind: GroupKind,
     /// Common sample rate in Hz. `Some` only for `Rectangular`.
-    pub sample_rate: Option<f64>,
+    pub(crate) sample_rate: Option<f64>,
     /// Common samples-per-record. `Some` only for `Rectangular`.
-    pub samples_per_record: Option<usize>,
+    pub(crate) samples_per_record: Option<usize>,
     /// Min total sample count across channels.
-    pub min_samples: usize,
+    pub(crate) min_samples: usize,
     /// Max total sample count across channels.
-    pub max_samples: usize,
+    pub(crate) max_samples: usize,
     /// True if group contains every ordinary signal. Set only by `EdfFile::signal_groups`.
-    pub covers_all_ordinary: bool,
-    /// True if `indices.len() == 1`.
-    pub is_singleton: bool,
+    pub(crate) covers_all_ordinary: bool,
 }
 
 impl SignalGroup {
@@ -110,8 +112,47 @@ impl SignalGroup {
             min_samples,
             max_samples,
             covers_all_ordinary: false,
-            is_singleton: indices.len() == 1,
         })
+    }
+
+    /// File-level signal indices in the group.
+    pub fn indices(&self) -> &[usize] {
+        &self.indices
+    }
+
+    /// Structural classification of the group.
+    pub fn kind(&self) -> GroupKind {
+        self.kind
+    }
+
+    /// Common sample rate in Hz. `Some` only for `Rectangular` groups.
+    pub fn sample_rate(&self) -> Option<f64> {
+        self.sample_rate
+    }
+
+    /// Common samples-per-record. `Some` only for `Rectangular` groups.
+    pub fn samples_per_record(&self) -> Option<usize> {
+        self.samples_per_record
+    }
+
+    /// Smallest total sample count across the group's channels.
+    pub fn min_samples(&self) -> usize {
+        self.min_samples
+    }
+
+    /// Largest total sample count across the group's channels.
+    pub fn max_samples(&self) -> usize {
+        self.max_samples
+    }
+
+    /// Whether the group contains every ordinary signal in the file.
+    pub fn covers_all_ordinary(&self) -> bool {
+        self.covers_all_ordinary
+    }
+
+    /// Whether the group holds exactly one channel.
+    pub fn is_singleton(&self) -> bool {
+        self.indices.len() == 1
     }
 
     /// Number of channels in the group.
@@ -187,7 +228,7 @@ mod tests {
         assert_eq!(g.samples_per_record, Some(256));
         assert_eq!(g.min_samples, 2560);
         assert_eq!(g.max_samples, 2560);
-        assert!(!g.is_singleton);
+        assert!(!g.is_singleton());
         assert!(g.is_rectangular());
     }
 
@@ -210,7 +251,7 @@ mod tests {
     fn singleton() {
         let h = header(vec![sig("EEG0", 256, false)], 4, 1.0);
         let g = SignalGroup::from_indices(&h, &[0]).unwrap();
-        assert!(g.is_singleton);
+        assert!(g.is_singleton());
         assert_eq!(g.kind, GroupKind::Rectangular);
     }
 

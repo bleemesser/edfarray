@@ -53,7 +53,6 @@ impl Proxy3D {
             .expect("Rectangular group always has sample_rate")
     }
 
-    /// The group this proxy was built from.
     pub fn group(&self) -> &SignalGroup {
         &self.group
     }
@@ -83,43 +82,9 @@ impl Proxy3D {
         records: Range<usize>,
         channels: Range<usize>,
     ) -> Result<Vec<f64>> {
-        self.check_record_range(&records)?;
-        self.check_channel_range(&channels)?;
-        let n_rec = records.len();
-        let n_ch = channels.len();
-        let spr = self.samples_per_record;
-        let mut out = vec![0.0f64; n_rec * n_ch * spr];
-        if n_rec == 0 || n_ch == 0 {
-            return Ok(out);
-        }
-
-        let file = &self.file;
-        let group = &self.group;
-        let rec_start = records.start;
-        let ch_start = channels.start;
-
-        let per_channel: Result<Vec<Vec<f64>>> = (0..n_ch)
-            .into_par_iter()
-            .map(|ci| {
-                let sig_idx = group.indices[ch_start + ci];
-                let proxy = SignalProxy::new(Arc::clone(file), sig_idx)?;
-                let start = rec_start * spr;
-                let end = (rec_start + n_rec) * spr;
-                let mut buf = vec![0.0f64; n_rec * spr];
-                proxy.read_physical(start, end, &mut buf)?;
-                Ok(buf)
-            })
-            .collect();
-        let per_channel = per_channel?;
-
-        for ri in 0..n_rec {
-            for (ci, channel) in per_channel.iter().enumerate() {
-                let dst_base = (ri * n_ch + ci) * spr;
-                let src_base = ri * spr;
-                out[dst_base..dst_base + spr].copy_from_slice(&channel[src_base..src_base + spr]);
-            }
-        }
-        Ok(out)
+        self.read_block(records, channels, 0.0, |proxy, start, end, buf| {
+            proxy.read_physical(start, end, buf)
+        })
     }
 
     /// Read a contiguous block of digital (i32) samples in record-major order.
@@ -128,12 +93,29 @@ impl Proxy3D {
         records: Range<usize>,
         channels: Range<usize>,
     ) -> Result<Vec<i32>> {
+        self.read_block(records, channels, 0, |proxy, start, end, buf| {
+            proxy.read_digital(start, end, buf)
+        })
+    }
+
+    /// Read every requested channel over a record range and interleave into record-major order.
+    fn read_block<T, F>(
+        &self,
+        records: Range<usize>,
+        channels: Range<usize>,
+        fill: T,
+        read: F,
+    ) -> Result<Vec<T>>
+    where
+        T: Copy + Send + Sync,
+        F: Fn(&SignalProxy, usize, usize, &mut [T]) -> Result<()> + Send + Sync,
+    {
         self.check_record_range(&records)?;
         self.check_channel_range(&channels)?;
         let n_rec = records.len();
         let n_ch = channels.len();
         let spr = self.samples_per_record;
-        let mut out = vec![0i32; n_rec * n_ch * spr];
+        let mut out = vec![fill; n_rec * n_ch * spr];
         if n_rec == 0 || n_ch == 0 {
             return Ok(out);
         }
@@ -143,15 +125,13 @@ impl Proxy3D {
         let rec_start = records.start;
         let ch_start = channels.start;
 
-        let per_channel: Result<Vec<Vec<i32>>> = (0..n_ch)
+        let per_channel: Result<Vec<Vec<T>>> = (0..n_ch)
             .into_par_iter()
             .map(|ci| {
                 let sig_idx = group.indices[ch_start + ci];
                 let proxy = SignalProxy::new(Arc::clone(file), sig_idx)?;
-                let start = rec_start * spr;
-                let end = (rec_start + n_rec) * spr;
-                let mut buf = vec![0i32; n_rec * spr];
-                proxy.read_digital(start, end, &mut buf)?;
+                let mut buf = vec![fill; n_rec * spr];
+                read(&proxy, rec_start * spr, (rec_start + n_rec) * spr, &mut buf)?;
                 Ok(buf)
             })
             .collect();

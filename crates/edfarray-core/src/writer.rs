@@ -136,7 +136,6 @@ pub struct EdfWriter {
     num_records_written: u64,
     pending_annotations: Vec<Annotation>,
     start_subsecond: f64,
-    header_bytes: usize,
     finished: bool,
 }
 
@@ -209,7 +208,7 @@ impl EdfWriter {
 
         let mut writer = BufWriter::new(file);
 
-        let header_bytes = serialize_header(&spec, ann_bytes_per_record, -1, &mut writer)?;
+        serialize_header(&spec, ann_bytes_per_record, -1, &mut writer)?;
 
         Ok(EdfWriter {
             path,
@@ -219,7 +218,6 @@ impl EdfWriter {
             num_records_written: 0,
             pending_annotations: Vec::new(),
             start_subsecond,
-            header_bytes,
             finished: false,
         })
     }
@@ -383,7 +381,6 @@ impl EdfWriter {
             op: "flushing",
             source: e,
         })?;
-        let _ = self.header_bytes;
         Ok(())
     }
 }

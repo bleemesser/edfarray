@@ -53,7 +53,6 @@ impl Proxy2D {
         self.group.sample_rate
     }
 
-    /// The group this proxy was built from.
     pub fn group(&self) -> &SignalGroup {
         &self.group
     }
@@ -192,64 +191,22 @@ fn read_physical_with_pad(
     s_end: usize,
     pad: PadMode,
 ) -> Result<Vec<f64>> {
-    let proxy = SignalProxy::new(Arc::clone(file), sig_idx)?;
-    let req_end = s_end;
-    let req_start = s_start.min(req_end);
-
-    if matches!(pad, PadMode::Raise) {
-        if req_end > valid {
-            return Err(EdfError::SampleOutOfRange {
-                index: req_end - 1,
-                count: valid,
-            });
-        }
-        let count = req_end - req_start;
-        let mut buf = vec![0.0f64; count];
-        if count > 0 {
-            proxy.read_physical(req_start, req_end, &mut buf)?;
-        }
-        return Ok(buf);
-    }
-
-    let count = req_end.saturating_sub(req_start);
-    let mut buf = vec![0.0f64; count];
-    if count == 0 {
-        return Ok(buf);
-    }
-
-    let real_end = req_end.min(valid);
-    let real_start = req_start.min(real_end);
-    let real_count = real_end - real_start;
-    if real_count > 0 {
-        proxy.read_physical(real_start, real_end, &mut buf[..real_count])?;
-    }
-
-    if real_count < count {
-        let fill = match pad {
-            PadMode::Nan => f64::NAN,
-            PadMode::Zero => 0.0,
-            PadMode::Value(v) => v,
-            PadMode::Edge => {
-                if valid == 0 {
-                    return Err(EdfError::SampleOutOfRange {
-                        index: req_end - 1,
-                        count: valid,
-                    });
-                }
-                if real_count > 0 {
-                    buf[real_count - 1]
-                } else {
-                    proxy.get_physical(valid - 1)?
-                }
-            }
-            PadMode::Raise => unreachable!(),
-        };
-        for slot in &mut buf[real_count..] {
-            *slot = fill;
-        }
-    }
-
-    Ok(buf)
+    read_with_pad(
+        file,
+        sig_idx,
+        valid,
+        s_start,
+        s_end,
+        pad,
+        0.0,
+        |proxy, start, end, buf| proxy.read_physical(start, end, buf),
+        |pad| match pad {
+            PadMode::Nan => Ok(f64::NAN),
+            PadMode::Zero => Ok(0.0),
+            PadMode::Value(v) => Ok(v),
+            PadMode::Edge | PadMode::Raise => unreachable!("handled by read_with_pad"),
+        },
+    )
 }
 
 fn read_digital_with_pad(
@@ -267,6 +224,54 @@ fn read_digital_with_pad(
         });
     }
 
+    read_with_pad(
+        file,
+        sig_idx,
+        valid,
+        s_start,
+        s_end,
+        pad,
+        0i32,
+        |proxy, start, end, buf| proxy.read_digital(start, end, buf),
+        |pad| match pad {
+            PadMode::Zero => Ok(0),
+            PadMode::Value(v) => {
+                if !v.is_finite() || v < i32::MIN as f64 || v > i32::MAX as f64 {
+                    return Err(EdfError::InvalidArgument {
+                        name: "pad_mode",
+                        reason: format!("PadMode::Value({v}) out of i32 range for digital read"),
+                    });
+                }
+                Ok(v.trunc() as i32)
+            }
+            PadMode::Nan | PadMode::Edge | PadMode::Raise => {
+                unreachable!("handled by caller or read_with_pad")
+            }
+        },
+    )
+}
+
+/// Read `[s_start, s_end)` from one channel, padding anything past `valid` per `pad`.
+///
+/// `fill_for` supplies the pad value for the constant modes; `Raise` and `Edge` are handled
+/// here because their behavior does not depend on the element type.
+#[allow(clippy::too_many_arguments)]
+fn read_with_pad<T, R, F>(
+    file: &Arc<MappedFile>,
+    sig_idx: usize,
+    valid: usize,
+    s_start: usize,
+    s_end: usize,
+    pad: PadMode,
+    zero: T,
+    read: R,
+    fill_for: F,
+) -> Result<Vec<T>>
+where
+    T: Copy,
+    R: Fn(&SignalProxy, usize, usize, &mut [T]) -> Result<()>,
+    F: Fn(PadMode) -> Result<T>,
+{
     let proxy = SignalProxy::new(Arc::clone(file), sig_idx)?;
     let req_end = s_end;
     let req_start = s_start.min(req_end);
@@ -279,15 +284,15 @@ fn read_digital_with_pad(
             });
         }
         let count = req_end - req_start;
-        let mut buf = vec![0i32; count];
+        let mut buf = vec![zero; count];
         if count > 0 {
-            proxy.read_digital(req_start, req_end, &mut buf)?;
+            read(&proxy, req_start, req_end, &mut buf)?;
         }
         return Ok(buf);
     }
 
     let count = req_end.saturating_sub(req_start);
-    let mut buf = vec![0i32; count];
+    let mut buf = vec![zero; count];
     if count == 0 {
         return Ok(buf);
     }
@@ -296,37 +301,26 @@ fn read_digital_with_pad(
     let real_start = req_start.min(real_end);
     let real_count = real_end - real_start;
     if real_count > 0 {
-        proxy.read_digital(real_start, real_end, &mut buf[..real_count])?;
+        read(&proxy, real_start, real_end, &mut buf[..real_count])?;
     }
 
     if real_count < count {
-        let fill: i32 = match pad {
-            PadMode::Zero => 0,
-            PadMode::Value(v) => {
-                if !v.is_finite() || v < i32::MIN as f64 || v > i32::MAX as f64 {
-                    return Err(EdfError::InvalidArgument {
-                        name: "pad_mode",
-                        reason: format!("PadMode::Value({v}) out of i32 range for digital read"),
-                    });
-                }
-                v.trunc() as i32
+        let fill = if matches!(pad, PadMode::Edge) {
+            if valid == 0 {
+                return Err(EdfError::SampleOutOfRange {
+                    index: req_end - 1,
+                    count: valid,
+                });
             }
-            PadMode::Edge => {
-                if valid == 0 {
-                    return Err(EdfError::SampleOutOfRange {
-                        index: req_end - 1,
-                        count: valid,
-                    });
-                }
-                if real_count > 0 {
-                    buf[real_count - 1]
-                } else {
-                    let mut one = [0i32; 1];
-                    proxy.read_digital(valid - 1, valid, &mut one)?;
-                    one[0]
-                }
+            if real_count > 0 {
+                buf[real_count - 1]
+            } else {
+                let mut one = [zero; 1];
+                read(&proxy, valid - 1, valid, &mut one)?;
+                one[0]
             }
-            PadMode::Nan | PadMode::Raise => unreachable!(),
+        } else {
+            fill_for(pad)?
         };
         for slot in &mut buf[real_count..] {
             *slot = fill;

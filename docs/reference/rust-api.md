@@ -98,7 +98,7 @@ See the `error` module for the full list of variants.
 
 `SignalProxy` -- Lightweight view of one signal. Holds an `Arc` reference to the underlying `MappedFile`. Created by `EdfFile::signal()`. Translates global sample indices to record byte offsets and decodes on the fly.
 
-`SignalGroup` -- A set of channels classified by sample rate. `GroupKind::Rectangular` (shared rate) or `GroupKind::Open` (mixed). Built by `EdfFile::signal_groups()` or `SignalGroup::from_indices(header, indices)`. Required input to all proxy constructors.
+`SignalGroup` -- A set of channels classified by sample rate. `GroupKind::Rectangular` (shared rate) or `GroupKind::Open` (mixed). Built by `EdfFile::signal_groups()` or `SignalGroup::from_indices(header, indices)`; its fields are private because the invariants tie them together, so read them through `indices()`, `kind()`, `sample_rate()`, `samples_per_record()`, `min_samples()`, `max_samples()`, `covers_all_ordinary()`, and `is_singleton()`. Required input to all proxy constructors.
 
 `PadMode` -- Fill policy for reads past a channel's valid length on `Proxy2D`. Variants: `Raise` (default), `Nan`, `Zero`, `Value(f64)`, `Edge`. Interpreted in the read domain (physical f64 / digital i32). `Nan` is physical-only.
 

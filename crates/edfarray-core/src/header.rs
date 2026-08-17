@@ -14,7 +14,6 @@ pub enum MaybeDateTime {
 }
 
 impl MaybeDateTime {
-    /// Returns the parsed datetime if available.
     pub fn as_datetime(&self) -> Option<&NaiveDateTime> {
         match self {
             MaybeDateTime::Parsed(dt) => Some(dt),
@@ -22,7 +21,7 @@ impl MaybeDateTime {
         }
     }
 
-    /// Returns the raw date string from the header.
+    /// Raw header date field, or `""` when the date parsed successfully.
     pub fn raw_date(&self) -> &str {
         match self {
             MaybeDateTime::Parsed(_) => "",
@@ -30,7 +29,7 @@ impl MaybeDateTime {
         }
     }
 
-    /// Returns the raw time string from the header.
+    /// Raw header time field, or `""` when the time parsed successfully.
     pub fn raw_time(&self) -> &str {
         match self {
             MaybeDateTime::Parsed(_) => "",
@@ -268,9 +267,15 @@ impl EdfHeader {
     }
 
     /// Size of one complete data record in bytes.
+    ///
+    /// Saturating, so a header declaring absurd sample counts yields a size that fails bounds
+    /// checks rather than one that wraps into a small plausible value. `RecordLayout` takes its
+    /// total from here so the two cannot disagree.
     pub fn record_size(&self) -> usize {
         let bytes = self.variant.sample_size_bytes();
-        self.signals.iter().map(|s| s.num_samples * bytes).sum()
+        self.signals.iter().fold(0usize, |acc, s| {
+            acc.saturating_add(s.num_samples.saturating_mul(bytes))
+        })
     }
 
     /// Total duration of the recording in seconds.
@@ -331,7 +336,12 @@ fn read_field(data: &[u8], offset: usize, size: usize, name: &'static str) -> Re
     Ok(String::from_utf8_lossy(bytes).trim().to_string())
 }
 
-fn read_usize(data: &[u8], offset: usize, size: usize, name: &'static str) -> Result<usize> {
+pub(crate) fn read_usize(
+    data: &[u8],
+    offset: usize,
+    size: usize,
+    name: &'static str,
+) -> Result<usize> {
     let s = read_field(data, offset, size, name)?;
     s.parse::<usize>()
         .map_err(|_| EdfError::InvalidHeaderField {

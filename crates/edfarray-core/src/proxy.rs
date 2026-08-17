@@ -101,7 +101,10 @@ impl LruCache {
     }
 }
 
-/// Array-like view of one signal. Decodes samples from mmap on access; OS page cache handles caching.
+/// Array-like view of one signal.
+///
+/// Decodes samples on access. Bytes come from the memory map or a streaming read depending on
+/// [`ReadStrategy`]; an optional [`LruCache`] holds decoded records for repeated physical reads.
 #[derive(Debug)]
 pub struct SignalProxy {
     signal_idx: usize,
@@ -140,7 +143,6 @@ impl SignalProxy {
         self.total_samples
     }
 
-    /// Returns true if this signal has zero samples.
     pub fn is_empty(&self) -> bool {
         self.total_samples == 0
     }
@@ -162,7 +164,10 @@ impl SignalProxy {
         self
     }
 
-    /// Enable LRU cache for physical reads. `capacity` is record count, not bytes. `read_digital` bypasses cache. Capacity 0 disables.
+    /// Enable an LRU cache of decoded records for physical reads.
+    ///
+    /// `capacity` counts records, not bytes or samples. Digital reads bypass the cache.
+    /// Capacity 0 leaves it disabled.
     pub fn with_cache(mut self, capacity: usize) -> Self {
         if capacity == 0 {
             return self;

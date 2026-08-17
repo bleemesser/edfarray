@@ -55,6 +55,31 @@ impl PyProxy2D {
         pad_mode_name(self.proxy.pad_mode())
     }
 
+    /// Read raw digital values for `signals` over samples `[start, stop)`.
+    ///
+    /// The counterpart to physical indexing, which `__getitem__` provides. Returns a 2D int32
+    /// array. `pad_mode="nan"` has no int32 representation and raises here.
+    fn read_digital<'py>(
+        &self,
+        py: Python<'py>,
+        signals: Vec<usize>,
+        start: usize,
+        stop: usize,
+    ) -> PyResult<Bound<'py, numpy::PyArray2<i32>>> {
+        let count = stop.saturating_sub(start);
+        let data = py
+            .detach(|| self.proxy.read_digital(&signals, start..stop))
+            .map_err(to_py_err)?;
+        let array = numpy::PyArray2::<i32>::zeros(py, (signals.len(), count), false);
+        if count > 0 {
+            let slice = unsafe { array.as_slice_mut()? };
+            for (i, row) in data.iter().enumerate() {
+                slice[i * count..i * count + count].copy_from_slice(row);
+            }
+        }
+        Ok(array)
+    }
+
     /// Always 2.
     #[getter]
     fn ndim(&self) -> usize {
