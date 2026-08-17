@@ -1,7 +1,11 @@
 [package]
 name = "edfarray"
-version = "0.3.1"
+version = "1.0.0"
 edition = "2024"
+description = "Python bindings for edfarray, an EDF/EDF+/BDF parser with numpy-like access"
+license = "MIT"
+readme = "../../README.md"
+documentation = "https://bleemesser.github.io/edfarray/"
 
 [lib]
 name = "edfarray"

@@ -115,11 +115,9 @@ def main(argv=None):
     ap.add_argument("--warm-only", action="store_true")
     args = ap.parse_args(argv)
 
-    path = args.file
-    if path is None:
-        path = "/tmp/edfarray_large.edf"
-        if not os.path.exists(path):
-            generate(path, gb=args.gb, channels=args.channels, rate=args.rate)
+    path = args.file or "/tmp/edfarray_large.edf"
+    if not os.path.exists(path):
+        generate(path, gb=args.gb, channels=args.channels, rate=args.rate)
     size_gib = os.path.getsize(path) / (1 << 30)
     print(f"file: {path} ({size_gib:.2f} GiB)")
 

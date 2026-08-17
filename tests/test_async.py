@@ -448,3 +448,46 @@ async def test_write_to_async_transcode(tmp_path):
         assert f2.variant == ("EDF+C" if src_variant != "EDF+C" else "EDF")
     finally:
         f2.close()
+
+
+class TestCancellationAndClose:
+    """Async work runs on a thread pool, so cancellation and close have limits worth pinning."""
+
+    async def test_cancelled_read_raises_cancelled_error(self):
+        f = await aio.open(str(FIXTURES / "test_generator.edf"))
+        task = asyncio.ensure_future(f.signal(0).to_physical())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def test_file_is_usable_after_a_cancelled_read(self):
+        f = await aio.open(str(FIXTURES / "test_generator.edf"))
+        task = asyncio.ensure_future(f.signal(0).to_physical())
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        data = await f.signal(0).to_physical()
+        assert len(data) == len(f.signal(0))
+
+    async def test_close_does_not_abort_an_in_flight_read(self):
+        # A Signal holds its own reference to the mapping, so closing the file mid-read cannot
+        # pull the data out from under it.
+        f = await aio.open(str(FIXTURES / "test_generator.edf"))
+        sig = f.signal(0)
+        expected = len(sig)
+        task = asyncio.ensure_future(sig.to_physical())
+        f.close()
+        assert len(await task) == expected
+
+    async def test_signal_outlives_the_closed_file(self):
+        f = await aio.open(str(FIXTURES / "test_generator.edf"))
+        sig = f.signal(0)
+        f.close()
+        assert len(await sig.to_physical()) > 0
+
+    async def test_concurrent_reads_agree(self):
+        f = await aio.open(str(FIXTURES / "test_generator.edf"))
+        results = await asyncio.gather(*[f.signal(0).to_physical() for _ in range(8)])
+        first = results[0]
+        for r in results[1:]:
+            assert (r == first).all()

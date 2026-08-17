@@ -1,7 +1,13 @@
 [package]
 name = "edfarray-core"
-version = "0.3.1"
+version = "1.0.0"
 edition = "2024"
+description = "EDF/EDF+/BDF file parsing with memory-mapped and streaming reads"
+license = "MIT"
+readme = "../../README.md"
+documentation = "https://bleemesser.github.io/edfarray/"
+keywords = ["edf", "bdf", "eeg", "biosignal", "parser"]
+categories = ["parser-implementations", "science::neuroscience"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false }

@@ -120,13 +120,18 @@ cargo test --package edfarray-core
 
 ## Releasing
 
-Bump the version in `crates/edfarray-core/Cargo.toml` and `crates/edfarray-python/Cargo.toml`, make sure stubs are up to date, then:
+Bump the version in `crates/edfarray-core/Cargo.toml` and `crates/edfarray-python/Cargo.toml`, regenerate the stubs, then:
 
 ```bash
-git add -A && git commit -m "bump version to 0.x.y"
-git tag v0.x.y
-git push && git push origin v0.x.y
+cargo run --bin gen_stubs --no-default-features --package edfarray
+git add -A && git commit -m "bump version to x.y.z"
+git tag vx.y.z
+git push && git push origin vx.y.z
 ```
+
+Pushing the tag runs the release job in `.github/workflows/ci.yml`, which builds wheels for
+CPython 3.12-3.14 on Linux (x86_64, aarch64), macOS (x86_64, arm64), and Windows, plus an
+sdist, then publishes to PyPI via trusted publishing from the `pypi` environment.
 
 ## License
 

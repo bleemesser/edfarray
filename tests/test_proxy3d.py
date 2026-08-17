@@ -103,3 +103,58 @@ class TestProxy3D:
         # A wrong-arity key is a type error, matching numpy, not an out-of-range error.
         with pytest.raises(TypeError, match="3 indices"):
             p[0, 0]
+
+
+def _strided_group(f):
+    """A rectangular group whose channels form a contiguous index range, which is what makes a
+    zero-copy stride view possible."""
+    for g in f.signal_groups():
+        if g.kind == "rectangular" and f.proxy_3d(g).stride_info() is not None:
+            return g
+    pytest.skip("no stride-eligible group in this fixture")
+
+
+class TestStrideInfoArithmetic:
+    """The stride numbers describe a zero-copy view of the raw file, so they must be checked
+    against the actual bytes, not just for presence."""
+
+    def test_strides_locate_real_samples(self, tmp_path):
+        import numpy as np
+
+        f = open_edf("test_generator_2")
+        g = _strided_group(f)
+        p = f.proxy_3d(g)
+        info = p.stride_info()
+        assert info is not None
+
+        raw = np.memmap(
+            str(FIXTURES / "test_generator_2.edf"), dtype=np.uint8, mode="r"
+        )
+        n_rec, n_ch, spr = info["shape"]
+        assert (n_rec, n_ch, spr) == p.shape
+
+        view = np.lib.stride_tricks.as_strided(
+            raw[info["base_offset"] :].view(np.int16),
+            shape=(n_rec, n_ch, spr),
+            strides=(
+                info["record_stride_bytes"],
+                info["channel_stride_bytes"],
+                info["sample_stride_bytes"],
+            ),
+        )
+        # Compare against decoded digital values for a few records.
+        expected = f.proxy_3d(g).read_digital(0, 3, 0, n_ch)
+        np.testing.assert_array_equal(view[0:3].astype(np.int32), expected)
+
+    def test_stride_view_stays_inside_the_file(self):
+        f = open_edf("test_generator_2")
+        g = _strided_group(f)
+        info = f.proxy_3d(g).stride_info()
+        n_rec, n_ch, spr = info["shape"]
+        last_byte = (
+            info["base_offset"]
+            + (n_rec - 1) * info["record_stride_bytes"]
+            + (n_ch - 1) * info["channel_stride_bytes"]
+            + spr * info["sample_stride_bytes"]
+        )
+        assert last_byte <= (FIXTURES / "test_generator_2.edf").stat().st_size

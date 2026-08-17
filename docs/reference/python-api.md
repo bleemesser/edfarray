@@ -1,12 +1,17 @@
 # Python API Reference
 
+For the exception hierarchy, the supported-indexing rules, and threading/async guarantees, see
+[API contracts](contracts.md).
+
 ## EdfFile
 
 ```python
-edfarray.EdfFile(path: str, variant: str | None = None)
+edfarray.EdfFile(path: str, variant: str | None = None, scan_annotations: bool = True)
 ```
 
 Opens an EDF/EDF+ file at the given path. Parses the header synchronously and starts a background annotation scan for EDF+ files. Signal reads work immediately after construction.
+
+`scan_annotations=False` defers that scan until annotations are first accessed, at which point it runs on the calling thread. The scan reads every data record, so deferring it matters on very large files -- see [Performance](../guide/performance.md).
 
 `variant` forces the file variant instead of trusting the auto-detected one, for files that omit or misreport the EDF+ `"+C"`/`"+D"` marker. It only controls the plain/`"+C"`/`"+D"` distinction; an override that changes the EDF-vs-BDF sample size (set by the version field) raises `ValueError`. A mismatch with the detected variant is recorded in `warnings`.
 
@@ -72,7 +77,7 @@ The annotation accessors below block until the background annotation scan comple
 
 ### Methods
 
-`signal(idx_or_label: int | str, cache_capacity: int = 0) -> Signal` -- Get a signal by index or label. Raises `IndexError` for out-of-range indices, `KeyError` for unknown labels. `cache_capacity` enables a per-`Signal` LRU cache of decoded physical records -- see [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
+`signal(idx_or_label: int | str, cache_capacity: int = 0, strategy: str | None = None) -> Signal` -- Get a signal by index or label. Raises `OutOfRangeError` (an `IndexError`) for out-of-range indices, `SignalNotFoundError` (a `KeyError`) for unknown labels. `strategy` is `"auto"` (default), `"mmap"`, or `"stream"`; see [Performance](../guide/performance.md). `cache_capacity` enables a per-`Signal` LRU cache of decoded physical records -- see [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
 
 `find_all_signals(label: str, exact: bool = False) -> list[int]` -- Return the indices of all signals whose label matches `label`. If `exact` is `False` (default), performs a case-insensitive substring match. If `exact` is `True`, performs a case-sensitive exact equality match. Searches all signals including annotation signals. Pass an index to `signal()` to read one.
 

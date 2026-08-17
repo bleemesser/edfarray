@@ -22,6 +22,8 @@ def build_edf_plus(
     annotation_bytes=60,
     record_duration=1.0,
     timekeeping=True,
+    patient_id="X X X X",
+    recording_id="Startdate 10-DEC-2009 X X X",
 ):
     """Write an EDF+ file whose record time-keeping onsets are exactly `record_onsets`.
 
@@ -35,8 +37,8 @@ def build_edf_plus(
     header = b"".join(
         [
             _fld("0", 8),
-            _fld("X X X X", 80),
-            _fld("Startdate 10-DEC-2009 X X X", 80),
+            _fld(patient_id, 80),
+            _fld(recording_id, 80),
             _fld("10.12.09", 8),
             _fld("12.44.02", 8),
             _fld(256 + 256 * num_signals, 8),
