@@ -29,7 +29,7 @@ The async context manager form ensures the file is closed when the block exits:
 
 ```python
 async with await aio.open("recording.edf") as f:
-    data = await f.signal(0).read_physical(0, 1000)
+    data = await f.signal(0).read_range(0, 1000)
 ```
 
 `aio.open` takes the same `variant` override as the sync constructor, for files
@@ -48,17 +48,17 @@ Get a `Signal` proxy with `f.signal()` (sync), then read data asynchronously:
 ```python
 f = await aio.open("recording.edf")
 
-sig = f.signal(0)                       # sync — returns a Signal proxy
-chunk = await sig.read_physical(0, 1000) # async — decodes and returns numpy array
-full  = await sig.to_numpy()            # async — entire signal as float64 array
-raw   = await sig.to_digital()          # async — entire signal as int32 array
-times = await sig.times()               # async — timestamp for each sample
+sig = f.signal(0) # sync — returns a Signal proxy
+chunk = await sig.read_range(0, 1000) # async — decodes and returns numpy array
+full  = await sig.to_physical() # async — entire signal as float64 array
+raw   = await sig.to_digital() # async — entire signal as int32 array
+times = await sig.times() # async — timestamp for each sample
 ```
 
 Time-based reads map seconds to sample indices internally:
 
 ```python
-data = await sig.read_at(0.0, 10.0)  # physical values in [0, 10) seconds
+data = await sig.read_time_range(0.0, 10.0)  # physical values in [0, 10) seconds
 ```
 
 For repeated reads on the same signal, pass `cache_capacity` to enable an LRU

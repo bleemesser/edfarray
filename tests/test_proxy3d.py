@@ -100,5 +100,6 @@ class TestProxy3D:
         f = open_edf("test_generator")
         g = largest_rect_group(f)
         p = f.proxy_3d(g)
-        with pytest.raises(IndexError, match="3 indices"):
+        # A wrong-arity key is a type error, matching numpy, not an out-of-range error.
+        with pytest.raises(TypeError, match="3 indices"):
             p[0, 0]

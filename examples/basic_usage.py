@@ -48,7 +48,7 @@ def main():
         downsampled = sig[::10]
         print(f"  Downsampled 10x: {len(downsampled)} samples")
 
-        all_data = sig.to_numpy()
+        all_data = sig.to_physical()
         print(f"  Full signal: shape={all_data.shape}, dtype={all_data.dtype}")
 
         digital = sig.to_digital()

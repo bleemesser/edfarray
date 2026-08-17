@@ -53,6 +53,6 @@ def test_lazy_scan_builds_once_under_concurrent_access():
 def test_signal_reads_work_without_scanning():
     # Reading sample data must not require the annotation index.
     f = edfarray.EdfFile(ANNOTATED, scan_annotations=False)
-    data = f.signal(0).to_numpy()
+    data = f.signal(0).to_physical()
     assert len(data) > 0
     assert f.annotations_ready is False

@@ -40,5 +40,6 @@ nav:
     - Async API: guide/async.md
   - Reference:
     - Python API: reference/python-api.md
+    - API Contracts: reference/contracts.md
     - Rust Crate: reference/rust-api.md
     - EDF Format: reference/edf-format.md

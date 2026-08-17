@@ -81,7 +81,7 @@ async def main():
     concurrencies = [1, 2, 4, 8]
 
     async def read_full():
-        await sig.to_numpy()
+        await sig.to_physical()
 
     t_single = await time_one(read_full, repeats)
     print(f"Single full read (baseline): {format_time(t_single)}")

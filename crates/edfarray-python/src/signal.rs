@@ -1,5 +1,4 @@
 use numpy::{PyArray1, PyArrayMethods};
-use pyo3::exceptions::PyIndexError;
 use pyo3::prelude::*;
 use pyo3::types::PySlice;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
@@ -8,10 +7,12 @@ use edfarray_core::error::EdfError;
 use edfarray_core::proxy::SignalProxy;
 
 use crate::errors::to_py_err;
+use crate::indexing::{extract_index, normalize_index, unsupported_index_err};
+use crate::numpy_util::numpy_dtype;
 
 /// Proxy view of a single signal, supporting numpy-style indexing.
 #[gen_stub_pyclass]
-#[pyclass(name = "Signal")]
+#[pyclass(name = "Signal", module = "edfarray._core")]
 pub struct PySignal {
     proxy: SignalProxy,
 }
@@ -104,9 +105,14 @@ impl PySignal {
         )
     }
 
-    /// Supports `s[i]`, `s[start:stop]`, and `s[start:stop:step]`.
+    /// Index with an integer or a slice.
+    ///
+    /// Integers accept negative values and return a Python float; slices return a float64
+    /// array and support any step. Boolean masks, fancy indexing, `None`, and `Ellipsis` are
+    /// not supported and raise `TypeError`.
+    #[gen_stub(override_return_type(type_repr = "builtins.float | numpy.typing.NDArray[numpy.float64]", imports = ("builtins", "numpy", "numpy.typing")))]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        if let Ok(idx) = key.extract::<isize>() {
+        if let Some(idx) = extract_index(key) {
             let idx = self.normalize_index(idx)?;
             let val = self.proxy.get_physical(idx).map_err(to_py_err)?;
             Ok(val.into_pyobject(py)?.into_any().unbind())
@@ -142,12 +148,53 @@ impl PySignal {
                 Ok(array.into_any().unbind())
             }
         } else {
-            Err(PyIndexError::new_err("index must be int or slice"))
+            Err(unsupported_index_err(key, "an integer or a slice"))
         }
     }
 
-    /// Return the entire signal as a float64 numpy array.
-    fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    /// Number of samples, as a one-element tuple. Mirrors `numpy.ndarray.shape`.
+    #[getter]
+    fn shape(&self) -> (usize,) {
+        (self.proxy.len(),)
+    }
+
+    /// Always 1: a signal is one-dimensional.
+    #[getter]
+    fn ndim(&self) -> usize {
+        1
+    }
+
+    /// dtype of the physical values this signal decodes to.
+    #[getter]
+    fn dtype<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        numpy_dtype(py, "float64")
+    }
+
+    /// Support `numpy.asarray(signal)`.
+    ///
+    /// Without this, numpy falls back to the sequence protocol and decodes one sample per
+    /// `__getitem__` call, which is correct but thousands of times slower.
+    #[pyo3(signature = (dtype=None, copy=None))]
+    fn __array__<'py>(
+        &self,
+        py: Python<'py>,
+        dtype: Option<Bound<'py, PyAny>>,
+        copy: Option<bool>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let array = self.to_physical(py)?.into_any();
+        if copy == Some(false) {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "cannot avoid a copy: samples are decoded from the file on access",
+            ));
+        }
+        match dtype {
+            None => Ok(array),
+            Some(dt) => array.call_method1("astype", (dt,)),
+        }
+    }
+
+    /// Return the entire signal as a float64 numpy array of physical values.
+    fn to_physical<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let len = self.proxy.len();
         let array = PyArray1::<f64>::zeros(py, len, false);
         if len > 0 {
@@ -170,6 +217,44 @@ impl PySignal {
         Ok(array)
     }
 
+    /// Return physical values for samples `[start, stop)`, indexed by sample number.
+    ///
+    /// Equivalent to `signal[start:stop]`. Use `read_time_range` to index by seconds.
+    fn read_range<'py>(
+        &self,
+        py: Python<'py>,
+        start: usize,
+        stop: usize,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let stop = stop.min(self.proxy.len());
+        let count = stop.saturating_sub(start);
+        let array = PyArray1::<f64>::zeros(py, count, false);
+        if count > 0 {
+            let slice = unsafe { array.as_slice_mut()? };
+            py.detach(|| self.proxy.read_physical(start, stop, slice))
+                .map_err(to_py_err)?;
+        }
+        Ok(array)
+    }
+
+    /// Return raw digital values for samples `[start, stop)`, indexed by sample number.
+    fn read_range_digital<'py>(
+        &self,
+        py: Python<'py>,
+        start: usize,
+        stop: usize,
+    ) -> PyResult<Bound<'py, PyArray1<i32>>> {
+        let stop = stop.min(self.proxy.len());
+        let count = stop.saturating_sub(start);
+        let array = PyArray1::<i32>::zeros(py, count, false);
+        if count > 0 {
+            let slice = unsafe { array.as_slice_mut()? };
+            py.detach(|| self.proxy.read_digital(start, stop, slice))
+                .map_err(to_py_err)?;
+        }
+        Ok(array)
+    }
+
     /// Return timestamps (in seconds) for each sample.
     fn times<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let len = self.proxy.len();
@@ -182,13 +267,14 @@ impl PySignal {
         Ok(array)
     }
 
-    /// Return physical data for samples whose time falls within `[start_sec, end_sec)`.
+    /// Return physical values for samples whose time falls in `[start_sec, end_sec)`.
     ///
-    /// For EDF+D files, this accounts for gaps between records using the
-    /// record onset times from the annotation index (blocks until scan completes).
-    /// For EDF and EDF+C, this is equivalent to indexing by flat sample number,
-    /// i.e. `int(time * sample_rate)`.
-    fn read_at<'py>(
+    /// Arguments are seconds. Use `read_range` to index by sample number instead.
+    ///
+    /// For EDF+D files this accounts for gaps between records using the record onset times
+    /// from the annotation index (blocks until the scan completes). For EDF and EDF+C it is
+    /// equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
+    fn read_time_range<'py>(
         &self,
         py: Python<'py>,
         start_sec: f64,
@@ -210,14 +296,7 @@ impl PySignal {
 
 impl PySignal {
     fn normalize_index(&self, idx: isize) -> PyResult<usize> {
-        let len = self.proxy.len() as isize;
-        let normalized = if idx < 0 { len + idx } else { idx };
-        if normalized < 0 || normalized >= len {
-            return Err(PyIndexError::new_err(format!(
-                "index {idx} out of range for signal with {len} samples"
-            )));
-        }
-        Ok(normalized as usize)
+        normalize_index(idx, self.proxy.len(), "sample")
     }
 }
 

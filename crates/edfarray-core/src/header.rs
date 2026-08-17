@@ -213,7 +213,8 @@ impl EdfHeader {
         if header_bytes != expected_header_bytes {
             return Err(EdfError::HeaderSizeMismatch {
                 header_bytes,
-                file_size: expected_header_bytes,
+                expected_header_bytes,
+                num_signals,
             });
         }
 

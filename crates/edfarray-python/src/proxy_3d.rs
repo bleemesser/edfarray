@@ -7,6 +7,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use edfarray_core::proxy_3d::Proxy3D;
 
 use crate::errors::to_py_err;
+use crate::indexing::{extract_index, unsupported_index_err};
+use crate::numpy_util::numpy_dtype;
 
 /// 3D view over a `Rectangular` signal group, shape
 /// `(num_records, num_channels, samples_per_record)`.
@@ -15,7 +17,7 @@ use crate::errors::to_py_err;
 /// when all three are ints, a 2D ndarray when two are slices, etc. Step != 1
 /// is not supported.
 #[gen_stub_pyclass]
-#[pyclass(name = "Proxy3D")]
+#[pyclass(name = "Proxy3D", module = "edfarray._core")]
 pub struct PyProxy3D {
     proxy: Proxy3D,
 }
@@ -48,6 +50,48 @@ impl PyProxy3D {
         self.proxy.stride_info().is_some()
     }
 
+    /// Always 3.
+    #[getter]
+    fn ndim(&self) -> usize {
+        3
+    }
+
+    /// dtype of the physical values this proxy decodes to.
+    #[getter]
+    fn dtype<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        numpy_dtype(py, "float64")
+    }
+
+    /// Support `numpy.asarray(proxy)` by materializing the whole block.
+    #[pyo3(signature = (dtype=None, copy=None))]
+    fn __array__<'py>(
+        &self,
+        py: Python<'py>,
+        dtype: Option<Bound<'py, PyAny>>,
+        copy: Option<bool>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if copy == Some(false) {
+            return Err(PyValueError::new_err(
+                "cannot avoid a copy: samples are decoded from the file on access",
+            ));
+        }
+        let (n_rec, n_ch, _) = self.proxy.shape();
+        let key = PyTuple::new(
+            py,
+            [
+                PySlice::full(py).into_any(),
+                PySlice::full(py).into_any(),
+                PySlice::full(py).into_any(),
+            ],
+        )?;
+        let _ = (n_rec, n_ch);
+        let array = self.__getitem__(py, key.as_any())?.into_bound(py);
+        match dtype {
+            None => Ok(array),
+            Some(dt) => array.call_method1("astype", (dt,)),
+        }
+    }
+
     fn __repr__(&self) -> String {
         let (r, c, s) = self.proxy.shape();
         format!(
@@ -67,14 +111,16 @@ impl PyProxy3D {
     /// 1D array (one non-int axis), a 2D array (two), or a 3D array (all).
     /// The full enclosing record block is materialized regardless of the
     /// sample step, so striding shrinks the result, not the work.
+    #[gen_stub(override_return_type(type_repr = "builtins.float | numpy.typing.NDArray[numpy.float64]", imports = ("builtins", "numpy", "numpy.typing")))]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let tuple = key.cast::<PyTuple>().map_err(|_| {
-            PyIndexError::new_err("Proxy3D requires exactly 3 indices: [record, channel, sample]")
+            unsupported_index_err(key, "a 3-tuple of [record, channel, sample] indices")
         })?;
         if tuple.len() != 3 {
-            return Err(PyIndexError::new_err(
-                "Proxy3D requires exactly 3 indices: [record, channel, sample]",
-            ));
+            return Err(PyTypeError::new_err(format!(
+                "Proxy3D requires exactly 3 indices [record, channel, sample], got {}",
+                tuple.len()
+            )));
         }
 
         let (n_rec, n_ch, spr) = self.proxy.shape();
@@ -195,7 +241,7 @@ enum AxisSpec {
 impl AxisSpec {
     /// Parse a record/channel axis: int or step-1 slice only.
     fn parse(spec: &Bound<'_, PyAny>, length: usize, axis: &str) -> PyResult<Self> {
-        if let Ok(idx) = spec.extract::<isize>() {
+        if let Some(idx) = extract_index(spec) {
             let n = normalize(idx, length, axis)?;
             return Ok(AxisSpec::Int(n));
         }
@@ -208,14 +254,12 @@ impl AxisSpec {
             }
             return Ok(AxisSpec::Range(i.start as usize, i.stop as usize));
         }
-        Err(PyTypeError::new_err(format!(
-            "{axis} index must be int or slice"
-        )))
+        Err(unsupported_index_err(spec, "an integer or a slice"))
     }
 
     /// Parse the sample axis: int or slice, with an arbitrary step allowed.
     fn parse_sample(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<Self> {
-        if let Ok(idx) = spec.extract::<isize>() {
+        if let Some(idx) = extract_index(spec) {
             let n = normalize(idx, length, "sample")?;
             return Ok(AxisSpec::Int(n));
         }
@@ -230,7 +274,7 @@ impl AxisSpec {
                 count: range_len(i.start, i.stop, i.step),
             });
         }
-        Err(PyTypeError::new_err("sample index must be int or slice"))
+        Err(unsupported_index_err(spec, "an integer or a slice"))
     }
 
     fn to_range(self) -> std::ops::Range<usize> {

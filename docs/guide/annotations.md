@@ -84,11 +84,11 @@ pages = f.read_page(0.0, 10.0, use_time=True)
 # pages will contain only samples from records that fall within 0-10s physical time.
 ```
 
-For single-signal time-aware reading, use `Signal.read_at()`:
+For single-signal time-aware reading, use `Signal.read_time_range()`:
 
 ```python
 sig = f.signal(0)
-data = sig.read_at(0.0, 10.0)  # physical data within 0-10s, gaps excluded
+data = sig.read_time_range(0.0, 10.0)  # physical data within 0-10s, gaps excluded
 ```
 
 This is the same behavior as pyedflib's `readSignal(start, n)`. Flat sample indices are the standard convention. For mapping between sample space and time space, use `times()`. It returns the true physical timestamp for every sample.

@@ -78,7 +78,7 @@ async def test_closed_file_raises():
     path = _pick_fixture()
     f = await aio.open(str(path))
     f.close()
-    with pytest.raises(RuntimeError, match="closed"):
+    with pytest.raises(edfarray.ClosedFileError, match="closed"):
         await f.wait_for_annotations()
 
 
@@ -179,7 +179,7 @@ async def test_read_page_closed_file_raises():
     path = _pick_fixture()
     f = await aio.open(str(path))
     f.close()
-    with pytest.raises(RuntimeError, match="closed"):
+    with pytest.raises(edfarray.ClosedFileError, match="closed"):
         await f.read_page(0.0, 1.0)
 
 
@@ -209,20 +209,20 @@ async def test_signal_read_physical_matches_sync():
         idx = async_f.ordinary_signal_indices()[0]
         n = min(async_f.signal(idx).num_samples, 1000)
         sync_data = sync_f.signal(idx)[0:n]
-        async_data = await async_f.signal(idx).read_physical(0, n)
+        async_data = await async_f.signal(idx).read_range(0, n)
         np.testing.assert_array_equal(sync_data, async_data)
         assert async_data.dtype == np.float64
     finally:
         async_f.close()
 
 
-async def test_signal_to_numpy_and_to_digital():
+async def test_signal_to_physical_and_to_digital():
     path = _pick_fixture()
     async_f = await aio.open(str(path))
     try:
         idx = async_f.ordinary_signal_indices()[0]
         sig = async_f.signal(idx)
-        phys = await sig.to_numpy()
+        phys = await sig.to_physical()
         dig = await sig.to_digital()
         assert phys.dtype == np.float64
         assert dig.dtype == np.int32
@@ -265,8 +265,8 @@ async def test_signal_with_cache():
         cached = async_f.signal(idx, cache_capacity=8)
         uncached = async_f.signal(idx)
         n = min(cached.num_samples, 500)
-        a = await cached.read_physical(0, n)
-        b = await uncached.read_physical(0, n)
+        a = await cached.read_range(0, n)
+        b = await uncached.read_range(0, n)
         np.testing.assert_array_equal(a, b)
     finally:
         async_f.close()
@@ -287,13 +287,13 @@ async def test_signal_concurrent_reads_release_gil():
             while not stop.is_set():
                 counter[0] += 1
 
-        await sig.to_numpy()
+        await sig.to_physical()
 
         t = threading.Thread(target=busy)
         t.start()
         try:
             start = counter[0]
-            await asyncio.gather(*[sig.to_numpy() for _ in range(8)])
+            await asyncio.gather(*[sig.to_physical() for _ in range(8)])
             ticks = counter[0] - start
         finally:
             stop.set()
@@ -329,7 +329,7 @@ async def test_write_edf_async_roundtrip(tmp_path):
         assert f.num_records == 4
         s = f.signal(0)
         assert s.label.startswith("EEG Fz")
-        read = await s.to_numpy()
+        read = await s.to_physical()
         np.testing.assert_allclose(read, data, atol=0.01)
     finally:
         f.close()
@@ -360,7 +360,7 @@ async def test_streaming_async_writer(tmp_path):
     f = await aio.open(str(out))
     try:
         assert f.num_records == 3
-        data = await f.signal(0).to_numpy()
+        data = await f.signal(0).to_physical()
         assert len(data) == 30
     finally:
         f.close()

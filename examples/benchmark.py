@@ -36,7 +36,7 @@ def bench_edfarray(path, signal_idx=0, n_iterations=5):
     times = []
     for _ in range(n_iterations):
         t0 = time.perf_counter()
-        _data = sig.to_numpy()
+        _data = sig.to_physical()
         times.append(time.perf_counter() - t0)
     results["read_full"] = np.median(times)
     results["n_samples"] = n_samples

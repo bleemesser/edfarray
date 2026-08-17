@@ -29,7 +29,7 @@ pages = f.read_page(0.0, 10.0, use_time=True)
 
 # For single-signal time-aware reading:
 sig = f.signal(0)
-data = sig.read_at(0.0, 10.0)  # physical data within 0-10s, gaps excluded
+data = sig.read_time_range(0.0, 10.0)  # physical data within 0-10s, gaps excluded
 ```
 
 ## `ordinary_signal_indices()`
@@ -110,8 +110,8 @@ annotation access, on the calling thread:
 
 ```python
 f = edfarray.EdfFile("large_recording.edf", scan_annotations=False)
-data = f.signal(0).to_numpy()   # no scan happens
-f.annotations                   # builds the index now, blocking until done
+data = f.signal(0).to_physical() # no scan happens
+f.annotations # builds the index now, blocking until done
 ```
 
 ## Why it's fast

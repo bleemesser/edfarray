@@ -1,5 +1,5 @@
 use numpy::{PyArray1, PyArray2, PyArrayMethods};
-use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PySlice, PyTuple};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
@@ -7,7 +7,9 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use edfarray_core::group::PadMode;
 use edfarray_core::proxy_2d::Proxy2D;
 
-use crate::errors::to_py_err;
+use crate::errors::{invalid_argument_err, to_py_err};
+use crate::indexing::{extract_index, normalize_index, unsupported_index_err};
+use crate::numpy_util::numpy_dtype;
 
 /// 2D array proxy for numpy-style multi-channel signal access.
 ///
@@ -15,7 +17,7 @@ use crate::errors::to_py_err;
 /// int, slice, or list (signal axis only). All signals must share the same
 /// sample rate.
 #[gen_stub_pyclass]
-#[pyclass(name = "Proxy2D")]
+#[pyclass(name = "Proxy2D", module = "edfarray._core")]
 pub struct PyProxy2D {
     proxy: Proxy2D,
 }
@@ -53,6 +55,42 @@ impl PyProxy2D {
         pad_mode_name(self.proxy.pad_mode())
     }
 
+    /// Always 2.
+    #[getter]
+    fn ndim(&self) -> usize {
+        2
+    }
+
+    /// dtype of the physical values this proxy decodes to.
+    #[getter]
+    fn dtype<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        numpy_dtype(py, "float64")
+    }
+
+    /// Support `numpy.asarray(proxy)` by materializing every channel.
+    #[pyo3(signature = (dtype=None, copy=None))]
+    fn __array__<'py>(
+        &self,
+        py: Python<'py>,
+        dtype: Option<Bound<'py, PyAny>>,
+        copy: Option<bool>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        if copy == Some(false) {
+            return Err(PyValueError::new_err(
+                "cannot avoid a copy: samples are decoded from the file on access",
+            ));
+        }
+        let key = PyTuple::new(
+            py,
+            [PySlice::full(py).into_any(), PySlice::full(py).into_any()],
+        )?;
+        let array = self.__getitem__(py, key.as_any())?.into_bound(py);
+        match dtype {
+            None => Ok(array),
+            Some(dt) => array.call_method1("astype", (dt,)),
+        }
+    }
+
     fn __repr__(&self) -> String {
         let (rows, cols) = self.proxy.shape();
         let rate = match self.proxy.sample_rate() {
@@ -81,18 +119,22 @@ impl PyProxy2D {
     /// the signal axis does not. A strided sample read still reads the full
     /// enclosing span and then subsamples, so it costs about the same as the
     /// unstrided read of that span — it shrinks the result, not the I/O.
+    #[gen_stub(override_return_type(type_repr = "builtins.float | numpy.typing.NDArray[numpy.float64]", imports = ("builtins", "numpy", "numpy.typing")))]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
-        let tuple = if let Ok(t) = key.cast::<PyTuple>() {
-            if t.len() != 2 {
-                return Err(PyIndexError::new_err(
-                    "Proxy2D requires exactly 2 indices: [signal, sample]",
+        let tuple = match key.cast::<PyTuple>() {
+            Ok(t) if t.len() == 2 => t.clone(),
+            Ok(t) => {
+                return Err(PyTypeError::new_err(format!(
+                    "Proxy2D requires exactly 2 indices [signal, sample], got {}",
+                    t.len()
+                )));
+            }
+            Err(_) => {
+                return Err(unsupported_index_err(
+                    key,
+                    "a 2-tuple of [signal, sample] indices",
                 ));
             }
-            t.clone()
-        } else {
-            return Err(PyIndexError::new_err(
-                "Proxy2D requires exactly 2 indices: [signal, sample]",
-            ));
         };
 
         let sig_spec = tuple.get_item(0)?;
@@ -100,18 +142,18 @@ impl PyProxy2D {
 
         let (num_signals, num_samples) = self.proxy.shape();
 
-        let sig_int = sig_spec.extract::<isize>().ok();
-        let samp_int = samp_spec.extract::<isize>().ok();
+        let sig_int = extract_index(&sig_spec);
+        let samp_int = extract_index(&samp_spec);
 
         if let (Some(si), Some(sa)) = (sig_int, samp_int) {
-            let si = normalize_index(si, num_signals)?;
-            let sa = normalize_index(sa, num_samples)?;
+            let si = normalize_index(si, num_signals, "signal")?;
+            let sa = normalize_index(sa, num_samples, "sample")?;
             let val = self.proxy.get(si, sa).map_err(to_py_err)?;
             return Ok(val.into_pyobject(py)?.into_any().unbind());
         }
 
         if let Some(si) = sig_int {
-            let si = normalize_index(si, num_signals)?;
+            let si = normalize_index(si, num_signals, "signal")?;
             let samp = parse_sample_spec(&samp_spec, num_samples)?;
             let array = PyArray1::<f64>::zeros(py, samp.count, false);
             if samp.count > 0 {
@@ -134,7 +176,7 @@ impl PyProxy2D {
         let signal_indices = parse_signal_spec(&sig_spec, num_signals)?;
 
         if let Some(sa) = samp_int {
-            let sa = normalize_index(sa, num_samples)?;
+            let sa = normalize_index(sa, num_samples, "sample")?;
             let vals = py
                 .detach(|| self.proxy.read_signals_at_sample(&signal_indices, sa))
                 .map_err(to_py_err)?;
@@ -216,17 +258,6 @@ fn range_len(start: isize, stop: isize, step: isize) -> usize {
     }
 }
 
-fn normalize_index(idx: isize, len: usize) -> PyResult<usize> {
-    let len_i = len as isize;
-    let normalized = if idx < 0 { len_i + idx } else { idx };
-    if normalized < 0 || normalized >= len_i {
-        return Err(PyIndexError::new_err(format!(
-            "index {idx} out of range for axis with size {len}"
-        )));
-    }
-    Ok(normalized as usize)
-}
-
 fn parse_sample_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<SampleSlice> {
     if let Ok(slice) = spec.cast::<PySlice>() {
         let indices = slice.indices(length as isize)?;
@@ -235,15 +266,15 @@ fn parse_sample_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<SampleS
             step: indices.step,
             count: range_len(indices.start, indices.stop, indices.step),
         })
-    } else if let Ok(idx) = spec.extract::<isize>() {
-        let idx = normalize_index(idx, length)?;
+    } else if let Some(idx) = extract_index(spec) {
+        let idx = normalize_index(idx, length, "sample")?;
         Ok(SampleSlice {
             start: idx as isize,
             step: 1,
             count: 1,
         })
     } else {
-        Err(PyTypeError::new_err("sample index must be int or slice"))
+        Err(unsupported_index_err(spec, "an integer or a slice"))
     }
 }
 
@@ -259,12 +290,13 @@ fn parse_signal_spec(spec: &Bound<'_, PyAny>, length: usize) -> PyResult<Vec<usi
     } else if let Ok(list) = spec.cast::<PyList>() {
         let mut result = Vec::with_capacity(list.len());
         for item in list {
-            let idx: isize = item.extract()?;
-            result.push(normalize_index(idx, length)?);
+            let idx = extract_index(&item)
+                .ok_or_else(|| unsupported_index_err(&item, "a list of integers"))?;
+            result.push(normalize_index(idx, length, "signal")?);
         }
         Ok(result)
-    } else if let Ok(idx) = spec.extract::<isize>() {
-        Ok(vec![normalize_index(idx, length)?])
+    } else if let Some(idx) = extract_index(spec) {
+        Ok(vec![normalize_index(idx, length, "signal")?])
     } else {
         Err(PyTypeError::new_err(
             "signal index must be int, slice, or list",
@@ -285,7 +317,7 @@ pub(crate) fn parse_pad_mode(spec: Option<&Bound<'_, PyAny>>) -> PyResult<PadMod
             "nan" => Ok(PadMode::Nan),
             "zero" => Ok(PadMode::Zero),
             "edge" => Ok(PadMode::Edge),
-            other => Err(PyValueError::new_err(format!(
+            other => Err(invalid_argument_err(format!(
                 "unknown pad_mode '{other}' (use 'raise', 'nan', 'zero', 'edge', a number, or None)"
             ))),
         };

@@ -37,7 +37,7 @@ def test_signal_read_scales_across_threads():
     # speedup would be ~1x regardless of core count.
     f = edfarray.EdfFile(PATH)
     sig = f.signal(0)
-    work = sig.to_numpy
+    work = sig.to_physical
     work()  # warm the page cache so the comparison measures decode, not first-touch I/O
 
     sequential = _time_burst(work, 200, 1)
@@ -63,13 +63,13 @@ def test_read_page_scales_across_threads():
 def test_concurrent_reads_from_threads_agree():
     f = edfarray.EdfFile(PATH)
     sig = f.signal(0)
-    expected = sig.to_numpy()
+    expected = sig.to_physical()
     results = []
     errors = []
 
     def worker():
         try:
-            results.append(sig.to_numpy())
+            results.append(sig.to_physical())
         except BaseException as exc:  # noqa: BLE001 - surfaced below
             errors.append(exc)
 

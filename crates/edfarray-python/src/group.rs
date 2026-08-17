@@ -10,7 +10,7 @@ use edfarray_core::group::{GroupKind, SignalGroup};
 /// returned by that method is "rectangular" — all channels share a sample rate
 /// and total sample count.
 #[gen_stub_pyclass]
-#[pyclass(name = "SignalGroup", frozen)]
+#[pyclass(name = "SignalGroup", module = "edfarray._core", frozen)]
 pub struct PySignalGroup {
     inner: SignalGroup,
 }
@@ -112,5 +112,30 @@ impl PySignalGroup {
             span,
             self.inner.covers_all_ordinary,
         )
+    }
+
+    /// Iterate the group's file-level signal indices.
+    fn __iter__(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let indices = slf.inner.indices.clone();
+        Ok(pyo3::types::PyList::new(py, indices)?
+            .as_any()
+            .try_iter()?
+            .into_any()
+            .unbind())
+    }
+
+    /// Two groups are equal when they hold the same indices in the same order.
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+        match other.extract::<PyRef<'_, PySignalGroup>>() {
+            Ok(other) => self.inner.indices == other.inner.indices,
+            Err(_) => false,
+        }
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.indices.hash(&mut hasher);
+        hasher.finish()
     }
 }

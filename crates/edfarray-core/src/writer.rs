@@ -348,19 +348,21 @@ impl EdfWriter {
         }
         self.finished = true;
         let mut writer = self.inner.take().expect("writer open");
-        writer.flush().map_err(|e| EdfError::FileOpen {
+        writer.flush().map_err(|e| EdfError::Io {
             path: self.path.clone(),
+            op: "flushing",
             source: e,
         })?;
-        let mut file = writer.into_inner().map_err(|e| EdfError::FileOpen {
+        let mut file = writer.into_inner().map_err(|e| EdfError::Io {
             path: self.path.clone(),
+            op: "flushing",
             source: e.into_error(),
         })?;
-        file.seek(SeekFrom::Start(236))
-            .map_err(|e| EdfError::FileOpen {
-                path: self.path.clone(),
-                source: e,
-            })?;
+        file.seek(SeekFrom::Start(236)).map_err(|e| EdfError::Io {
+            path: self.path.clone(),
+            op: "seeking to the record-count field",
+            source: e,
+        })?;
         let nrec = self.num_records_written.to_string();
         if nrec.len() > 8 {
             return Err(EdfError::InvalidArgument {
@@ -371,13 +373,14 @@ impl EdfWriter {
             });
         }
         let nrec_field = format_ascii_field(&nrec, 8);
-        file.write_all(&nrec_field)
-            .map_err(|e| EdfError::FileOpen {
-                path: self.path.clone(),
-                source: e,
-            })?;
-        file.flush().map_err(|e| EdfError::FileOpen {
+        file.write_all(&nrec_field).map_err(|e| EdfError::Io {
             path: self.path.clone(),
+            op: "writing the record count",
+            source: e,
+        })?;
+        file.flush().map_err(|e| EdfError::Io {
+            path: self.path.clone(),
+            op: "flushing",
             source: e,
         })?;
         let _ = self.header_bytes;
@@ -758,9 +761,12 @@ fn format_tal_number(v: f64) -> String {
     trimmed.to_string()
 }
 
+/// Wrap an I/O failure with the operation that caused it. The path is filled in by the caller
+/// where it is known.
 fn io_err(e: std::io::Error) -> EdfError {
-    EdfError::FileOpen {
+    EdfError::Io {
         path: PathBuf::new(),
+        op: "writing samples",
         source: e,
     }
 }

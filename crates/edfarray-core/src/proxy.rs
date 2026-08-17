@@ -391,9 +391,9 @@ impl SignalProxy {
             });
         }
         if end - start != buf_len {
-            return Err(EdfError::SampleOutOfRange {
-                index: end,
-                count: self.total_samples,
+            return Err(EdfError::BufferSizeMismatch {
+                expected: end - start,
+                actual: buf_len,
             });
         }
         Ok(())

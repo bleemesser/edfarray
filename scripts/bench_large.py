@@ -40,7 +40,7 @@ def edfarray_full_channel(path, strategy=None):
 
     def run():
         f = edfarray.EdfFile(path, scan_annotations=False)
-        return len(f.signal(0, strategy=strategy).to_numpy())
+        return len(f.signal(0, strategy=strategy).to_physical())
 
     return run
 

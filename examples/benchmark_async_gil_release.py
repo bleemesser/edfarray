@@ -66,7 +66,7 @@ def measure_sync(path: Path, repeats: int) -> tuple[float, float]:
     bc.start()
     t0 = time.perf_counter()
     for _ in range(repeats):
-        _ = sig.to_numpy()
+        _ = sig.to_physical()
     elapsed = time.perf_counter() - t0
     bc.stop()
     return bc.count / elapsed, elapsed
@@ -83,7 +83,7 @@ async def measure_async(path: Path, repeats: int) -> tuple[float, float]:
     bc.start()
     t0 = time.perf_counter()
     for _ in range(repeats):
-        _ = await sig.to_numpy()
+        _ = await sig.to_physical()
     elapsed = time.perf_counter() - t0
     bc.stop()
     return bc.count / elapsed, elapsed

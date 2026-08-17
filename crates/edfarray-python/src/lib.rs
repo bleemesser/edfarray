@@ -3,6 +3,8 @@ mod annotations;
 mod errors;
 mod file;
 mod group;
+mod indexing;
+mod numpy_util;
 mod proxy_2d;
 mod proxy_3d;
 mod signal;
@@ -12,6 +14,8 @@ use pyo3::prelude::*;
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Before anything that can raise: to_py_err looks these up.
+    errors::register(m.py(), m)?;
     m.add_class::<file::PyEdfFile>()?;
     m.add_class::<signal::PySignal>()?;
     m.add_class::<annotations::PyAnnotation>()?;

@@ -59,7 +59,7 @@ EDF files store samples as 16-bit integers (digital values). The physical value 
 By default, all access returns physical values in the signal's physical units. To get the raw digital values:
 
 ```python
-physical = sig.to_numpy()    # float64, in physical units (e.g. microvolts)
+physical = sig.to_physical() # float64, in physical units (e.g. microvolts)
 digital = sig.to_digital()   # int16, raw digital values from the file
 ```
 
@@ -76,7 +76,7 @@ sig = f.signal("EEG Fpz-Cz", cache_capacity=8)  # cache 8 decoded records
 - **Unit.** `cache_capacity` counts EDF *data records*, not samples or bytes. One cached record holds `samples_per_record` float64 values, so memory is roughly `cache_capacity * samples_per_record * 8` bytes. `0` (the default) disables the cache.
 - **When to set it.** Leave it at `0` for one-pass or strictly forward reads — there's nothing to re-decode, so the cache only adds overhead. It pays off only when reads revisit records.
 - **Recommended capacity.** A few records beyond your largest repeated window: `ceil(window_samples / samples_per_record) + 2`. For example, repeatedly reading 5-second windows from a 256 Hz signal with 256 samples/record needs `ceil(5*256 / 256) + 2 = 7`.
-- **Physical only.** The cache accelerates physical reads (`to_numpy()`, slicing). `to_digital()` always re-decodes from the memory map and ignores the cache.
+- **Physical only.** The cache accelerates physical reads (`to_physical()`, slicing). `to_digital()` always re-decodes from the memory map and ignores the cache.
 - **Per-signal.** The cache lives on the `Signal` instance; re-fetching with `f.signal(...)` starts fresh.
 
 The same `cache_capacity` argument works identically on the [async API](async.md).

@@ -104,7 +104,7 @@ class TestEdfPlusDTimeMapping:
         sig = edf.signal(0)
         sr = sig.sample_rate
 
-        all_data = sig.to_numpy()
+        all_data = sig.to_physical()
         all_times = sig.times()
 
         t_start, t_end = 0.0, 10.0

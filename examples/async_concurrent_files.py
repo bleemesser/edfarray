@@ -27,7 +27,7 @@ async def signal_stats(path: Path) -> dict:
     async with await aio.open(str(path)) as f:
         ordinary = f.ordinary_signal_indices()
         sig = f.signal(ordinary[0])
-        data = await sig.to_numpy()
+        data = await sig.to_physical()
         return {
             "file": path.name,
             "label": sig.label,

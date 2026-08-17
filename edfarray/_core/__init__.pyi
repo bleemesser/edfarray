@@ -2,6 +2,7 @@
 # ruff: noqa: E501, F401, F403, F405
 
 import builtins
+import datetime
 import numpy
 import numpy.typing
 import typing
@@ -31,6 +32,19 @@ class Annotation:
     def text(self) -> builtins.str: ...
     def __new__(cls, onset: builtins.float, text: builtins.str, duration: typing.Optional[builtins.float] = None) -> Annotation: ...
     def __repr__(self) -> builtins.str: ...
+    def __eq__(self, other: typing.Any) -> builtins.bool:
+        r"""
+        Compare by value, so annotations work with `in`, `set`, and `==` on lists.
+        """
+    def __hash__(self) -> builtins.int: ...
+    def __lt__(self, other: Annotation) -> builtins.bool:
+        r"""
+        Ordering follows onset, then text, matching the order annotations are returned in.
+        """
+    def __reduce__(self) -> tuple[typing.Any, typing.Any]:
+        r"""
+        Support `copy` and `pickle`, so annotations survive multiprocessing.
+        """
 
 @typing.final
 class EdfFile:
@@ -78,7 +92,7 @@ class EdfFile:
         Raw 80-byte recording identification field.
         """
     @property
-    def start_datetime(self) -> typing.Any:
+    def start_datetime(self) -> datetime.datetime | builtins.str:
         r"""
         Recording start time as `datetime.datetime`, or raw string if anonymized.
         """
@@ -136,11 +150,6 @@ class EdfFile:
     def warnings(self) -> builtins.list[builtins.str]:
         r"""
         Parse warnings accumulated during file open.
-        """
-    @property
-    def header(self) -> dict:
-        r"""
-        Dictionary with basic header fields.
         """
     @property
     def annotations_ready(self) -> builtins.bool:
@@ -204,7 +213,7 @@ class EdfFile:
         r"""
         Annotations whose text exactly matches `text` (case-sensitive).
         """
-    def find_all_signals(self, label: builtins.str, exact: builtins.bool = ...) -> builtins.list[Signal]:
+    def find_all_signals(self, label: builtins.str, exact: builtins.bool = ...) -> builtins.list[builtins.int]:
         r"""
         Return all signals whose label matches `label`.
         
@@ -213,7 +222,13 @@ class EdfFile:
         
         Searches all signals including annotation signals.
         """
-    def signal(self, idx_or_label: typing.Any, cache_capacity: builtins.int = ..., strategy: typing.Optional[builtins.str] = None) -> Signal:
+    def header(self) -> dict[builtins.str, typing.Any]:
+        r"""
+        Raw header fields as a dict.
+        
+        Builds a fresh dict on each call, so it is a method rather than a property.
+        """
+    def signal(self, idx_or_label: builtins.int | builtins.str, cache_capacity: builtins.int = ..., strategy: typing.Optional[builtins.str] = None) -> Signal:
         r"""
         Get a signal by index or label.
         
@@ -378,8 +393,22 @@ class Proxy2D:
         r"""
         Pad-mode policy as a string: "raise", "nan", "zero", "value", or "edge".
         """
+    @property
+    def ndim(self) -> builtins.int:
+        r"""
+        Always 2.
+        """
+    @property
+    def dtype(self) -> typing.Any:
+        r"""
+        dtype of the physical values this proxy decodes to.
+        """
+    def __array__(self, dtype: typing.Optional[typing.Any] = None, copy: typing.Optional[builtins.bool] = None) -> typing.Any:
+        r"""
+        Support `numpy.asarray(proxy)` by materializing every channel.
+        """
     def __repr__(self) -> builtins.str: ...
-    def __getitem__(self, key: typing.Any) -> typing.Any:
+    def __getitem__(self, key: typing.Any) -> builtins.float | numpy.typing.NDArray[numpy.float64]:
         r"""
         Numpy-style 2D indexing: `proxy[signal_spec, sample_spec]`.
         
@@ -422,8 +451,22 @@ class Proxy3D:
         `True` if the file/group support a zero-copy stride view via
         [`as_strided`].
         """
+    @property
+    def ndim(self) -> builtins.int:
+        r"""
+        Always 3.
+        """
+    @property
+    def dtype(self) -> typing.Any:
+        r"""
+        dtype of the physical values this proxy decodes to.
+        """
+    def __array__(self, dtype: typing.Optional[typing.Any] = None, copy: typing.Optional[builtins.bool] = None) -> typing.Any:
+        r"""
+        Support `numpy.asarray(proxy)` by materializing the whole block.
+        """
     def __repr__(self) -> builtins.str: ...
-    def __getitem__(self, key: typing.Any) -> typing.Any:
+    def __getitem__(self, key: typing.Any) -> builtins.float | numpy.typing.NDArray[numpy.float64]:
         r"""
         NumPy-style 3D indexing: `proxy[rec, channel, sample]`.
         
@@ -504,32 +547,69 @@ class Signal:
         r"""
         Total number of samples.
         """
+    @property
+    def shape(self) -> tuple[builtins.int]:
+        r"""
+        Number of samples, as a one-element tuple. Mirrors `numpy.ndarray.shape`.
+        """
+    @property
+    def ndim(self) -> builtins.int:
+        r"""
+        Always 1: a signal is one-dimensional.
+        """
+    @property
+    def dtype(self) -> typing.Any:
+        r"""
+        dtype of the physical values this signal decodes to.
+        """
     def __len__(self) -> builtins.int: ...
     def __repr__(self) -> builtins.str: ...
-    def __getitem__(self, key: typing.Any) -> typing.Any:
+    def __getitem__(self, key: typing.Any) -> builtins.float | numpy.typing.NDArray[numpy.float64]:
         r"""
-        Supports `s[i]`, `s[start:stop]`, and `s[start:stop:step]`.
+        Index with an integer or a slice.
+        
+        Integers accept negative values and return a Python float; slices return a float64
+        array and support any step. Boolean masks, fancy indexing, `None`, and `Ellipsis` are
+        not supported and raise `TypeError`.
         """
-    def to_numpy(self) -> numpy.typing.NDArray[numpy.float64]:
+    def __array__(self, dtype: typing.Optional[typing.Any] = None, copy: typing.Optional[builtins.bool] = None) -> typing.Any:
         r"""
-        Return the entire signal as a float64 numpy array.
+        Support `numpy.asarray(signal)`.
+        
+        Without this, numpy falls back to the sequence protocol and decodes one sample per
+        `__getitem__` call, which is correct but thousands of times slower.
+        """
+    def to_physical(self) -> numpy.typing.NDArray[numpy.float64]:
+        r"""
+        Return the entire signal as a float64 numpy array of physical values.
         """
     def to_digital(self) -> numpy.typing.NDArray[numpy.int32]:
         r"""
         Return the entire signal as a raw int32 numpy array.
         """
+    def read_range(self, start: builtins.int, stop: builtins.int) -> numpy.typing.NDArray[numpy.float64]:
+        r"""
+        Return physical values for samples `[start, stop)`, indexed by sample number.
+        
+        Equivalent to `signal[start:stop]`. Use `read_time_range` to index by seconds.
+        """
+    def read_range_digital(self, start: builtins.int, stop: builtins.int) -> numpy.typing.NDArray[numpy.int32]:
+        r"""
+        Return raw digital values for samples `[start, stop)`, indexed by sample number.
+        """
     def times(self) -> numpy.typing.NDArray[numpy.float64]:
         r"""
         Return timestamps (in seconds) for each sample.
         """
-    def read_at(self, start_sec: builtins.float, end_sec: builtins.float) -> numpy.typing.NDArray[numpy.float64]:
+    def read_time_range(self, start_sec: builtins.float, end_sec: builtins.float) -> numpy.typing.NDArray[numpy.float64]:
         r"""
-        Return physical data for samples whose time falls within `[start_sec, end_sec)`.
+        Return physical values for samples whose time falls in `[start_sec, end_sec)`.
         
-        For EDF+D files, this accounts for gaps between records using the
-        record onset times from the annotation index (blocks until scan completes).
-        For EDF and EDF+C, this is equivalent to indexing by flat sample number,
-        i.e. `int(time * sample_rate)`.
+        Arguments are seconds. Use `read_range` to index by sample number instead.
+        
+        For EDF+D files this accounts for gaps between records using the record onset times
+        from the annotation index (blocks until the scan completes). For EDF and EDF+C it is
+        equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
         """
 
 @typing.final
@@ -591,6 +671,15 @@ class SignalGroup:
         """
     def __len__(self) -> builtins.int: ...
     def __repr__(self) -> builtins.str: ...
+    def __iter__(self) -> typing.Any:
+        r"""
+        Iterate the group's file-level signal indices.
+        """
+    def __eq__(self, other: typing.Any) -> builtins.bool:
+        r"""
+        Two groups are equal when they hold the same indices in the same order.
+        """
+    def __hash__(self) -> builtins.int: ...
 
 @typing.final
 class WriterSignal:
@@ -600,7 +689,44 @@ class WriterSignal:
     `physical_min`/`physical_max` define the unit range. `digital_min`/`digital_max`
     define the integer range used in the binary file (16-bit for EDF, 24-bit for BDF).
     """
+    @property
+    def label(self) -> builtins.str:
+        r"""
+        Signal label written to the header.
+        """
+    @property
+    def physical_dimension(self) -> builtins.str:
+        r"""
+        Physical unit, e.g. "uV".
+        """
+    @property
+    def physical_min(self) -> builtins.float: ...
+    @property
+    def physical_max(self) -> builtins.float: ...
+    @property
+    def digital_min(self) -> builtins.int: ...
+    @property
+    def digital_max(self) -> builtins.int: ...
+    @property
+    def samples_per_record(self) -> builtins.int:
+        r"""
+        Samples this signal contributes to each data record.
+        """
+    @property
+    def transducer(self) -> builtins.str: ...
+    @property
+    def prefiltering(self) -> builtins.str: ...
+    @property
+    def reserved(self) -> builtins.str: ...
     def __new__(cls, label: builtins.str, physical_dimension: builtins.str, physical_min: builtins.float, physical_max: builtins.float, digital_min: builtins.int, digital_max: builtins.int, samples_per_record: builtins.int, transducer: builtins.str = ..., prefiltering: builtins.str = ..., reserved: builtins.str = ...) -> WriterSignal: ...
+    def __eq__(self, other: typing.Any) -> builtins.bool:
+        r"""
+        Compare by value so specs can be checked in tests and round-tripped.
+        """
+    def __reduce__(self) -> tuple[typing.Any, typing.Any]:
+        r"""
+        Support `copy` and `pickle`.
+        """
     def __repr__(self) -> builtins.str: ...
 
 def inspect(path: builtins.str) -> dict:

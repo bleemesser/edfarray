@@ -31,7 +31,7 @@ def test_signal_values_match_pyedflib(name):
     for idx, ref in expected.items():
         if f.signal_labels()[idx].startswith("EDF Annotations"):
             continue
-        got = f.signal(idx).to_numpy()
+        got = f.signal(idx).to_physical()
         assert got.shape == ref.shape, f"{name}[{idx}] length differs"
         np.testing.assert_allclose(got, ref, rtol=1e-6, atol=1e-6)
 

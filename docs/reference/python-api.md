@@ -64,7 +64,7 @@ The annotation accessors below block until the background annotation scan comple
 
 `warnings: list[str]` -- Parse warnings accumulated during file open. Empty if the file is well-formed.
 
-`header: dict` -- Dictionary with basic header fields: `version`, `patient_id`, `recording_id`, `num_signals`, `num_records`, `record_duration`, `duration`, `variant`.
+`header() -> dict` -- Dictionary with basic header fields (a method, not a property: it builds a fresh dict on each call): `version`, `patient_id`, `recording_id`, `num_signals`, `num_records`, `record_duration`, `duration`, `variant`.
 
 `annotations_ready: bool` -- Whether the background annotation scan has completed. Non-blocking.
 
@@ -74,7 +74,7 @@ The annotation accessors below block until the background annotation scan comple
 
 `signal(idx_or_label: int | str, cache_capacity: int = 0) -> Signal` -- Get a signal by index or label. Raises `IndexError` for out-of-range indices, `KeyError` for unknown labels. `cache_capacity` enables a per-`Signal` LRU cache of decoded physical records -- see [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
 
-`find_all_signals(label: str, exact: bool = False) -> list[Signal]` -- Return all signals whose label matches `label`. If `exact` is `False` (default), performs a case-insensitive substring match. If `exact` is `True`, performs a case-sensitive exact equality match. Searches all signals including annotation signals. Skips indices that fail to construct a signal proxy.
+`find_all_signals(label: str, exact: bool = False) -> list[int]` -- Return the indices of all signals whose label matches `label`. If `exact` is `False` (default), performs a case-insensitive substring match. If `exact` is `True`, performs a case-sensitive exact equality match. Searches all signals including annotation signals. Pass an index to `signal()` to read one.
 
 `signal_labels() -> list[str]` -- Labels of all signals in the file.
 
@@ -168,13 +168,17 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 ### Methods
 
-`to_numpy() -> numpy.ndarray` -- The entire signal as a float64 numpy array.
+`to_physical() -> numpy.ndarray` -- The entire signal as a float64 numpy array.
 
 `to_digital() -> numpy.ndarray` -- The entire signal as an int32 numpy array (raw digital values).
 
 `times() -> numpy.ndarray` -- Timestamp in seconds from recording start for each sample. For EDF+D files, accounts for gaps between data records.
 
-`read_at(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
+`read_range(start: int, stop: int) -> numpy.ndarray` -- Physical values for samples `[start, stop)`, indexed by sample number. Equivalent to `signal[start:stop]`.
+
+`read_range_digital(start: int, stop: int) -> numpy.ndarray` -- Raw digital values for samples `[start, stop)`, indexed by sample number.
+
+`read_time_range(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
 
 !!! note "Caching"
     A per-`Signal` LRU cache is enabled at acquisition via `EdfFile.signal(idx, cache_capacity=N)`, not as a method on the returned `Signal`. See [Caching repeated reads](../guide/signals.md#caching-repeated-reads).

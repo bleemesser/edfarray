@@ -107,7 +107,7 @@ value = sig[0]  # returns a float
 chunk = sig[0:1000]  # returns a numpy float64 array
 
 # The whole signal.
-data = sig.to_numpy()
+data = sig.to_physical()
 print(data.shape, data.dtype)  # (30000,) float64
 ```
 

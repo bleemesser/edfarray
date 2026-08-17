@@ -38,7 +38,7 @@ fn main() -> edfarray_core::error::Result<()> {
     // Read a single signal.
     let proxy = edf.signal(0)?;
     let mut buf = vec![0.0f64; 1000];
-    proxy.read_physical(0, 1000, &mut buf)?;
+    proxy.read_range(0, 1000, &mut buf)?;
     println!("first sample: {}", buf[0]);
 
     // Bulk read all ordinary signals for a time window.

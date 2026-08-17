@@ -16,8 +16,8 @@ STRATEGIES = ["auto", "mmap", "stream"]
 @pytest.mark.parametrize("strategy", STRATEGIES)
 def test_full_read_identical_across_strategies(strategy):
     f = edfarray.EdfFile(PATH)
-    expected = f.signal(0, strategy="mmap").to_numpy()
-    got = f.signal(0, strategy=strategy).to_numpy()
+    expected = f.signal(0, strategy="mmap").to_physical()
+    got = f.signal(0, strategy=strategy).to_physical()
     np.testing.assert_array_equal(got, expected)
 
 
@@ -53,10 +53,10 @@ def test_streaming_crosses_record_boundaries():
             )
 
 
-def test_read_at_identical_across_strategies():
+def test_read_time_range_identical_across_strategies():
     f = edfarray.EdfFile(PATH)
-    mm = f.signal(0, strategy="mmap").read_at(1.0, 3.5)
-    st = f.signal(0, strategy="stream").read_at(1.0, 3.5)
+    mm = f.signal(0, strategy="mmap").read_time_range(1.0, 3.5)
+    st = f.signal(0, strategy="stream").read_time_range(1.0, 3.5)
     np.testing.assert_array_equal(st, mm)
 
 
@@ -68,6 +68,6 @@ def test_unknown_strategy_rejected():
 
 def test_strategy_works_with_cache():
     f = edfarray.EdfFile(PATH)
-    expected = f.signal(0, strategy="mmap").to_numpy()
-    got = f.signal(0, cache_capacity=4, strategy="stream").to_numpy()
+    expected = f.signal(0, strategy="mmap").to_physical()
+    got = f.signal(0, cache_capacity=4, strategy="stream").to_physical()
     np.testing.assert_array_equal(got, expected)

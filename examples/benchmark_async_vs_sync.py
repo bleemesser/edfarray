@@ -84,10 +84,10 @@ async def main():
     f_async = await aio.open(str(path))
     sig_async = f_async.signal(0)
 
-    t_sync_full = median_sync(lambda: sig_sync.to_numpy(), repeats)
+    t_sync_full = median_sync(lambda: sig_sync.to_physical(), repeats)
 
     async def _afull():
-        await sig_async.to_numpy()
+        await sig_async.to_physical()
     t_async_full = await median_async(_afull, repeats)
     report("full read (physical)", t_sync_full, t_async_full)
 
@@ -105,7 +105,7 @@ async def main():
     t_sync_slice = median_sync(lambda: sig_sync[mid:mid + sr], repeats)
 
     async def _aslice():
-        await sig_async.read_physical(mid, mid + sr)
+        await sig_async.read_range(mid, mid + sr)
     t_async_slice = await median_async(_aslice, repeats)
     report("1-second slice", t_sync_slice, t_async_slice)
 

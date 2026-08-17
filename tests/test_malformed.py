@@ -37,14 +37,14 @@ def test_num_records_larger_than_file_is_clamped(tmp_path):
     assert any("clamped" in w for w in f.warnings)
     sig = f.signal(0)
     assert len(sig) == f.num_records * sig.samples_per_record
-    assert sig.to_numpy().shape == (len(sig),)
+    assert sig.to_physical().shape == (len(sig),)
 
 
 def test_truncated_data_is_clamped(tmp_path):
     path = build(tmp_path, "truncated.edf", data_records=100)
     f = edfarray.EdfFile(path)
     assert f.num_records == 0
-    assert f.signal(0).to_numpy().shape == (0,)
+    assert f.signal(0).to_physical().shape == (0,)
 
 
 def test_negative_record_duration_rejected(tmp_path):
@@ -96,4 +96,4 @@ def test_degenerate_physical_range_warns_and_reads_digital(tmp_path):
     f = edfarray.EdfFile(str(path))
     assert any("degenerate" in w for w in f.warnings)
     sig = f.signal(0)
-    assert (sig.to_numpy() == sig.to_digital()).all()
+    assert (sig.to_physical() == sig.to_digital()).all()

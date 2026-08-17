@@ -130,12 +130,12 @@ class TestSignalData:
         np.testing.assert_array_equal(first, second)
         np.testing.assert_array_equal(first, uncached[0:n])
 
-    def test_to_numpy_length(self, fixture):
+    def test_to_physical_length(self, fixture):
         edf, ref = fixture
         if not ref["signals"]:
             pytest.skip("no signals")
         sig = edf.signal(0)
-        arr = sig.to_numpy()
+        arr = sig.to_physical()
         assert len(arr) == len(sig)
 
     def test_to_digital_dtype(self):

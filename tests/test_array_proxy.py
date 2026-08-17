@@ -135,7 +135,8 @@ class TestArrayProxy:
     def test_requires_two_indices(self):
         f = open_edf("test_generator")
         proxy, _ = get_same_rate_proxy(f)
-        with pytest.raises(IndexError, match="2 indices"):
+        # A non-tuple key is a type error, matching numpy, not an out-of-range error.
+        with pytest.raises(TypeError, match="2-tuple"):
             proxy[0]
 
     def test_signal_axis_step_not_supported(self):

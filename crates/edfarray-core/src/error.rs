@@ -23,10 +23,22 @@ pub enum EdfError {
     #[error("invalid header field `{field}`: {reason}")]
     InvalidHeaderField { field: &'static str, reason: String },
 
-    #[error("header declares {header_bytes} header bytes, but file is only {file_size} bytes")]
+    #[error("I/O error while {op} {}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        op: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error(
+        "header declares {header_bytes} header bytes, but {num_signals} signals require \
+         {expected_header_bytes}"
+    )]
     HeaderSizeMismatch {
         header_bytes: usize,
-        file_size: usize,
+        expected_header_bytes: usize,
+        num_signals: usize,
     },
 
     #[error("signal count is zero")]
@@ -57,8 +69,8 @@ pub enum EdfError {
     #[error("no signal with label `{label}`")]
     SignalNotFound { label: String },
 
-    #[error("mixed sample rates: {reason}")]
-    MixedSampleRates { reason: String },
+    #[error("buffer holds {actual} samples, but the requested range covers {expected}")]
+    BufferSizeMismatch { expected: usize, actual: usize },
 
     #[error("{name}: {reason}")]
     InvalidArgument { name: &'static str, reason: String },

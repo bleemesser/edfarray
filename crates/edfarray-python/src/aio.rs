@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex as StdMutex};
 
 use chrono::{Datelike, Timelike};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -11,69 +11,13 @@ use edfarray_core::header::Sex;
 use edfarray_core::writer::{EdfWriter, write_edf};
 
 use crate::annotations::PyAnnotation;
-use crate::errors::to_py_err;
+use crate::errors::{closed_file_err, invalid_argument_err, to_py_err};
 use crate::group::PySignalGroup;
+use crate::proxy_2d::{PyProxy2D, parse_pad_mode};
+use crate::proxy_3d::PyProxy3D;
 use crate::writer::{anns_to_core, build_spec, parse_variant};
 
 use numpy::{PyArray1, PyReadonlyArray1};
-
-#[pyclass(name = "WriterSignal", module = "edfarray._core.aio", from_py_object)]
-#[derive(Clone)]
-pub struct PyAsyncWriterSignal {
-    inner: edfarray_core::writer::WriterSignal,
-}
-
-#[pymethods]
-impl PyAsyncWriterSignal {
-    #[new]
-    #[pyo3(signature = (
-        label,
-        physical_dimension,
-        physical_min,
-        physical_max,
-        digital_min,
-        digital_max,
-        samples_per_record,
-        transducer = String::new(),
-        prefiltering = String::new(),
-        reserved = String::new(),
-    ))]
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        label: String,
-        physical_dimension: String,
-        physical_min: f64,
-        physical_max: f64,
-        digital_min: i32,
-        digital_max: i32,
-        samples_per_record: usize,
-        transducer: String,
-        prefiltering: String,
-        reserved: String,
-    ) -> Self {
-        Self {
-            inner: edfarray_core::writer::WriterSignal {
-                label,
-                transducer,
-                physical_dimension,
-                physical_min,
-                physical_max,
-                digital_min,
-                digital_max,
-                prefiltering,
-                samples_per_record,
-                reserved,
-            },
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "<edfarray.aio.WriterSignal label={:?} samples_per_record={}>",
-            self.inner.label, self.inner.samples_per_record
-        )
-    }
-}
 
 #[pyclass(name = "EdfFile", module = "edfarray._core.aio")]
 pub struct PyAsyncEdfFile {
@@ -82,9 +26,7 @@ pub struct PyAsyncEdfFile {
 
 impl PyAsyncEdfFile {
     fn get(&self) -> PyResult<&Arc<EdfFile>> {
-        self.inner
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("operation on closed EdfFile"))
+        self.inner.as_ref().ok_or_else(closed_file_err)
     }
 }
 
@@ -127,43 +69,43 @@ impl PyAsyncEdfFile {
     }
 
     #[getter]
-    fn num_signals(&self) -> usize {
-        self.get().unwrap().num_signals()
+    fn num_signals(&self) -> PyResult<usize> {
+        Ok(self.get()?.num_signals())
     }
 
     #[getter]
-    fn num_records(&self) -> usize {
-        self.get().unwrap().num_records()
+    fn num_records(&self) -> PyResult<usize> {
+        Ok(self.get()?.num_records())
     }
 
     #[getter]
-    fn record_duration(&self) -> f64 {
-        self.get().unwrap().record_duration()
+    fn record_duration(&self) -> PyResult<f64> {
+        Ok(self.get()?.record_duration())
     }
 
     #[getter]
-    fn duration(&self) -> f64 {
-        self.get().unwrap().duration()
+    fn duration(&self) -> PyResult<f64> {
+        Ok(self.get()?.duration())
     }
 
     #[getter]
-    fn variant(&self) -> String {
-        self.get().unwrap().variant().to_string()
+    fn variant(&self) -> PyResult<String> {
+        Ok(self.get()?.variant().to_string())
     }
 
     #[getter]
-    fn patient_id(&self) -> String {
-        self.get().unwrap().header().patient_id.clone()
+    fn patient_id(&self) -> PyResult<String> {
+        Ok(self.get()?.header().patient_id.clone())
     }
 
     #[getter]
-    fn recording_id(&self) -> String {
-        self.get().unwrap().header().recording_id.clone()
+    fn recording_id(&self) -> PyResult<String> {
+        Ok(self.get()?.header().recording_id.clone())
     }
 
     #[getter]
     fn start_datetime<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let mdt = &self.get().unwrap().header().start_datetime;
+        let mdt = &self.get()?.header().start_datetime;
         match mdt.as_datetime() {
             Some(dt) => {
                 let datetime_mod = py.import("datetime")?;
@@ -185,27 +127,27 @@ impl PyAsyncEdfFile {
     }
 
     #[getter]
-    fn patient_name(&self) -> Option<String> {
-        self.get().unwrap().patient().name.clone()
+    fn patient_name(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.patient().name.clone())
     }
 
     #[getter]
-    fn patient_code(&self) -> Option<String> {
-        self.get().unwrap().patient().code.clone()
+    fn patient_code(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.patient().code.clone())
     }
 
     #[getter]
-    fn patient_sex(&self) -> Option<String> {
-        self.get().unwrap().patient().sex.map(|s| match s {
+    fn patient_sex(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.patient().sex.map(|s| match s {
             Sex::Male => "M".to_string(),
             Sex::Female => "F".to_string(),
-        })
+        }))
     }
 
     #[getter]
     fn patient_birthdate<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         use edfarray_core::header::MaybeDate;
-        match &self.get().unwrap().patient().birthdate {
+        match &self.get()?.patient().birthdate {
             Some(MaybeDate::Parsed(date)) => {
                 let datetime_mod = py.import("datetime")?;
                 let date_cls = datetime_mod.getattr("date")?;
@@ -221,108 +163,107 @@ impl PyAsyncEdfFile {
     }
 
     #[getter]
-    fn patient_additional(&self) -> Option<String> {
-        self.get().unwrap().patient().additional.clone()
+    fn patient_additional(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.patient().additional.clone())
     }
 
     #[getter]
-    fn admin_code(&self) -> Option<String> {
-        self.get().unwrap().recording().admin_code.clone()
+    fn admin_code(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.recording().admin_code.clone())
     }
 
     #[getter]
-    fn technician(&self) -> Option<String> {
-        self.get().unwrap().recording().technician.clone()
+    fn technician(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.recording().technician.clone())
     }
 
     #[getter]
-    fn equipment(&self) -> Option<String> {
-        self.get().unwrap().recording().equipment.clone()
+    fn equipment(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.recording().equipment.clone())
     }
 
     #[getter]
-    fn recording_additional(&self) -> Option<String> {
-        self.get().unwrap().recording().additional.clone()
+    fn recording_additional(&self) -> PyResult<Option<String>> {
+        Ok(self.get()?.recording().additional.clone())
     }
 
     #[getter]
-    fn annotations(&self) -> Vec<PyAnnotation> {
-        self.get()
-            .unwrap()
+    fn annotations(&self) -> PyResult<Vec<PyAnnotation>> {
+        Ok(self
+            .get()?
             .annotations()
             .iter()
             .map(PyAnnotation::from)
-            .collect()
+            .collect())
     }
 
-    fn annotations_before(&self, t: f64) -> Vec<PyAnnotation> {
-        self.get()
-            .unwrap()
+    fn annotations_before(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
+        Ok(self
+            .get()?
             .annotations_before(t)
             .iter()
             .map(PyAnnotation::from)
-            .collect()
+            .collect())
     }
 
-    fn annotations_after(&self, t: f64) -> Vec<PyAnnotation> {
-        self.get()
-            .unwrap()
+    fn annotations_after(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
+        Ok(self
+            .get()?
             .annotations_after(t)
             .iter()
             .map(PyAnnotation::from)
-            .collect()
+            .collect())
     }
 
-    fn annotations_in_range(&self, start: f64, end: f64) -> Vec<PyAnnotation> {
-        self.get()
-            .unwrap()
+    fn annotations_in_range(&self, start: f64, end: f64) -> PyResult<Vec<PyAnnotation>> {
+        Ok(self
+            .get()?
             .annotations_in_range(start, end)
             .iter()
             .map(PyAnnotation::from)
-            .collect()
+            .collect())
     }
 
     #[pyo3(signature = (query, regex=false))]
     fn filter_annotations(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
         let anns = self
-            .get()
-            .unwrap()
+            .get()?
             .filter_annotations(query, regex)
             .map_err(to_py_err)?;
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
-    fn annotations_by_text(&self, text: &str) -> Vec<PyAnnotation> {
-        self.get()
-            .unwrap()
+    fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
+        Ok(self
+            .get()?
             .annotations_by_text(text)
             .iter()
             .map(PyAnnotation::from)
-            .collect()
+            .collect())
     }
 
     #[pyo3(signature = (label, exact=false))]
-    fn find_all_signals(&self, label: &str, exact: bool) -> Vec<usize> {
-        self.get().unwrap().find_all_signals(label, exact)
+    fn find_all_signals(&self, label: &str, exact: bool) -> PyResult<Vec<usize>> {
+        Ok(self.get()?.find_all_signals(label, exact))
     }
 
     #[getter]
-    fn warnings(&self) -> Vec<String> {
-        self.get().unwrap().warnings()
+    fn warnings(&self) -> PyResult<Vec<String>> {
+        Ok(self.get()?.warnings())
     }
 
     #[getter]
-    fn annotations_ready(&self) -> bool {
-        self.get().unwrap().annotations_ready()
+    fn annotations_ready(&self) -> PyResult<bool> {
+        Ok(self.get()?.annotations_ready())
     }
 
     #[getter]
-    fn scan_progress(&self) -> (usize, usize) {
-        self.get().unwrap().scan_progress()
+    fn scan_progress(&self) -> PyResult<(usize, usize)> {
+        Ok(self.get()?.scan_progress())
     }
 
     fn header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let inner = self.get().unwrap();
+        let inner = self.get()?;
         let dict = PyDict::new(py);
         dict.set_item("version", &inner.header().version)?;
         dict.set_item("patient_id", &inner.header().patient_id)?;
@@ -335,17 +276,43 @@ impl PyAsyncEdfFile {
         Ok(dict)
     }
 
-    fn signal_labels(&self) -> Vec<String> {
-        self.get()
-            .unwrap()
+    fn signal_labels(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .get()?
             .signal_labels()
             .into_iter()
             .map(|s| s.to_string())
-            .collect()
+            .collect())
     }
 
-    fn ordinary_signal_indices(&self) -> Vec<usize> {
-        self.get().unwrap().ordinary_signal_indices()
+    fn ordinary_signal_indices(&self) -> PyResult<Vec<usize>> {
+        Ok(self.get()?.ordinary_signal_indices())
+    }
+
+    /// Build a 2D proxy from a `SignalGroup`, as on the sync API.
+    ///
+    /// Proxy construction is metadata-only; the reads it performs are synchronous.
+    #[pyo3(signature = (group, pad_mode=None))]
+    fn proxy_2d(
+        &self,
+        group: &PySignalGroup,
+        pad_mode: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<PyProxy2D> {
+        let mode = parse_pad_mode(pad_mode.as_ref())?;
+        let proxy = self
+            .get()?
+            .proxy_2d(group.inner().clone(), mode)
+            .map_err(to_py_err)?;
+        Ok(PyProxy2D::new(proxy))
+    }
+
+    /// Build a 3D proxy from a rectangular `SignalGroup`, as on the sync API.
+    fn proxy_3d(&self, group: &PySignalGroup) -> PyResult<PyProxy3D> {
+        let proxy = self
+            .get()?
+            .proxy_3d(group.inner().clone())
+            .map_err(to_py_err)?;
+        Ok(PyProxy3D::new(proxy))
     }
 
     fn signal_group(&self, indices: Vec<usize>) -> PyResult<PySignalGroup> {
@@ -588,7 +555,7 @@ impl PyAsyncSignal {
         )
     }
 
-    fn read_physical<'py>(
+    fn read_range<'py>(
         &self,
         py: Python<'py>,
         start: usize,
@@ -615,7 +582,7 @@ impl PyAsyncSignal {
         })
     }
 
-    fn read_digital<'py>(
+    fn read_range_digital<'py>(
         &self,
         py: Python<'py>,
         start: usize,
@@ -642,7 +609,7 @@ impl PyAsyncSignal {
         })
     }
 
-    fn read_at<'py>(
+    fn read_time_range<'py>(
         &self,
         py: Python<'py>,
         start_sec: f64,
@@ -660,7 +627,7 @@ impl PyAsyncSignal {
         })
     }
 
-    fn to_numpy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    fn to_physical<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let proxy = self.inner.clone();
         let len = self.inner.len();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -761,7 +728,7 @@ impl PyAsyncEdfWriter {
         path: String,
         variant: String,
         record_duration: f64,
-        signals: Vec<PyAsyncWriterSignal>,
+        signals: Vec<crate::writer::PyWriterSignal>,
         start_datetime: Option<&Bound<'_, PyAny>>,
         patient_id: Option<String>,
         recording_id: Option<String>,
@@ -770,7 +737,7 @@ impl PyAsyncEdfWriter {
         let spec = build_spec(
             &variant,
             record_duration,
-            signals.into_iter().map(|s| s.inner).collect(),
+            signals.into_iter().map(|s| s.into_inner()).collect(),
             start_datetime,
             patient_id,
             recording_id,
@@ -796,7 +763,7 @@ impl PyAsyncEdfWriter {
         let mut guard = lock_writer(&self.inner)?;
         let w = guard
             .as_mut()
-            .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
+            .ok_or_else(|| invalid_argument_err("EdfWriter has been finished"))?;
         w.add_annotation(CoreAnnotation {
             onset: annotation.onset,
             duration: annotation.duration,
@@ -829,7 +796,7 @@ impl PyAsyncEdfWriter {
                 let mut guard = lock_writer(&writer)?;
                 let w = guard
                     .as_mut()
-                    .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
+                    .ok_or_else(|| invalid_argument_err("EdfWriter has been finished"))?;
                 let slices: Vec<&[f64]> = owned.iter().map(|v| v.as_slice()).collect();
                 w.write_record_with_annotations(&slices, &anns_owned)
                     .map_err(to_py_err)
@@ -847,7 +814,7 @@ impl PyAsyncEdfWriter {
                 let mut guard = lock_writer(&writer)?;
                 let w = guard
                     .take()
-                    .ok_or_else(|| PyValueError::new_err("EdfWriter has been finished"))?;
+                    .ok_or_else(|| invalid_argument_err("EdfWriter has been finished"))?;
                 w.finish().map_err(to_py_err)
             })
             .await
@@ -914,7 +881,7 @@ fn write_edf_async<'py>(
     path: String,
     variant: String,
     record_duration: f64,
-    signals: Vec<PyAsyncWriterSignal>,
+    signals: Vec<crate::writer::PyWriterSignal>,
     data: Vec<PyReadonlyArray1<f64>>,
     annotations: Option<Vec<PyAnnotation>>,
     start_datetime: Option<&Bound<'_, PyAny>>,
@@ -925,7 +892,7 @@ fn write_edf_async<'py>(
     let spec = build_spec(
         &variant,
         record_duration,
-        signals.into_iter().map(|s| s.inner).collect(),
+        signals.into_iter().map(|s| s.into_inner()).collect(),
         start_datetime,
         patient_id,
         recording_id,
@@ -1011,7 +978,7 @@ fn inspect_async<'py>(py: Python<'py>, path: String) -> PyResult<Bound<'py, PyAn
 pub fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let aio = PyModule::new(py, "aio")?;
-    aio.add_class::<PyAsyncWriterSignal>()?;
+    aio.add_class::<crate::writer::PyWriterSignal>()?;
     aio.add_class::<PyAsyncEdfFile>()?;
     aio.add_class::<PyAsyncSignal>()?;
     aio.add_class::<PyAsyncEdfWriter>()?;

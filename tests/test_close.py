@@ -30,7 +30,7 @@ def test_signal_outlives_close():
     sig = f.signal(0)
     expected_len = sig.num_samples
     f.close()
-    assert len(sig.to_numpy()) == expected_len
+    assert len(sig.to_physical()) == expected_len
 
 
 def test_context_manager_closes():
