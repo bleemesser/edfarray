@@ -1,7 +1,7 @@
 # API contracts
 
-Behavior that callers can rely on, and the places where edfarray deliberately differs from
-what you might assume. These are stable for 1.0.
+Behavior that callers can rely on, and a few places where edfarray differs from
+what you might assume.
 
 ## Exceptions
 
@@ -122,7 +122,7 @@ constructor cannot be awaited.
 
 ## Memory mapping
 
-By default the file is read through a memory map. Two consequences worth knowing:
+By default the file is read through a memory map.
 
 - If the file is truncated by another process while open, touching the vanished pages raises
   `SIGBUS`, which terminates the process and cannot be caught as a Python exception. Do not
