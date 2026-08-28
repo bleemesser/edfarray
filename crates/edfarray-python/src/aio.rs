@@ -121,7 +121,7 @@ impl PyAsyncEdfFile {
             }
             None => {
                 let s = format!("{} {}", mdt.raw_date(), mdt.raw_time());
-                Ok(s.into_pyobject(py).unwrap().into_any())
+                Ok(s.into_pyobject(py)?.into_any())
             }
         }
     }
@@ -155,7 +155,7 @@ impl PyAsyncEdfFile {
                 Ok(Some(result))
             }
             Some(MaybeDate::Raw(s)) => {
-                let result = s.clone().into_pyobject(py).unwrap();
+                let result = s.clone().into_pyobject(py)?;
                 Ok(Some(result.into_any()))
             }
             None => Ok(None),

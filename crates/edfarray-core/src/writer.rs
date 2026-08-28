@@ -208,7 +208,7 @@ impl EdfWriter {
 
         let mut writer = BufWriter::new(file);
 
-        serialize_header(&spec, ann_bytes_per_record, -1, &mut writer)?;
+        serialize_header(&path, &spec, ann_bytes_per_record, -1, &mut writer)?;
 
         Ok(EdfWriter {
             path,
@@ -308,7 +308,7 @@ impl EdfWriter {
                 if digital > dmax as i64 {
                     digital = dmax as i64;
                 }
-                write_sample(writer, digital as i32, sample_size)?;
+                write_sample(&self.path, writer, digital as i32, sample_size)?;
             }
         }
 
@@ -322,6 +322,7 @@ impl EdfWriter {
 
         if self.spec.variant.is_plus() {
             write_annotation_channel(
+                &self.path,
                 writer,
                 self.num_records_written,
                 self.spec.record_duration_secs,
@@ -521,6 +522,7 @@ fn format_f64_field(value: f64, size: usize) -> Vec<u8> {
 }
 
 fn serialize_header<W: Write>(
+    path: &Path,
     spec: &WriterSpec,
     ann_bytes_per_record: usize,
     num_records: i64,
@@ -573,7 +575,8 @@ fn serialize_header<W: Write>(
     main.extend(format_ascii_field(&n_total.to_string(), 4));
 
     debug_assert_eq!(main.len(), 256);
-    w.write_all(&main).map_err(io_err)?;
+    w.write_all(&main)
+        .map_err(|e| io_err(path, "writing header", e))?;
 
     let mut all_signals: Vec<WriterSignal> = spec.signals.clone();
     if spec.variant.is_plus() {
@@ -594,21 +597,22 @@ fn serialize_header<W: Write>(
     let nsamps: Vec<_> = all_signals.iter().map(|s| s.samples_per_record).collect();
     let reserveds: Vec<_> = all_signals.iter().map(|s| s.reserved.clone()).collect();
 
-    write_field_block(w, &labels, 16, |s| s.as_bytes().to_vec())?;
-    write_field_block(w, &transducers, 80, |s| s.as_bytes().to_vec())?;
-    write_field_block(w, &dims, 8, |s| s.as_bytes().to_vec())?;
-    write_field_block(w, &pmins, 8, |v| format_f64_field(*v, 8))?;
-    write_field_block(w, &pmaxs, 8, |v| format_f64_field(*v, 8))?;
-    write_field_block(w, &dmins, 8, |v| v.to_string().into_bytes())?;
-    write_field_block(w, &dmaxs, 8, |v| v.to_string().into_bytes())?;
-    write_field_block(w, &prefilters, 80, |s| s.as_bytes().to_vec())?;
-    write_field_block(w, &nsamps, 8, |v| v.to_string().into_bytes())?;
-    write_field_block(w, &reserveds, 32, |s| s.as_bytes().to_vec())?;
+    write_field_block(path, w, &labels, 16, |s| s.as_bytes().to_vec())?;
+    write_field_block(path, w, &transducers, 80, |s| s.as_bytes().to_vec())?;
+    write_field_block(path, w, &dims, 8, |s| s.as_bytes().to_vec())?;
+    write_field_block(path, w, &pmins, 8, |v| format_f64_field(*v, 8))?;
+    write_field_block(path, w, &pmaxs, 8, |v| format_f64_field(*v, 8))?;
+    write_field_block(path, w, &dmins, 8, |v| v.to_string().into_bytes())?;
+    write_field_block(path, w, &dmaxs, 8, |v| v.to_string().into_bytes())?;
+    write_field_block(path, w, &prefilters, 80, |s| s.as_bytes().to_vec())?;
+    write_field_block(path, w, &nsamps, 8, |v| v.to_string().into_bytes())?;
+    write_field_block(path, w, &reserveds, 32, |s| s.as_bytes().to_vec())?;
 
     Ok(header_bytes)
 }
 
 fn write_field_block<W: Write, T, F: Fn(&T) -> Vec<u8>>(
+    path: &Path,
     w: &mut W,
     values: &[T],
     size: usize,
@@ -618,7 +622,8 @@ fn write_field_block<W: Write, T, F: Fn(&T) -> Vec<u8>>(
         let bytes = fmt(v);
         let s = std::str::from_utf8(&bytes).unwrap_or("");
         let field = format_ascii_field(s, size);
-        w.write_all(&field).map_err(io_err)?;
+        w.write_all(&field)
+            .map_err(|e| io_err(path, "writing header", e))?;
     }
     Ok(())
 }
@@ -641,11 +646,12 @@ fn annotation_signal(spec: &WriterSpec, ann_bytes_per_record: usize) -> WriterSi
     }
 }
 
-fn write_sample<W: Write>(w: &mut W, value: i32, sample_size: usize) -> Result<()> {
+fn write_sample<W: Write>(path: &Path, w: &mut W, value: i32, sample_size: usize) -> Result<()> {
     match sample_size {
         2 => {
             let v = value as i16;
-            w.write_all(&v.to_le_bytes()).map_err(io_err)?;
+            w.write_all(&v.to_le_bytes())
+                .map_err(|e| io_err(path, "writing samples", e))?;
         }
         3 => {
             let bytes = [
@@ -653,7 +659,8 @@ fn write_sample<W: Write>(w: &mut W, value: i32, sample_size: usize) -> Result<(
                 ((value >> 8) & 0xFF) as u8,
                 ((value >> 16) & 0xFF) as u8,
             ];
-            w.write_all(&bytes).map_err(io_err)?;
+            w.write_all(&bytes)
+                .map_err(|e| io_err(path, "writing samples", e))?;
         }
         _ => unreachable!(),
     }
@@ -665,6 +672,7 @@ const TAL_DURATION_MARKER: u8 = 0x15;
 const TAL_TERMINATOR: u8 = 0x00;
 
 fn write_annotation_channel<W: Write>(
+    path: &Path,
     w: &mut W,
     record_idx: u64,
     record_duration: f64,
@@ -729,7 +737,8 @@ fn write_annotation_channel<W: Write>(
         });
     }
     buf.resize(byte_budget, 0);
-    w.write_all(&buf).map_err(io_err)?;
+    w.write_all(&buf)
+        .map_err(|e| io_err(path, "writing annotation channel", e))?;
     Ok(())
 }
 
@@ -758,12 +767,11 @@ fn format_tal_number(v: f64) -> String {
     trimmed.to_string()
 }
 
-/// Wrap an I/O failure with the operation that caused it. The path is filled in by the caller
-/// where it is known.
-fn io_err(e: std::io::Error) -> EdfError {
+/// Wrap an I/O failure with the file path and the operation that caused it.
+fn io_err(path: &Path, op: &'static str, e: std::io::Error) -> EdfError {
     EdfError::Io {
-        path: PathBuf::new(),
-        op: "writing samples",
+        path: path.to_path_buf(),
+        op,
         source: e,
     }
 }
