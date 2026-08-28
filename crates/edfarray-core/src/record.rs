@@ -66,14 +66,14 @@ impl RecordLayout {
         let n = match self.sample_size_bytes {
             2 => {
                 let n = decoded_count(raw, 2, out.len());
-                for (chunk, dst) in raw.chunks_exact(2).zip(out[..n].iter_mut()) {
+                for (chunk, dst) in raw.as_chunks::<2>().0.iter().zip(out[..n].iter_mut()) {
                     *dst = i16::from_le_bytes([chunk[0], chunk[1]]) as f64;
                 }
                 n
             }
             3 => {
                 let n = decoded_count(raw, 3, out.len());
-                for (chunk, dst) in raw.chunks_exact(3).zip(out[..n].iter_mut()) {
+                for (chunk, dst) in raw.as_chunks::<3>().0.iter().zip(out[..n].iter_mut()) {
                     let raw24 =
                         (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
                     *dst = ((raw24 << 8) >> 8) as f64;
@@ -93,13 +93,13 @@ impl RecordLayout {
         match self.sample_size_bytes {
             2 => {
                 let n = decoded_count(raw, 2, out.len());
-                for (chunk, dst) in raw.chunks_exact(2).zip(out[..n].iter_mut()) {
+                for (chunk, dst) in raw.as_chunks::<2>().0.iter().zip(out[..n].iter_mut()) {
                     *dst = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
                 }
             }
             3 => {
                 let n = decoded_count(raw, 3, out.len());
-                for (chunk, dst) in raw.chunks_exact(3).zip(out[..n].iter_mut()) {
+                for (chunk, dst) in raw.as_chunks::<3>().0.iter().zip(out[..n].iter_mut()) {
                     let raw24 =
                         (chunk[0] as i32) | ((chunk[1] as i32) << 8) | ((chunk[2] as i32) << 16);
                     *dst = (raw24 << 8) >> 8;
