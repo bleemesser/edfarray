@@ -31,6 +31,7 @@ with edfarray.EdfFile("recording.edf") as f:
 - Lenient parsing. Malformed annotations and anonymized dates produce warnings, not errors.
 - Subsecond precision from time-keeping annotations applied automatically.
 - Full metadata access: patient info, recording info, signal properties, all as typed properties.
+- In-place anonymization. Header edits cost kilobytes, not a full rewrite, and the leak audit finds identity strings hiding in labels and annotations.
 - Ships with `.pyi` type stubs for IDE autocompletion.
 
 ## Guide
@@ -40,6 +41,7 @@ with edfarray.EdfFile("recording.edf") as f:
 - [Annotations & Time](guide/annotations.md) -- EDF+ annotations, discontinuous recordings
 - [Performance](guide/performance.md) -- bulk reads, architecture
 - [Writing Files](guide/writing.md) -- create EDF/BDF files from scratch
+- [Anonymization](guide/anonymization.md) -- scrub identifiers, audit for leaks
 
 ## Reference
 

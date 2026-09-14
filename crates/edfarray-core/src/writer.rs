@@ -493,7 +493,7 @@ fn digital_bounds(sample_size_bytes: usize) -> (i64, i64) {
 ///
 /// EDF header fields are printable ASCII. Non-ASCII input is replaced rather than truncated
 /// mid-codepoint, which would emit an invalid byte sequence.
-fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
+pub(crate) fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
     let mut out = vec![b' '; size];
     for (dst, ch) in out.iter_mut().zip(value.chars()) {
         *dst = match ch {

@@ -15,6 +15,9 @@ __all__ = [
     "Signal",
     "SignalGroup",
     "WriterSignal",
+    "anonymize",
+    "audit",
+    "edit_header",
     "inspect",
     "write_edf",
 ]
@@ -742,6 +745,70 @@ class WriterSignal:
         Support `copy` and `pickle`.
         """
     def __repr__(self) -> builtins.str: ...
+
+def anonymize(path: builtins.str, *, seed: typing.Optional[builtins.str] = None, pseudonym: typing.Optional[builtins.str] = None, date_shift_days: typing.Optional[builtins.int] = None, keep_sex: builtins.bool = ..., keep_code: builtins.bool = ..., keep_technician: builtins.bool = ..., keep_equipment: builtins.bool = ..., keep_additional: builtins.bool = ..., dry_run: builtins.bool = ...) -> dict:
+    r"""
+    Scrub patient and recording identification from a file in place.
+    
+    The patient name is replaced by a pseudonym; the patient code, technician, admin code,
+    and free-text subfields become `X` unless kept. All dates (birthdate, recording start,
+    header startdate) shift by the same number of days, preserving age while moving the
+    calendar.
+    
+    - `seed`: makes the pseudonym and date shift reproducible, so one subject's recordings
+      stay linkable across a corpus. The pseudonym is keyed on the patient name, code, and
+      birthdate, so per-session notes in the free-text subfield do not split a subject into
+      several pseudonyms. Without a seed, a random per-process one is used.
+    
+      A reused seed is the re-identification key: anyone holding it can recompute the
+      pseudonym for a guessed name and recover the date shift. Keep it secret, and never
+      publish it alongside the files it anonymized.
+    - `pseudonym`: explicit replacement for the patient name; default `Subject-XXXXXXXX`.
+    - `date_shift_days`: explicit shift; default seed-derived (less than 10 years).
+    - `keep_sex`/`keep_code`/`keep_technician`/`keep_equipment`/`keep_additional`: control
+      which subfields survive. Defaults: sex and equipment kept, everything else cleared.
+    - `dry_run`: compute, validate, and report everything, write nothing. A dry run rejects
+      exactly what a real run would reject.
+    
+    Returns a dict with `pseudonym`, `date_shift_days`, `patient_id_before`,
+    `patient_id_after`, `recording_id_before`, `recording_id_after`,
+    `start_datetime_before`, `start_datetime_after`, `scrubbed_terms`, and `dry_run`.
+    
+    Signal labels and annotation text are never rewritten and may repeat the original
+    identity. Run `audit()` after anonymizing with the returned `scrubbed_terms` before
+    shipping a file.
+    """
+
+def audit(path: builtins.str, terms: typing.Optional[typing.Sequence[builtins.str]] = None) -> dict:
+    r"""
+    Scan a file for strings that repeat the patient identity.
+    
+    Checks signal labels, transducers, prefiltering text, and annotation text. By default
+    the search terms are derived from the patient name/code and recording technician/admin
+    code as they currently stand in the header -- so run it before `anonymize()`, or pass
+    `terms` (the `scrubbed_terms` from an earlier anonymization) to re-check afterwards.
+    
+    Returns a dict with `terms`, `clean`, and `hits`, where each hit has `location`,
+    `signal_index` (None for annotation text), `term`, and `excerpt`.
+    """
+
+def edit_header(path: builtins.str, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, start_datetime: typing.Optional[typing.Any] = None) -> dict:
+    r"""
+    Replace header identification fields in place.
+    
+    Only the fixed-width header fields are rewritten; record data is never touched, so
+    editing a multi-gigabyte recording costs a few hundred bytes of I/O. Pass `None` for
+    fields to leave alone. Every value is validated before anything is written, so a
+    rejected edit leaves the file unchanged.
+    
+    Returns a dict mapping each changed field name (`"patient_id"`, `"recording_id"`,
+    `"start_datetime"`) to `{"before": str, "after": str}`. Fields whose value did not
+    change are omitted.
+    
+    `start_datetime` must be a naive `datetime.datetime`; only whole seconds are stored.
+    
+    An `EdfFile` handle opened before this call keeps its stale parsed header; reopen it.
+    """
 
 def inspect(path: builtins.str) -> dict:
     r"""

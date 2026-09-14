@@ -1,4 +1,5 @@
 pub mod annotation;
+pub mod edit;
 pub mod error;
 pub mod file;
 pub mod group;

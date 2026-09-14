@@ -1,5 +1,6 @@
 mod aio;
 mod annotations;
+mod edit;
 mod errors;
 mod file;
 mod group;
@@ -26,6 +27,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<writer::PyWriterSignal>()?;
     m.add_function(wrap_pyfunction!(file::inspect, m)?)?;
     m.add_function(wrap_pyfunction!(writer::write_edf_py, m)?)?;
+    m.add_function(wrap_pyfunction!(edit::edit_header, m)?)?;
+    m.add_function(wrap_pyfunction!(edit::anonymize, m)?)?;
+    m.add_function(wrap_pyfunction!(edit::audit, m)?)?;
     aio::register(m)?;
     Ok(())
 }
