@@ -87,7 +87,7 @@ The annotation accessors below block until the background annotation scan comple
 
 `ordinary_signal_indices() -> list[int]` -- Indices of all non-annotation signals.
 
-`read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-proxy2d-use-flat-sample-indices) for details.
+`read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), each time maps to the flat index of the first sample at or after it, so `[start_sec, end_sec)` is half-open. A time within 1e-6 of a sample counts as that sample, which absorbs float noise such as `0.1 + 0.2`. Every time-based API uses this one rule. For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-proxy2d-use-flat-sample-indices) for details.
 
 `read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int32 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
 
@@ -193,7 +193,7 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 
 `read_range_digital(start: int, stop: int) -> numpy.ndarray` -- Raw digital values for samples `[start, stop)`, indexed by sample number.
 
-`read_time_range(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
+`read_time_range(start_sec: float, end_sec: float) -> numpy.ndarray` -- Return physical data for samples whose time falls within `[start_sec, end_sec)`. For EDF+D files, accounts for gaps between records using record onset times. For EDF and EDF+C, equivalent to indexing by flat sample number, where each time maps to the first sample at or after it.
 
 !!! note "Caching"
     A per-`Signal` LRU cache is enabled at acquisition via `EdfFile.signal(idx, cache_capacity=N)`, not as a method on the returned `Signal`. See [Caching repeated reads](../guide/signals.md#caching-repeated-reads).

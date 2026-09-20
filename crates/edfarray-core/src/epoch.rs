@@ -2,12 +2,9 @@ use rayon::prelude::*;
 
 use crate::error::{EdfError, Result};
 use crate::file::EdfFile;
+use crate::grid::first_sample_at_or_after;
 use crate::group::{GroupKind, PadMode, SignalGroup};
 use crate::proxy::SignalProxy;
-
-/// Tolerance, in samples, for treating a time as exactly on the sample grid. It absorbs
-/// float noise such as `0.1 + 0.2` without moving any time that is genuinely between samples.
-const GRID_EPS: f64 = 1e-6;
 
 /// One contiguous piece of an epoch: flat samples `s_start..s_end` land at row column `dest`.
 ///
@@ -93,16 +90,6 @@ fn validate_pre_post(pre: f64, post: f64) -> Result<()> {
     Ok(())
 }
 
-/// Ceil of a time expressed in samples, snapping values within `GRID_EPS` of a grid point.
-fn ceil_snapped(x: f64) -> i64 {
-    let nearest = x.round();
-    if (x - nearest).abs() < GRID_EPS {
-        nearest as i64
-    } else {
-        x.ceil() as i64
-    }
-}
-
 /// Append flat samples `s0..s1` at column `dest`, merging with the previous run when both the
 /// samples and the columns continue it.
 fn push_run(runs: &mut Vec<EpochRun>, s0: usize, s1: usize, dest: usize) {
@@ -177,7 +164,7 @@ pub fn plan_epochs(
     // Nominal width, derived from the request alone. Every row is this wide, and column j of
     // a row is always grid index `first + j`, where `first` is the first sample at or after
     // the window start.
-    let n_samples = ceil_snapped((pre + post) * sample_rate).max(1) as usize;
+    let n_samples = first_sample_at_or_after((pre + post) * sample_rate).max(1) as usize;
     let n = n_samples as i64;
     let spr_i = spr as i64;
 
@@ -190,7 +177,7 @@ pub fn plan_epochs(
                 format!("event time {t} is not finite"),
             ));
         }
-        let first = ceil_snapped((t - pre) * sample_rate);
+        let first = first_sample_at_or_after((t - pre) * sample_rate);
         let end = first.saturating_add(n);
 
         // Each record contributes its overlap with the window at its own column. Adjacent
@@ -447,7 +434,6 @@ mod tests {
     /// [-32768, 32767] over digital [-32768, 32767] gives gain exactly 1.
     pub(super) fn write_contig(path: &str, num_records: usize, rate: f64, num_signals: usize) {
         let spr = (rate.round().max(1.0)) as usize;
-        let total = num_records * spr;
         let mut buf: Vec<u8> = vec![b' '; 256 + 256 * num_signals];
         let mut put = |off: usize, s: &str| {
             let b = s.as_bytes();
@@ -482,18 +468,21 @@ mod tests {
             put_field(&mut buf, num_signals, 128, 8, i, "32767");
             put_field(&mut buf, num_signals, 216, 8, i, &spr.to_string());
         }
-        for g in 0..total {
+        // A record stores each signal's samples as one block, signal after signal.
+        for r in 0..num_records {
             for i in 0..num_signals {
-                let v =
-                    (((i + 1) * g) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16;
-                buf.extend_from_slice(&v.to_le_bytes());
+                for g in r * spr..(r + 1) * spr {
+                    let v = (((i + 1) * g) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX))
+                        as i16;
+                    buf.extend_from_slice(&v.to_le_bytes());
+                }
             }
         }
         let mut f = std::fs::File::create(path).unwrap();
         f.write_all(&buf).unwrap();
     }
 
-    fn group_of(file: &crate::file::EdfFile, indices: &[usize]) -> SignalGroup {
+    pub(super) fn group_of(file: &crate::file::EdfFile, indices: &[usize]) -> SignalGroup {
         SignalGroup::from_indices(file.header(), indices).unwrap()
     }
 
@@ -518,8 +507,13 @@ mod tests {
     /// EDF+D, 2 ordinary signals at 10 Hz plus one annotation channel carrying only
     /// time-keeping TALs at exactly `onsets` (which must start at 0.0).
     fn write_plus_d(path: &str, onsets: &[f64]) {
+        write_gapped(path, onsets, 10);
+    }
+
+    /// As `write_plus_d` with `spr` samples per 1 s record. Signal i holds
+    /// `(i + 1) * r * spr + s` at sample `s` of record `r`, so signal 0 is the flat index.
+    pub(super) fn write_gapped(path: &str, onsets: &[f64], spr: usize) {
         let num_signals = 3usize;
-        let spr = 10usize;
         let ann_samples = 58usize;
         let mut buf: Vec<u8> = vec![b' '; 256 + 256 * num_signals];
         let mut put = |off: usize, s: &str| {
@@ -557,7 +551,7 @@ mod tests {
         let ann_bytes = ann_samples * 2;
         for (r, &onset) in onsets.iter().enumerate() {
             for i in 0..2 {
-                let v = (((i + 1) * r * 10) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX))
+                let v = (((i + 1) * r * spr) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX))
                     as i16;
                 for s in 0..spr {
                     buf.extend_from_slice(&(v + s as i16).to_le_bytes());
@@ -574,7 +568,7 @@ mod tests {
             .unwrap();
     }
 
-    fn open(path: &std::path::Path) -> crate::file::EdfFile {
+    pub(super) fn open(path: &std::path::Path) -> crate::file::EdfFile {
         let file = crate::file::EdfFile::open(path).unwrap();
         // Blocks until the (background or deferred) annotation index exists, so the
         // onset table is populated before planning.
@@ -809,5 +803,233 @@ mod tests {
         assert_eq!(&data[..4], &[16.0, 17.0, 18.0, 19.0]);
         assert!(data[4..34].iter().all(|&v| v == 19.0));
         assert_eq!(&data[34..], &[20.0, 21.0, 22.0, 23.0, 24.0, 25.0]);
+    }
+}
+
+#[cfg(test)]
+mod proptest_model {
+    use super::tests::{group_of, open, write_contig, write_gapped};
+    use super::*;
+    use crate::grid::GRID_EPS;
+    use proptest::prelude::*;
+    use tempfile::NamedTempFile;
+
+    /// Smallest integer at or above `x`, within the grid tolerance. Deliberately a slow
+    /// search rather than a copy of `first_sample_at_or_after`.
+    fn first_at_or_after(x: f64) -> i64 {
+        let mut k = x.floor() as i64 - 2;
+        while (k as f64) < x - GRID_EPS {
+            k += 1;
+        }
+        k
+    }
+
+    /// Flat sample behind grid index `k`, if any. `starts[r]` is record r's first grid index.
+    fn sample_at(starts: &[i64], spr: i64, k: i64) -> Option<usize> {
+        starts
+            .iter()
+            .position(|&b| k >= b && k < b + spr)
+            .map(|r| r * spr as usize + (k - starts[r]) as usize)
+    }
+
+    /// Column-by-column expected rows for channel 0, whose value is its flat sample index.
+    fn model_rows(
+        starts: &[i64],
+        spr: i64,
+        events: &[f64],
+        pre: f64,
+        post: f64,
+    ) -> (usize, Vec<Vec<Option<usize>>>) {
+        let rate = spr as f64;
+        let n = first_at_or_after((pre + post) * rate).max(1) as usize;
+        let rows = events
+            .iter()
+            .map(|&t| {
+                let first = first_at_or_after((t - pre) * rate);
+                (0..n as i64)
+                    .map(|j| sample_at(starts, spr, first + j))
+                    .collect()
+            })
+            .collect();
+        (n, rows)
+    }
+
+    fn check_against_model(
+        file: &EdfFile,
+        starts: &[i64],
+        spr: usize,
+        events: &[f64],
+        pre: f64,
+        post: f64,
+        value: impl Fn(usize, usize) -> f64,
+    ) -> std::result::Result<(), TestCaseError> {
+        let group = group_of(file, &[0, 1]);
+        let (n, rows) = model_rows(starts, spr as i64, events, pre, post);
+        let plan = plan_epochs(file, &group, events, pre, post).unwrap();
+        prop_assert_eq!(plan.n_samples, n);
+        let model_valid: Vec<bool> = rows.iter().map(|r| r.iter().all(Option::is_some)).collect();
+        prop_assert_eq!(&plan.valid, &model_valid);
+
+        let total = file.num_records() * spr;
+        for w in &plan.windows {
+            prop_assert!(w.s_start <= w.s_end && w.s_end <= total);
+            let mut col = 0;
+            for run in &w.runs {
+                prop_assert!(!run.is_empty());
+                prop_assert!(run.dest >= col, "runs overlap or are out of order");
+                prop_assert!(run.s_start >= w.s_start && run.s_end <= w.s_end);
+                col = run.dest + run.len();
+            }
+            prop_assert!(col <= n);
+        }
+
+        let (nan, flags, dropped) =
+            extract_epochs(file, &group, &plan, EpochPad::Fill(PadMode::Nan)).unwrap();
+        prop_assert!(dropped.is_empty());
+        prop_assert_eq!(&flags, &model_valid);
+        for (e, row) in rows.iter().enumerate() {
+            for c in 0..2 {
+                let got = &nan[(e * 2 + c) * n..(e * 2 + c + 1) * n];
+                for (j, want) in row.iter().enumerate() {
+                    match want {
+                        Some(g) => prop_assert_eq!(got[j], value(c, *g)),
+                        None => prop_assert!(got[j].is_nan()),
+                    }
+                }
+            }
+        }
+
+        let (kept, flags, dropped) = extract_epochs(file, &group, &plan, EpochPad::Drop).unwrap();
+        let want_dropped: Vec<usize> = (0..rows.len()).filter(|&i| !model_valid[i]).collect();
+        prop_assert_eq!(&dropped, &want_dropped);
+        prop_assert!(flags.iter().all(|&v| v));
+        let want_kept: Vec<f64> = (0..rows.len())
+            .filter(|&i| model_valid[i])
+            .flat_map(|i| nan[i * 2 * n..(i + 1) * 2 * n].to_vec())
+            .collect();
+        prop_assert_eq!(kept, want_kept);
+
+        // Edge fill agrees with NaN fill on every real column and holds the nearest real
+        // sample across each hole: the previous real column, or the next one when leading.
+        let (edge, _, _) =
+            extract_epochs(file, &group, &plan, EpochPad::Fill(PadMode::Edge)).unwrap();
+        for (e, row) in rows.iter().enumerate() {
+            let got = &edge[e * 2 * n..e * 2 * n + n];
+            let first_real = row.iter().position(Option::is_some);
+            let mut held = None;
+            for (j, want) in row.iter().enumerate() {
+                if let Some(g) = want {
+                    held = Some(*g as f64);
+                }
+                let expect = match (held, first_real) {
+                    (Some(h), _) => Some(h),
+                    (None, Some(f)) => row[f].map(|g| g as f64),
+                    (None, None) => None,
+                };
+                match expect {
+                    Some(v) => prop_assert_eq!(got[j], v),
+                    None => prop_assert!(got[j].is_finite()),
+                }
+            }
+        }
+
+        let raised = extract_epochs(file, &group, &plan, EpochPad::Fill(PadMode::Raise));
+        prop_assert_eq!(raised.is_ok(), model_valid.iter().all(|&v| v));
+        Ok(())
+    }
+
+    /// Times on a fine lattice around the file, plus float-noise neighbours of grid points.
+    fn event_strategy(span: f64) -> impl Strategy<Value = f64> {
+        prop_oneof![
+            (-3.0..span + 3.0),
+            (-30i32..(span as i32 + 3) * 10).prop_map(|k| f64::from(k) * 0.1),
+            (-30i32..(span as i32 + 3) * 10).prop_map(|k| f64::from(k) * 0.1 + 1e-12),
+            (-30i32..(span as i32 + 3) * 10).prop_map(|k| f64::from(k) * 0.1 - 1e-12),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn contiguous_matches_model(
+            spr in 1usize..=24,
+            records in 1usize..=6,
+            events in proptest::collection::vec(event_strategy(6.0), 0..8),
+            pre in 0.0f64..2.5,
+            post in 0.0f64..2.5,
+        ) {
+            prop_assume!(pre + post > 0.0);
+            let f = NamedTempFile::new().unwrap();
+            write_contig(f.path().to_str().unwrap(), records, spr as f64, 2);
+            let file = crate::file::EdfFile::open(f.path()).unwrap();
+            let starts: Vec<i64> = (0..records).map(|r| (r * spr) as i64).collect();
+            check_against_model(&file, &starts, spr, &events, pre, post, |c, g| {
+                ((c + 1) * g) as f64
+            })?;
+        }
+
+        #[test]
+        fn gapped_matches_model(
+            spr in 1usize..=24,
+            gaps in proptest::collection::vec(0u32..=3, 0..6),
+            events in proptest::collection::vec(event_strategy(20.0), 0..8),
+            pre in 0.0f64..4.0,
+            post in 0.0f64..4.0,
+        ) {
+            prop_assume!(pre + post > 0.0);
+            let mut onsets = vec![0.0f64];
+            for g in &gaps {
+                onsets.push(onsets[onsets.len() - 1] + 1.0 + f64::from(*g));
+            }
+            let f = NamedTempFile::new().unwrap();
+            write_gapped(f.path().to_str().unwrap(), &onsets, spr);
+            let file = open(f.path());
+            let starts: Vec<i64> = onsets.iter().map(|o| *o as i64 * spr as i64).collect();
+            check_against_model(&file, &starts, spr, &events, pre, post, |c, g| {
+                ((c + 1) * (g / spr) * spr + g % spr) as f64
+            })?;
+        }
+
+        /// A time range resolves to the samples whose time lies in `[start, end)`, on both
+        /// the uniform path and the onset-table path.
+        #[test]
+        fn sample_range_matches_model(
+            spr in 1usize..=24,
+            gaps in proptest::collection::vec(0u32..=3, 0..6),
+            a in event_strategy(20.0),
+            b in event_strategy(20.0),
+        ) {
+            let mut onsets = vec![0.0f64];
+            for g in &gaps {
+                onsets.push(onsets[onsets.len() - 1] + 1.0 + f64::from(*g));
+            }
+            let f = NamedTempFile::new().unwrap();
+            write_gapped(f.path().to_str().unwrap(), &onsets, spr);
+            let file = open(f.path());
+            let proxy = file.signal(0).unwrap();
+            let rate = spr as f64;
+            let (lo, hi) = (first_at_or_after(a.max(0.0) * rate), first_at_or_after(b.max(0.0) * rate));
+            let inside: Vec<usize> = onsets
+                .iter()
+                .enumerate()
+                .flat_map(|(r, o)| (0..spr).map(move |s| (r * spr + s, *o as i64 * spr as i64 + s as i64)))
+                .filter(|&(_, k)| k >= lo && k < hi)
+                .map(|(g, _)| g)
+                .collect();
+            let (s_start, s_end) = proxy.sample_range_for_time(a, b);
+            match (inside.first(), inside.last()) {
+                (Some(&first), Some(&last)) => prop_assert_eq!((s_start, s_end), (first, last + 1)),
+                _ => prop_assert!(s_start >= s_end, "expected empty, got {}..{}", s_start, s_end),
+            }
+
+            let g = NamedTempFile::new().unwrap();
+            write_contig(g.path().to_str().unwrap(), onsets.len(), rate, 1);
+            let contig = crate::file::EdfFile::open(g.path()).unwrap();
+            let total = (onsets.len() * spr) as i64;
+            let (u_start, u_end) = contig.signal(0).unwrap().sample_range_for_time(a, b);
+            prop_assert_eq!(u_start as i64, lo.clamp(0, total));
+            prop_assert_eq!(u_end as i64, hi.clamp(0, total));
+        }
     }
 }

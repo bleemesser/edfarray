@@ -3,6 +3,7 @@ pub mod edit;
 pub mod epoch;
 pub mod error;
 pub mod file;
+pub mod grid;
 pub mod group;
 pub mod header;
 pub mod mmap;

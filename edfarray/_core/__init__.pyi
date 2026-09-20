@@ -704,7 +704,8 @@ class Signal:
         
         For EDF+D files this accounts for gaps between records using the record onset times
         from the annotation index (blocks until the scan completes). For EDF and EDF+C it is
-        equivalent to indexing by flat sample number, i.e. `int(time * sample_rate)`.
+        equivalent to indexing by flat sample number. Each time maps to the first sample at
+        or after it.
         """
 
 @typing.final

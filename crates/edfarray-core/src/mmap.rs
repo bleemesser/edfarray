@@ -7,6 +7,7 @@ use memmap2::Mmap;
 
 use crate::annotation::AnnotationIndex;
 use crate::error::{EdfError, Result};
+use crate::grid::first_sample_at_or_after;
 use crate::header::{EdfHeader, EdfVariant};
 use crate::proxy::SignalProxy;
 use crate::record::RecordLayout;
@@ -406,9 +407,11 @@ impl MappedFile {
             let onsets = &idx.record_onsets;
 
             if onsets.is_empty() {
-                let s_start = (start_sec * sample_rate) as usize;
-                let s_end = ((end_sec * sample_rate) as usize).min(total_samples);
-                return (s_start, s_end);
+                let to_index = |t: f64| {
+                    let idx = first_sample_at_or_after(t * sample_rate).max(0) as u64;
+                    usize::try_from(idx).map_or(total_samples, |i| i.min(total_samples))
+                };
+                return (to_index(start_sec), to_index(end_sec));
             }
 
             let first_rec =
@@ -426,12 +429,14 @@ impl MappedFile {
                 return (0, 0);
             }
 
-            let start_offset = (((start_sec - onsets[first_rec]) * sample_rate).ceil() as isize)
-                .clamp(0, samples_per_record as isize) as usize;
+            let spr = i64::try_from(samples_per_record).unwrap_or(i64::MAX);
+            let start_offset =
+                first_sample_at_or_after((start_sec - onsets[first_rec]) * sample_rate)
+                    .clamp(0, spr) as usize;
             let s_start = first_rec * samples_per_record + start_offset;
 
-            let end_offset = (((end_sec - onsets[last_rec]) * sample_rate).ceil() as isize)
-                .clamp(0, samples_per_record as isize) as usize;
+            let end_offset = first_sample_at_or_after((end_sec - onsets[last_rec]) * sample_rate)
+                .clamp(0, spr) as usize;
             let s_end = last_rec * samples_per_record + end_offset;
 
             (s_start.min(total_samples), s_end.min(total_samples))

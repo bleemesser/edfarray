@@ -72,7 +72,7 @@ no data exists. The `pad=` argument decides what you get:
 - a number, for example `pad=-100.0`: fill with that value.
 - `"edge"`: fill with the nearest real sample. A window with no real samples holds the
   last sample before it, or the first sample of the file when it starts before time 0.
-- `"raise"`: raise `SampleOutOfRange` on the first offending epoch.
+- `"raise"`: raise `OutOfRangeError` on the first offending epoch.
 
 ```python
 epochs = f.extract_epochs(events, pre=2.0, post=2.0, pad="nan")

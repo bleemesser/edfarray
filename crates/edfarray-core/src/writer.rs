@@ -1269,4 +1269,90 @@ mod tests {
         let err = w.write_record_physical(&[&chunk]).unwrap_err();
         assert!(matches!(err, EdfError::InvalidArgument { .. }));
     }
+
+    mod roundtrip_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn assert_matches(
+            path: &std::path::Path,
+            onsets: &[f64],
+            spr: usize,
+            data: &[f64],
+            anns: &[Annotation],
+        ) -> std::result::Result<(), TestCaseError> {
+            let f = EdfFile::open(path).unwrap();
+            f.wait_for_annotations();
+            prop_assert_eq!(f.variant(), EdfVariant::EdfPlusD);
+            prop_assert_eq!(f.num_records(), onsets.len());
+            let sig = f.signal(0).unwrap();
+            for (r, &want) in onsets.iter().enumerate() {
+                prop_assert!((sig.sample_time(r * spr) - want).abs() < 1e-9);
+            }
+            let mut got = vec![0.0f64; data.len()];
+            sig.read_physical(0, data.len(), &mut got).unwrap();
+            // One digital step of a 6400 uV range over 16 bits is just under 0.1 uV.
+            for (g, w) in got.iter().zip(data) {
+                prop_assert!((g - w).abs() <= 0.1, "sample {} vs {}", g, w);
+            }
+            let mut read: Vec<(i64, String)> = f
+                .annotations()
+                .iter()
+                .map(|a| ((a.onset * 1e4).round() as i64, a.text.clone()))
+                .collect();
+            let mut want: Vec<(i64, String)> = anns
+                .iter()
+                .map(|a| ((a.onset * 1e4).round() as i64, a.text.clone()))
+                .collect();
+            read.sort();
+            want.sort();
+            prop_assert_eq!(read, want);
+            Ok(())
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// A gapped EDF+D file survives `write_edf` and then a `write_to` copy: record
+            /// onsets, samples, and annotations, including annotations that sit inside gaps
+            /// or past the last record.
+            #[test]
+            fn gapped_file_survives_write_and_copy(
+                spr in 1usize..=16,
+                gaps in proptest::collection::vec(0u32..=4, 0..6),
+                seed in proptest::collection::vec(-3000.0f64..3000.0, 16),
+                ann_times in proptest::collection::vec(0u32..400, 0..6),
+            ) {
+                let mut onsets = vec![0.0f64];
+                for g in &gaps {
+                    onsets.push(onsets[onsets.len() - 1] + 1.0 + f64::from(*g));
+                }
+                let total = onsets.len() * spr;
+                let data: Vec<f64> = (0..total).map(|i| seed[i % seed.len()]).collect();
+                let anns: Vec<Annotation> = ann_times
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &t)| Annotation {
+                        onset: f64::from(t) * 0.1,
+                        duration: None,
+                        text: format!("ev{i}"),
+                    })
+                    .collect();
+
+                let dir = TempDir::new().unwrap();
+                let src = dir.path().join("src.edf");
+                let dst = dir.path().join("dst.edf");
+                let mut spec = sample_spec(EdfVariant::EdfPlusD);
+                spec.signals[0].samples_per_record = spr;
+                spec.record_onsets = Some(onsets.clone());
+                write_edf(&src, spec, &[&data], &anns).unwrap();
+                assert_matches(&src, &onsets, spr, &data, &anns)?;
+
+                let f = EdfFile::open(&src).unwrap();
+                f.wait_for_annotations();
+                f.write_to(&dst, None).unwrap();
+                assert_matches(&dst, &onsets, spr, &data, &anns)?;
+            }
+        }
+    }
 }
