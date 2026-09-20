@@ -99,11 +99,11 @@ The annotation accessors below block until the background annotation scan comple
 
 `write_to(path: str, variant: str | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations. Transcoding caveats: **EDF+D -> EDF+D** preserves the source record onsets (gaps survive), but **EDF+D -> any non-`+D` variant** flattens timing (onsets become uniform `record_idx * record_duration`); **any `+` variant -> a plain variant** drops all annotations (plain EDF/BDF has no annotation channel); and **downconverting sample size** (BDF 24-bit -> EDF 16-bit) clamps the digital range and re-encodes from physical values, losing precision.
 
-`close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal`, `Proxy2D`, and `Proxy2D.read_digital(signals: list[int], start: int, stop: int) -> numpy.ndarray` -- Raw digital values for the given signals over samples `[start, stop)`, as a 2D int32 array. The counterpart to physical indexing via `[]`. `pad_mode="nan"` raises here, since NaN has no int32 representation.
+`close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal`, `Proxy2D`, and `Proxy3D` objects keep their own references to the mapping and remain usable; the mapping is released once the file and every object derived from it are dropped. Idempotent. The context manager (`with` statement) calls `close()` on exit.
+
+`Proxy2D.read_digital(signals: list[int], start: int, stop: int) -> numpy.ndarray` -- Raw digital values for the given signals over samples `[start, stop)`, as a 2D int32 array. The counterpart to physical indexing via `[]`. `pad_mode="nan"` raises here, since NaN has no int32 representation.
 
 `Proxy3D.read_digital(record_start: int, record_stop: int, channel_start: int, channel_stop: int) -> numpy.ndarray` -- Raw digital values as a 3D int32 array shaped `(records, channels, samples_per_record)`.
-
-`Proxy3D` objects keep their own references and remain usable. Idempotent. The context manager (`with` statement) calls `close()` on exit.
 
 `closed: bool` -- Whether `close()` has been called.
 
