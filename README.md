@@ -46,14 +46,21 @@ with edfarray.EdfFile("recording.edf") as f:
     # Annotations (EDF+ only)
     for ann in f.annotations:
         print(f"{ann.onset:.2f}s: {ann.text}")
+
+    # Event-locked epochs: fixed windows around onsets, decoded in parallel
+    # into a dense (n_epochs, n_channels, n_samples) array. Gap-aware for EDF+D.
+    epochs = f.extract_epochs([10.0, 20.0, 30.0], pre=0.5, post=1.0, group=group)
+    print(epochs.data.shape) # (3, 64, 240)
 ```
 
-See the [docs](https://bleemesser.github.io/edfarray/) for the full guide on signals, annotations, EDF+D time gaps, and performance.
+See the [docs](https://bleemesser.github.io/edfarray/) for the full guide on signals, annotations, epoch extraction, EDF+D time gaps, and performance.
 
 ## Examples
 
 ```bash
 uv run examples/basic_usage.py
+uv run examples/epoch_extraction.py
+uv run examples/async_epoch_extraction.py
 uv run examples/benchmark.py
 uv run examples/benchmark_paging.py
 ```

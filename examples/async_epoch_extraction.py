@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel epoch feature extraction on a multi-channel EEG file."""
+"""Parallel epoch feature extraction with the async extract_epochs API."""
 
 import asyncio
 from pathlib import Path
@@ -13,78 +13,64 @@ PATH = FIXTURES / "S001R01.edf"
 
 EPOCH_SEC = 2.0
 HOP_SEC = 2.0
-EVENT_PRE = 0.5
-EVENT_POST = 1.5
 
 
-async def epoch_features(f, idxs, rate: float, start: float, dur: float) -> dict:
-    n = int(dur * rate)
-    pages = await f.read_page(start, start + dur, signal_indices=idxs)
-    block = np.stack(pages)[:, :n]  # (n_chan, n_samples)
-    rms = np.sqrt(np.mean(block * block, axis=1))
-    spec = np.fft.rfft(block, axis=1)
+def features(block: np.ndarray, rate: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return (rms, alpha-power) per channel for a (epochs, channels, samples) block."""
+    n = block.shape[-1]
+    rms = np.sqrt(np.mean(block * block, axis=-1))
+    spec = np.fft.rfft(block, axis=-1)
     power = (spec.real ** 2 + spec.imag ** 2) / n
     freqs = np.fft.rfftfreq(n, d=1.0 / rate)
     alpha = (freqs >= 8.0) & (freqs < 13.0)
-    alpha_power = power[:, alpha].mean(axis=1)
-    return {"start": start, "rms": rms, "alpha": alpha_power}
+    return rms, power[:, :, alpha].mean(axis=-1)
 
 
 async def main() -> None:
     async with await aio.open(str(PATH)) as f:
-        ordinary = f.ordinary_signal_indices()
-        groups = f.signal_groups()
-        group = max(groups, key=len)
-        idxs = group.indices
-        rate = group.sample_rate if group else None
-        if not rate:
-            print("No valid sample rate found.")
-            return
-        labels = [f.signal(i).label for i in idxs]
-
-        print(f"File:      {PATH.name}")
-        print(f"Variant:   {f.variant}    duration: {f.duration:.1f} s")
-        print(f"Channels:  {len(idxs)} @ {rate} Hz   "
-              f"(out of {len(ordinary)} ordinary signals)")
-        print()
-
-        starts = np.arange(0.0, f.duration - EPOCH_SEC + 1e-9, HOP_SEC)
-        print(f"Sliding window: {len(starts)} epochs of {EPOCH_SEC}s "
-              f"(hop {HOP_SEC}s) dispatched via asyncio.gather")
-
-        epochs = await asyncio.gather(
-            *(epoch_features(f, idxs, rate, float(s), EPOCH_SEC) for s in starts)
-        )
-        print()
-
-        rms_matrix = np.stack([e["rms"] for e in epochs])
-        alpha_matrix = np.stack([e["alpha"] for e in epochs])
-        loudest_ch = int(np.argmax(rms_matrix.mean(axis=0)))
-        most_alpha_ch = int(np.argmax(alpha_matrix.mean(axis=0)))
-        print(f"Loudest channel:        {labels[loudest_ch]:8s} "
-              f"(mean RMS {rms_matrix[:, loudest_ch].mean():.2f})")
-        print(f"Strongest alpha (8-13Hz): {labels[most_alpha_ch]:8s} "
-              f"(mean power {alpha_matrix[:, most_alpha_ch].mean():.3f})")
-        print()
-
         await f.wait_for_annotations()
-        events = [a for a in f.annotations
-                  if a.onset >= EVENT_PRE
-                  and a.onset + EVENT_POST <= f.duration]
-        if not events:
-            print("No annotations suitable for event-locked epoching.")
-            return
+        group = max(f.signal_groups(), key=len)
+        rate = group.sample_rate
+        labels = [f.signal(i).label for i in group.indices]
 
-        print(f"Event-locked epochs: {len(events)} events "
-              f"({EVENT_PRE}s pre, {EVENT_POST}s post)")
-        windows = await asyncio.gather(*(
-            epoch_features(f, idxs, rate, a.onset - EVENT_PRE, EVENT_PRE + EVENT_POST)
-            for a in events
-        ))
-        for ev, w in zip(events, windows):
-            top = int(np.argmax(w["rms"]))
-            print(f"  t={ev.onset:>7.2f}s  {ev.text!r:>10s}  "
-                  f"loudest={labels[top]:6s} rms={w['rms'][top]:.2f}")
+        print(f"File:     {PATH.name}")
+        print(f"Variant:  {f.variant}    duration: {f.duration:.1f} s")
+        print(f"Group:    {len(labels)} channels @ {rate} Hz")
+        print()
+
+        # Grid epochs: hand extract_epochs the window centers; decoding is
+        # parallelized inside a single blocking task, not one task per epoch.
+        centers = np.arange(EPOCH_SEC / 2,
+                            f.duration - EPOCH_SEC / 2 + 1e-9, HOP_SEC)
+        epochs = await f.extract_epochs(list(centers),
+                                        pre=EPOCH_SEC / 2, post=EPOCH_SEC / 2,
+                                        group=group)
+        rms, alpha = features(epochs.data, rate)
+        print(f"Grid epochs: {len(epochs)} x {EPOCH_SEC}s "
+              f"(hop {HOP_SEC}s) -> data shape {epochs.data.shape}")
+        loudest = int(np.argmax(rms.mean(axis=0)))
+        strongest = int(np.argmax(alpha.mean(axis=0)))
+        print(f"  loudest channel:          {labels[loudest]} "
+              f"(mean RMS {rms[:, loudest].mean():.2f})")
+        print(f"  strongest alpha (8-13Hz): {labels[strongest]} "
+              f"(mean power {alpha[:, strongest].mean():.3f})")
+        print()
+
+        # Event-locked epochs straight from annotation text. The T0 marker sits
+        # at t=0, so its pre-window runs off the file; zero-fill keeps it.
+        events = f.events("T0") or f.annotations
+        if not events:
+            print("No annotations for event-locked epoching.")
+            return
+        ev = await f.extract_epochs(events, pre=0.5, post=1.5, group=group, pad="zero")
+        rms, _ = features(ev.data, rate)
+        print(f"Event-locked epochs: {len(ev)} "
+              f"(0.5s pre, 1.5s post), valid={ev.valid.tolist()}")
+        for onset, ok, row in zip(ev.onsets, ev.valid, rms):
+            top = int(np.argmax(row))
+            pad = "" if ok else "  (zero-padded pre-window)"
+            print(f"  t={onset:>7.2f}s  loudest={labels[top]} "
+                  f"rms={row[top]:.2f}{pad}")
 
 
 if __name__ == "__main__":

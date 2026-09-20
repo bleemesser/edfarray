@@ -18,6 +18,7 @@ edfarray-core = { git = "https://github.com/bleemesser/edfarray.git" }
 - `group` -- `SignalGroup`, `GroupKind`, `PadMode`. Channel grouping by sample rate.
 - `proxy_2d` -- `Proxy2D`, 2D view over a `SignalGroup` with `PadMode`-controlled OOB handling.
 - `proxy_3d` -- `Proxy3D`, `StrideInfo`. 3D view `(n_records, n_channels, spr)` for rectangular groups.
+- `epoch` -- `EpochWindow`, `EpochPad`, `plan_epochs`, `extract_epochs`. Event-locked windows decoded in parallel and gap-aware for EDF+D. `plan_epochs(file, group, events, pre, post)` returns `(Vec<EpochWindow>, Vec<bool>)` without reading data; `extract_epochs(file, group, windows, valid, pad)` returns `(flat_row_data, valid, dropped)` and reuses `PadMode` for fill behavior.
 - `annotation` -- `Annotation`, `AnnotationIndex`, TAL parsing.
 - `record` -- `RecordLayout`, data record byte layout and sample decoding.
 - `mmap` -- `MappedFile`, memory-mapped file with deferred annotation scan.

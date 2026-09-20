@@ -65,6 +65,8 @@ The annotation accessors below block until the background annotation scan comple
 
 `filter_annotations(query: str, regex: bool = False) -> list[Annotation]` -- Filter annotations by text content. With `regex=False`, matches the query as a case-insensitive substring. With `regex=True`, matches the query as a case-insensitive regex pattern. Raises `ValueError` for invalid regex patterns.
 
+`events(query: str, regex: bool = False) -> list[Annotation]` -- Shortcut returning the `Annotation` list that `query` matches, using the same rules as `filter_annotations`. Handy to pass straight into `extract_epochs`.
+
 `annotations_by_text(text: str) -> list[Annotation]` -- Annotations whose text exactly matches `text` (case-sensitive).
 
 `warnings: list[str]` -- Parse warnings accumulated during file open. Empty if the file is well-formed.
@@ -88,6 +90,10 @@ The annotation accessors below block until the background annotation scan comple
 `read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Read physical (float64) data for multiple signals over a time range. Returns one array per signal. If `signal_indices` is `None`, reads all ordinary signals. Signals with different sample rates produce arrays of different lengths. When `use_time` is `False` (default), time parameters are converted to flat sample indices (`int(time * sample_rate)`). For EDF+D files with time gaps, set `use_time=True` to resolve the time range using actual record onset times. See [Annotations & Time](../guide/annotations.md#read_page-and-proxy2d-use-flat-sample-indices) for details.
 
 `read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int32 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
+
+`extract_epochs(events, *, pre: float, post: float, group=None, pad=None, query=None, regex=False) -> Epochs` -- Decode fixed `[onset - pre, onset + post)` windows around each event in parallel into a dense `(n_epochs, n_channels, n_samples)` float64 block. `events` accepts a float, a sequence of floats, `Annotation` objects (or a mix), or a numpy float64 array. Pass `events=None` with `query` to lock onto annotation text (mutually exclusive with a non-`None` `events`). `group` is a `SignalGroup` or list of signal indices; it must be rectangular and defaults to the largest rectangular group. `pad` governs epochs that run off the file or straddle an EDF+D gap: `"drop"` (default) omits them, `"nan"`/`"zero"`/a number/`"edge"` keep and fill them (marked `valid=False`), `"raise"` errors on the first offender. Gap-aware: samples are never spliced across a gap. See [Epoch Extraction](../guide/epochs.md).
+
+`epoch_windows(events, *, pre: float, post: float, group=None) -> tuple[list[tuple[float, int, int]], numpy.ndarray]` -- Plan epochs without reading data. Returns `([(onset, s_start, s_end)], valid)` where the sample indices are flat offsets into the group and `valid` is a boolean array flagging windows that clip at a file edge or straddle a gap. This is the same table `extract_epochs` decodes, so callers can inspect or filter events before paying for the decode.
 
 `signal_groups() -> list[SignalGroup]` -- Partition all ordinary signals into groups by sample rate. Each group records its classification, sample rate, sample-count range, and whether it covers every ordinary signal. Sub-Hz precision is preserved.
 
@@ -268,6 +274,28 @@ Returned by `EdfFile.proxy_3d(group)`. A 3D view over a `Rectangular` `SignalGro
 ### Indexing
 
 `proxy[rec, ch, samp]` -- Each axis accepts an int or a slice. The sample axis additionally accepts a step (e.g. `proxy[:, :, ::4]`; negative steps supported); the record and channel axes require step 1. Returns a scalar (all ints), 1D / 2D / 3D `numpy.ndarray` depending on how many axes are non-int. The enclosing record block is materialized regardless of sample step, so striding shrinks the result, not the work.
+
+---
+
+## Epochs
+
+Returned by `EdfFile.extract_epochs(...)`. A dense epoch block plus the metadata needed to interpret it. `np.asarray(epochs)` returns `data`.
+
+### Properties
+
+`data: numpy.ndarray` -- Decoded float64 physical samples, shape `(n_epochs, n_channels, n_samples)`.
+
+`onsets: numpy.ndarray` -- Event onset times in seconds, in caller order, float64.
+
+`labels: list[str]` -- Channel labels, in group order.
+
+`sample_rate: float` -- Common sample rate in Hz.
+
+`valid: numpy.ndarray` -- Per-epoch boolean. `False` where any sample was padded under a fill policy. Always `True` under `pad="drop"` (offending epochs were removed instead).
+
+`dropped: list[int]` -- Indices into the original `events` argument for epochs that `pad="drop"` removed.
+
+`len(epochs)` returns the epoch count.
 
 ---
 
