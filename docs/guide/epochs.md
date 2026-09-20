@@ -23,12 +23,18 @@ epochs.data.shape  # (3, n_channels, 240)
 epochs.onsets      # array([10., 20., 30.])
 ```
 
+The sample axis is always `ceil((pre + post) * sample_rate)` columns wide. That width
+comes from your request alone, never from where the events landed, so column `j` of
+every row sits at `j / sample_rate - pre` seconds from its own event and shapes match
+across files.
+
 `epochs.data` is float64 physical samples. `np.asarray(epochs)` returns the same
 array. Other metadata comes off the object:
 
 - `labels`: channel labels, in group order.
 - `sample_rate`: the common rate in Hz.
-- `valid`: per-epoch boolean, `False` where any sample was padded.
+- `valid`: per-epoch boolean, `False` where the window ran off the file or straddled an
+  EDF+D gap.
 - `dropped`: indices into your `events` list for epochs that `pad="drop"` removed.
 
 ### Choosing channels
@@ -94,10 +100,12 @@ epochs = f.extract_epochs(good, pre=0.5, post=1.0)
 
 For a discontinuous recording, `s_start` and `s_end` address the flat sample space
 that `Signal` indexing uses. A window that straddles a gap is marked `valid=False`
-under fill policies and dropped under `"drop"`, so you never silently get samples
-from opposite sides of a gap spliced together as if they were contiguous. A
-straddling window that shares one edge with real data still decodes that real run
-contiguously; only the cells that point into the gap are padded.
+under fill policies and dropped under `"drop"`, so you never silently treat samples
+from opposite sides of a gap as contiguous.
+
+Under a fill policy the row keeps its real samples at their true time offsets and
+pads the columns that land in the gap, so the two sides never close up against each
+other. A window that opens inside a gap pads its leading columns the same way.
 
 See [Annotations & Time](annotations.md) for how record onsets and flat sample
 indices relate in EDF+D.

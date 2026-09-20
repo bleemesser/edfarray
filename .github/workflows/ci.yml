@@ -19,7 +19,13 @@ jobs:
       # The bench group carries pyedflib, which tests/test_differential.py compares
       # against. Without it that module skips itself.
       - run: uv sync --group bench
+      # test_differential.py uses importorskip, so a broken pyedflib install would drop the
+      # reference comparison from a green build. Fail here instead.
+      - name: Check the pyedflib reference is available
+        run: uv run python -c "import pyedflib"
       - run: uv run pytest
+      - run: uv run examples/epoch_extraction.py
+      - run: uv run examples/async_epoch_extraction.py
       - run: cargo test -p edfarray-core
       - run: cargo test -p edfarray-core --release
       - run: cargo clippy --workspace --all-targets -- -D warnings

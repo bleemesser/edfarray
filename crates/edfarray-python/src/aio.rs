@@ -448,8 +448,7 @@ impl PyAsyncEdfFile {
                 crate::epoch::plan_and_extract(&inner, &group, &events_owned, pre, post, pad_policy)
             })
             .await
-            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
-            ?;
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
             let n_samples = if empty {
                 ((pre + post) * sample_rate).ceil() as usize
             } else {
@@ -481,15 +480,15 @@ impl PyAsyncEdfFile {
         let group = crate::epoch::resolve_group(&inner, group)?;
         let events_owned = crate::epoch::event_onsets(events)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (windows, flags) = tokio::task::spawn_blocking(move || {
+            let plan = tokio::task::spawn_blocking(move || {
                 edfarray_core::epoch::plan_epochs(&inner, &group, &events_owned, pre, post)
                     .map_err(to_py_err)
             })
             .await
-            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
-            ?;
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
             Python::attach(|py| -> PyResult<Py<PyAny>> {
-                let table: Vec<Py<PyAny>> = windows
+                let table: Vec<Py<PyAny>> = plan
+                    .windows
                     .iter()
                     .map(|w| {
                         (w.onset, w.s_start, w.s_end)
@@ -498,8 +497,10 @@ impl PyAsyncEdfFile {
                     })
                     .collect::<PyResult<_>>()?;
                 let list = pyo3::types::PyList::new(py, table)?.unbind();
-                let valid = numpy::PyArray1::from_iter(py, flags.iter().copied()).unbind();
-                (list, valid).into_pyobject(py).map(|t| t.into_any().unbind())
+                let valid = numpy::PyArray1::from_iter(py, plan.valid.iter().copied()).unbind();
+                (list, valid)
+                    .into_pyobject(py)
+                    .map(|t| t.into_any().unbind())
             })
         })
     }

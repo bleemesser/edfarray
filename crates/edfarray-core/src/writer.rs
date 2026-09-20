@@ -205,6 +205,12 @@ impl EdfWriter {
                     reason: "record_onsets requires a +D variant (EDF+D or BDF+D)".to_string(),
                 });
             }
+            if onsets.is_empty() {
+                return Err(EdfError::InvalidArgument {
+                    name: "record_onsets",
+                    reason: "record_onsets must not be empty".to_string(),
+                });
+            }
             if onsets.windows(2).any(|w| w[1] < w[0]) {
                 return Err(EdfError::InvalidArgument {
                     name: "record_onsets",
@@ -303,8 +309,7 @@ impl EdfWriter {
             }
             // NaN casts to 0 and infinities saturate to the digital extremes, silently
             // inventing in-band samples. Given the clinical-data context, reject instead.
-            if let Some((j, &phys)) = physical[i].iter().enumerate().find(|(_, v)| !v.is_finite())
-            {
+            if let Some((j, &phys)) = physical[i].iter().enumerate().find(|(_, v)| !v.is_finite()) {
                 let kind = if phys.is_nan() {
                     "NaN"
                 } else if phys.is_sign_negative() {
@@ -398,6 +403,21 @@ impl EdfWriter {
     fn finish_in_place(&mut self) -> Result<()> {
         if self.finished {
             return Ok(());
+        }
+        // The record count is only known once streaming ends, so an over-long onset table can
+        // only be caught here. A short one already failed at the record that ran past it.
+        if let Some(onsets) = &self.spec.record_onsets
+            && onsets.len() as u64 != self.num_records_written
+        {
+            return Err(EdfError::InvalidArgument {
+                name: "record_onsets",
+                reason: format!(
+                    "record_onsets holds {} entries but {} records were written; \
+                     the table must have exactly one onset per record",
+                    onsets.len(),
+                    self.num_records_written
+                ),
+            });
         }
         self.finished = true;
         let mut writer = self.inner.take().expect("writer open");
@@ -1077,6 +1097,25 @@ mod tests {
             Ok(_) => panic!("expected error"),
             Err(e) => e,
         };
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "record_onsets",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn record_onsets_longer_than_the_record_count_are_rejected() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("long.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusD);
+        spec.record_duration_secs = 1.0;
+        spec.signals[0].samples_per_record = 10;
+        spec.record_onsets = Some(vec![0.0, 1.0, 3.0, 6.0]);
+        let data: Vec<f64> = (0..20).map(|i| i as f64).collect();
+        let err = write_edf(&path, spec, &[&data], &[]).unwrap_err();
         assert!(matches!(
             err,
             EdfError::InvalidArgument {

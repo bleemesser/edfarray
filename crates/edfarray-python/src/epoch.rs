@@ -1,9 +1,7 @@
-//! Argument parsing helpers for epoch extraction, shared by the sync and async bindings.
-
+use numpy::PyArrayMethods;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use numpy::PyArrayMethods;
 
 use edfarray_core::epoch::EpochPad;
 use edfarray_core::file::EdfFile;
@@ -48,9 +46,9 @@ pub(crate) fn event_onsets(events: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
         return event_onsets(&as_list);
     }
     let mut out = Vec::new();
-    let iter = events
-        .try_iter()
-        .map_err(|_| PyTypeError::new_err("events must be a float, Annotation, or a sequence of either"))?;
+    let iter = events.try_iter().map_err(|_| {
+        PyTypeError::new_err("events must be a float, Annotation, or a sequence of either")
+    })?;
     for element in iter {
         let element = element?;
         if let Ok(a) = element.extract::<PyRef<'_, PyAnnotation>>() {
@@ -113,8 +111,7 @@ pub(crate) fn largest_rectangular_group(f: &EdfFile) -> PyResult<SignalGroup> {
 ///
 /// Returns `(onsets, valid, data, dropped, n_samples)` where `onsets` are the kept event times
 /// in caller order (filtered by the planner flags under `EpochPad::Drop`), `data` is the flat
-/// row-major block, and `n_samples` is the row width the block was built with (the decoded
-/// width of the widest kept epoch).
+/// row-major block, and `n_samples` is the planner's nominal row width.
 pub(crate) type PlanExtract = (Vec<f64>, Vec<bool>, Vec<f64>, Vec<usize>, usize);
 
 pub(crate) fn plan_and_extract(
@@ -126,26 +123,19 @@ pub(crate) fn plan_and_extract(
     pad: EpochPad,
 ) -> PyResult<PlanExtract> {
     use edfarray_core::epoch::{extract_epochs, plan_epochs};
-    let (windows, flags) = plan_epochs(f, group, events, pre, post).map_err(to_py_err)?;
-    let (data, valid, dropped) =
-        extract_epochs(f, group, &windows, &flags, pad).map_err(to_py_err)?;
+    let plan = plan_epochs(f, group, events, pre, post).map_err(to_py_err)?;
+    let (data, valid, dropped) = extract_epochs(f, group, &plan, pad).map_err(to_py_err)?;
     let onsets_out: Vec<f64> = match pad {
-        EpochPad::Drop => windows
+        EpochPad::Drop => plan
+            .windows
             .iter()
-            .zip(&flags)
+            .zip(&plan.valid)
             .filter(|(_, v)| **v)
             .map(|(w, _)| w.onset)
             .collect(),
-        _ => windows.iter().map(|w| w.onset).collect(),
+        _ => plan.windows.iter().map(|w| w.onset).collect(),
     };
-    let n = windows
-        .iter()
-        .zip(&flags)
-        .filter(|(_, v)| pad != EpochPad::Drop || **v)
-        .map(|(w, _)| w.decoded())
-        .max()
-        .unwrap_or(0);
-    Ok((onsets_out, valid, data, dropped, n))
+    Ok((onsets_out, valid, data, dropped, plan.n_samples))
 }
 
 /// Extracted epochs: a dense `(n_epochs, n_channels, n_samples)` float64 block plus metadata.
@@ -183,7 +173,9 @@ impl PyEpochs {
     #[getter]
     #[gen_stub(override_return_type(type_repr = "numpy.typing.NDArray[numpy.float64]", imports = ("numpy",)))]
     fn onsets<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
-        numpy::PyArray1::from_vec(py, self.onsets.clone()).into_any().to_owned()
+        numpy::PyArray1::from_vec(py, self.onsets.clone())
+            .into_any()
+            .to_owned()
     }
 
     /// Channel labels, in group order.

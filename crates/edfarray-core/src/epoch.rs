@@ -1,11 +1,3 @@
-//! Gap-aware epoch planning and extraction.
-//!
-//! An *epoch* is a fixed-length window `[onset - pre, onset + post)` around an event time.
-//! [`plan_epochs`] turns event times into sample windows without touching sample data;
-//! [`extract_epochs`] decodes the planned windows into one flat buffer in parallel. All
-//! time-to-sample mapping goes through the same onset-table path `MappedFile` uses for reads,
-//! so EDF+D gaps are honored identically here and in `read_page`.
-
 use rayon::prelude::*;
 
 use crate::error::{EdfError, Result};
@@ -16,26 +8,59 @@ use crate::proxy::SignalProxy;
 /// Tolerance for onset/gap comparisons, in seconds.
 const EPS: f64 = 1e-9;
 
-/// One planned epoch: the event onset and the half-open, clamped sample window it decodes.
+/// One contiguous piece of an epoch: flat samples `s_start..s_end` land at row column `dest`.
 ///
-/// `s_start..s_end` is the *decoded* span: the window intersected with the file and, for
-/// EDF+D, mapped through the record-onset table. It is shorter than the nominal window when
-/// the window clips the file boundary, and it is the contiguous span a gap-straddling window
-/// actually covers. `dest` is the unclamped number of row columns before the decoded span,
-/// i.e. how far the window's start precedes the first decoded sample in the recording.
+/// A window that crosses an EDF+D gap yields one run per side. Each run sits at its true time
+/// offset within the row, so the columns that fall in the gap stay empty for the pad policy to
+/// fill instead of being closed up.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EpochWindow {
-    pub onset: f64,
+pub struct EpochRun {
     pub s_start: usize,
     pub s_end: usize,
     pub dest: usize,
 }
 
-impl EpochWindow {
-    /// Number of samples the decoded span covers.
-    pub fn decoded(&self) -> usize {
+impl EpochRun {
+    pub fn len(&self) -> usize {
         self.s_end.saturating_sub(self.s_start)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// One planned epoch: the event onset, the flat span it touches, and the runs it decodes into.
+///
+/// `s_start..s_end` is the outer decoded span, the range reported by `epoch_windows`. It is
+/// shorter than the nominal window when the window clips a file boundary. For a window that
+/// crosses an EDF+D gap it covers both sides, and `runs` says where each side actually belongs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EpochWindow {
+    pub onset: f64,
+    pub s_start: usize,
+    pub s_end: usize,
+    pub runs: Vec<EpochRun>,
+}
+
+impl EpochWindow {
+    /// Number of row columns backed by real samples.
+    pub fn decoded(&self) -> usize {
+        self.runs.iter().map(EpochRun::len).sum()
+    }
+}
+
+/// A planned set of epochs: one window per event, the per-window validity mask, and the
+/// row width every epoch decodes into.
+///
+/// `n_samples` is the nominal window width `ceil((pre + post) * rate)`. It depends only on the
+/// request, never on where the events fall, so rows stay time-aligned with each other and the
+/// output shape is stable across files.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EpochPlan {
+    pub windows: Vec<EpochWindow>,
+    pub valid: Vec<bool>,
+    pub n_samples: usize,
 }
 
 /// Edge/gap policy for [`extract_epochs`]. `Drop` is epoch-only; the fill variants reuse the
@@ -76,7 +101,7 @@ pub fn plan_epochs(
     events: &[f64],
     pre: f64,
     post: f64,
-) -> Result<(Vec<EpochWindow>, Vec<bool>)> {
+) -> Result<EpochPlan> {
     validate_pre_post(pre, post)?;
     if group.kind() != GroupKind::Rectangular {
         return Err(epoch_argument(
@@ -107,8 +132,10 @@ pub fn plan_epochs(
 
     // The onset table, gap intervals, and wall-clock duration all come from the same table for
     // EDF+D. `sampled_duration` is the wall-clock span only when there are no gaps.
-    let onsets: Option<Vec<f64>> =
-        is_plus_d.then(|| file.file().with_annotations(|idx| idx.record_onsets.clone()));
+    let onsets: Option<Vec<f64>> = is_plus_d.then(|| {
+        file.file()
+            .with_annotations(|idx| idx.record_onsets.clone())
+    });
     let duration = match &onsets {
         Some(o) => o.last().copied().unwrap_or(0.0) + record_dur,
         None => total_samples as f64 / sample_rate,
@@ -136,11 +163,18 @@ pub fn plan_epochs(
         .then(|| SignalProxy::new(file.file().clone(), group.indices()[0]))
         .transpose()?;
 
+    // Nominal width, derived from the request alone. Every row is this wide, so column j of
+    // any row is always `j / rate - pre` seconds from its event.
+    let n_samples = ((pre + post) * sample_rate).ceil() as usize;
+
     let mut windows = Vec::with_capacity(events.len());
     let mut valid = Vec::with_capacity(events.len());
     for &t in events {
         if !t.is_finite() {
-            return Err(epoch_argument("events", format!("event time {t} is not finite")));
+            return Err(epoch_argument(
+                "events",
+                format!("event time {t} is not finite"),
+            ));
         }
         let w_start = t - pre;
         let w_end = t + post;
@@ -151,17 +185,66 @@ pub fn plan_epochs(
             (to_index(w_start), to_index(w_end))
         };
 
-        // Leading columns of the row that precede the decoded span: how far the window start
-        // is before the first decoded sample, in samples. Time-domain, so it works across gaps.
-        let dest = if s_end > s_start {
-            let lo_time = match &onsets {
-                Some(o) => o[s_start / spr] + (s_start % spr) as f64 / sample_rate,
-                None => s_start as f64 / sample_rate,
-            };
-            ((lo_time - w_start) * sample_rate).round().max(0.0) as usize
-        } else {
-            0
+        // Place each contiguous piece of the window at its own time offset in the row. For
+        // EDF+C the window is one piece; for EDF+D each record contributes its overlap, and
+        // adjacent records coalesce, so only real gaps leave a hole.
+        let mut runs: Vec<EpochRun> = Vec::new();
+        let push_run = |runs: &mut Vec<EpochRun>, s0: usize, s1: usize, dest: f64| {
+            if s1 <= s0 {
+                return;
+            }
+            let dest = dest.round().max(0.0) as usize;
+            if dest >= n_samples {
+                return;
+            }
+            let len = (s1 - s0).min(n_samples - dest);
+            if let Some(last) = runs.last_mut()
+                && last.s_end == s0
+                && last.dest + last.len() == dest
+            {
+                last.s_end = s0 + len;
+                return;
+            }
+            runs.push(EpochRun {
+                s_start: s0,
+                s_end: s0 + len,
+                dest,
+            });
         };
+
+        match &onsets {
+            Some(o) => {
+                let first = o.partition_point(|&s| s + record_dur <= w_start + EPS);
+                let last = o.partition_point(|&s| s < w_end - EPS);
+                for (r, &rec_onset) in o.iter().enumerate().take(last.min(num_records)).skip(first)
+                {
+                    let seg_start = rec_onset.max(w_start);
+                    let seg_end = (rec_onset + record_dur).min(w_end);
+                    if seg_end <= seg_start + EPS {
+                        continue;
+                    }
+                    let k0 = ((seg_start - rec_onset) * sample_rate).ceil().max(0.0) as usize;
+                    let k1 = (((seg_end - rec_onset) * sample_rate).ceil() as usize).min(spr);
+                    if k1 <= k0 {
+                        continue;
+                    }
+                    // Columns are padded only where data is genuinely missing. A window
+                    // opening inside this record has nothing missing before it, so its run
+                    // starts at column 0 even when the window edge falls between samples.
+                    let column = if rec_onset <= w_start + EPS {
+                        0.0
+                    } else {
+                        (rec_onset - w_start) * sample_rate
+                    };
+                    push_run(&mut runs, r * spr + k0, r * spr + k1, column);
+                }
+            }
+            None => {
+                // The only data missing from a contiguous file is what sits before t = 0.
+                let column = (-w_start).max(0.0) * sample_rate;
+                push_run(&mut runs, s_start, s_end, column);
+            }
+        }
 
         // In-file and gap-free. The last gap beginning before `w_end` is the only candidate
         // that can overlap the window, since gap ends ascend with their starts.
@@ -177,37 +260,48 @@ pub fn plan_epochs(
             onset: t,
             s_start,
             s_end,
-            dest,
+            runs,
         });
         valid.push(ok);
     }
-    Ok((windows, valid))
+    Ok(EpochPlan {
+        windows,
+        valid,
+        n_samples,
+    })
 }
 
 /// Decode planned windows into one flat `(n_epochs, n_channels, n_samples)` row-major buffer.
 ///
 /// Returns `(data, valid, dropped)`. Under [`EpochPad::Drop`], invalid windows are omitted,
 /// `valid` is all-true for the kept rows, and `dropped` lists the planner indices removed.
-/// Under a fill policy every window is kept; edge cells are filled per [`PadMode`] and the row
-/// stays `valid = false`. Only file-boundary clipping and, for fill modes, the runs around a
-/// decoded span produce pad cells; a valid row is decoded in full.
+/// Under a fill policy every window is kept; the row stays `valid = false` and every column
+/// with no sample behind it is filled per [`PadMode`]. Those are the columns that fall off a
+/// file boundary and, for a window crossing an EDF+D gap, the columns inside the gap. Each
+/// contiguous run lands at its own time offset, so samples from opposite sides of a gap are
+/// never closed up against each other. A valid row is decoded in full.
 ///
-/// The row width `n_samples` is the decoded width of the widest kept window, so a gap-straddling
-/// window with no wider sibling decodes its contiguous span with no pad. Bindings must not
-/// re-derive the width from `data.len()`.
+/// The row width is `plan.n_samples`, the nominal window width, so every row covers the same
+/// time offsets relative to its event and the shape does not depend on where the events fall.
+/// Bindings must not re-derive the width from `data.len()`.
 pub fn extract_epochs(
     file: &EdfFile,
     group: &SignalGroup,
-    windows: &[EpochWindow],
-    valid: &[bool],
+    plan: &EpochPlan,
     pad: EpochPad,
 ) -> Result<(Vec<f64>, Vec<bool>, Vec<usize>)> {
+    let EpochPlan {
+        windows,
+        valid,
+        n_samples: n,
+    } = plan;
     if windows.len() != valid.len() {
         return Err(epoch_argument(
             "windows",
             "windows and valid must have equal length".into(),
         ));
     }
+    let n = *n;
     let nc = group.indices().len();
     let total_samples = file.num_records() * group.samples_per_record().unwrap_or(0);
 
@@ -236,14 +330,9 @@ pub fn extract_epochs(
     };
     let flags: Vec<bool> = match pad {
         EpochPad::Drop => vec![true; kept.len()],
-        _ => valid.to_vec(),
+        _ => valid.clone(),
     };
 
-    let n = kept
-        .iter()
-        .map(|&i| windows[i].decoded())
-        .max()
-        .unwrap_or(0);
     let row_size = nc * n;
     let mut data = vec![fill; kept.len() * row_size];
     let edge = matches!(pad, EpochPad::Fill(PadMode::Edge));
@@ -255,22 +344,35 @@ pub fn extract_epochs(
             .zip(kept.iter())
             .par_bridge()
             .map(|(block, &wi)| -> Result<()> {
-                let w = windows[wi];
-                let decoded = w.decoded();
-                let dest = w.dest.min(n.saturating_sub(decoded));
+                let w = &windows[wi];
                 for (c, &idx) in group.indices().iter().enumerate() {
                     let proxy = SignalProxy::new(file.file().clone(), idx)?;
                     let row = &mut block[c * n..(c + 1) * n];
-                    if decoded > 0 {
-                        proxy.read_physical(w.s_start, w.s_end, &mut row[dest..dest + decoded])?;
+                    for run in &w.runs {
+                        let len = run.len();
+                        proxy.read_physical(
+                            run.s_start,
+                            run.s_start + len,
+                            &mut row[run.dest..run.dest + len],
+                        )?;
                     }
-                    if valid[wi] || !edge || decoded == 0 {
+                    if !edge || w.runs.is_empty() {
                         continue;
                     }
-                    let first = row[dest];
-                    let last = row[dest + decoded - 1];
-                    row[..dest].fill(first);
-                    row[dest + decoded..].fill(last);
+                    // Hold the nearest real sample across every hole: the leading run's first
+                    // value before the first run, then the preceding run's last value.
+                    let lead = row[w.runs[0].dest];
+                    row[..w.runs[0].dest].fill(lead);
+                    for pair in w.runs.windows(2) {
+                        let (prev, next) = (pair[0], pair[1]);
+                        let prev_end = prev.dest + prev.len();
+                        let held = row[prev_end - 1];
+                        row[prev_end..next.dest].fill(held);
+                    }
+                    let last = w.runs[w.runs.len() - 1];
+                    let last_end = last.dest + last.len();
+                    let held = row[last_end - 1];
+                    row[last_end..].fill(held);
                 }
                 Ok(())
             })
@@ -284,7 +386,11 @@ pub fn extract_epochs(
 ///
 /// EDF+D record onsets are non-uniform, so they must be looked up rather than derived from
 /// the record duration.
-pub(crate) fn record_range_for_time(file: &EdfFile, start_sec: f64, end_sec: f64) -> (usize, usize) {
+pub(crate) fn record_range_for_time(
+    file: &EdfFile,
+    start_sec: f64,
+    end_sec: f64,
+) -> (usize, usize) {
     let num_records = file.num_records();
     let dur = file.header().record_duration_secs;
 
@@ -308,13 +414,7 @@ pub(crate) fn record_range_for_time(file: &EdfFile, start_sec: f64, end_sec: f64
     (first, last)
 }
 
-pub(crate) fn read_samples(
-    file: &EdfFile,
-    proxy: &SignalProxy,
-    s_start: usize,
-    s_end: usize,
-) -> Result<Vec<f64>> {
-    let _ = file;
+pub(crate) fn read_samples(proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<f64>> {
     if s_start >= proxy.len() || s_start >= s_end {
         return Ok(Vec::new());
     }
@@ -325,12 +425,10 @@ pub(crate) fn read_samples(
 }
 
 pub(crate) fn read_digital_samples(
-    file: &EdfFile,
     proxy: &SignalProxy,
     s_start: usize,
     s_end: usize,
 ) -> Result<Vec<i32>> {
-    let _ = file;
     if s_start >= proxy.len() || s_start >= s_end {
         return Ok(Vec::new());
     }
@@ -389,7 +487,8 @@ mod tests {
         }
         for g in 0..total {
             for i in 0..num_signals {
-                let v = (((i + 1) * g) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16;
+                let v =
+                    (((i + 1) * g) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16;
                 buf.extend_from_slice(&v.to_le_bytes());
             }
         }
@@ -407,15 +506,16 @@ mod tests {
         write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
         let file = crate::file::EdfFile::open(f.path()).unwrap();
         let group = group_of(&file, &[0, 1]);
-        let (windows, flags) =
-            plan_epochs(&file, &group, &[1.0, 3.4, 8.7], 0.5, 0.5).unwrap();
+        let plan = plan_epochs(&file, &group, &[1.0, 3.4, 8.7], 0.5, 0.5).unwrap();
+        let (windows, flags) = (&plan.windows, &plan.valid);
+        assert_eq!(plan.n_samples, 10);
         assert_eq!(windows[0].s_start, 5);
         assert_eq!(windows[0].s_end, 15);
         assert_eq!(windows[1].s_start, 29);
         assert_eq!(windows[1].s_end, 39);
         assert_eq!(windows[2].s_start, 82);
         assert_eq!(windows[2].s_end, 92);
-        assert_eq!(flags, vec![true, true, true]);
+        assert_eq!(flags, &vec![true, true, true]);
     }
 
     /// EDF+D, 2 ordinary signals at 10 Hz plus one annotation channel carrying only
@@ -460,8 +560,8 @@ mod tests {
         let ann_bytes = ann_samples * 2;
         for (r, &onset) in onsets.iter().enumerate() {
             for i in 0..2 {
-                let v = (((i + 1) * r * 10) as i64)
-                    .clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16;
+                let v = (((i + 1) * r * 10) as i64).clamp(i64::from(i16::MIN), i64::from(i16::MAX))
+                    as i16;
                 for s in 0..spr {
                     buf.extend_from_slice(&(v + s as i16).to_le_bytes());
                 }
@@ -491,8 +591,8 @@ mod tests {
         write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
         let file = crate::file::EdfFile::open(f.path()).unwrap();
         let group = group_of(&file, &[0, 1]);
-        let (_, flags) = plan_epochs(&file, &group, &[0.0, 5.0, 9.9], 1.0, 1.0).unwrap();
-        assert_eq!(flags, vec![false, true, false]);
+        let plan = plan_epochs(&file, &group, &[0.0, 5.0, 9.9], 1.0, 1.0).unwrap();
+        assert_eq!(plan.valid, vec![false, true, false]);
     }
 
     #[test]
@@ -504,8 +604,37 @@ mod tests {
         // Window around 1.5 is [1.0, 2.0]: ends exactly where the gap starts: fine.
         // Around 5.2 is [4.7, 5.7]: overlaps the gap [2.0, 5.0): invalid.
         // Around 6.5 is [6.0, 7.0]: inside the last record: fine.
-        let (_, flags) = plan_epochs(&file, &group, &[1.5, 5.2, 6.5], 0.5, 0.5).unwrap();
-        assert_eq!(flags, vec![true, false, true]);
+        let plan = plan_epochs(&file, &group, &[1.5, 5.2, 6.5], 0.5, 0.5).unwrap();
+        assert_eq!(plan.valid, vec![true, false, true]);
+    }
+
+    /// A window covering real data on both sides of a gap must keep each side at its own time
+    /// offset, with the gap columns padded. Closing the two runs up against each other would
+    /// present samples 3 s apart as neighbours.
+    #[test]
+    fn gap_spanning_window_keeps_both_sides_in_place() {
+        let f = NamedTempFile::new().unwrap();
+        // Records at 0,1 then a 3 s gap, then 5,6. 10 Hz.
+        write_plus_d(f.path().to_str().unwrap(), &[0.0, 1.0, 5.0, 6.0]);
+        let file = open(f.path());
+        let group = group_of(&file, &[0, 1]);
+        // [1.5, 5.5) spans the gap [2.0, 5.0): 5 real samples, 30 gap columns, 5 real samples.
+        let plan = plan_epochs(&file, &group, &[3.5], 2.0, 2.0).unwrap();
+        assert_eq!(plan.n_samples, 40);
+        assert_eq!(plan.valid, vec![false]);
+        let w = &plan.windows[0];
+        assert_eq!(w.runs.len(), 2);
+        assert_eq!(w.runs[0].dest, 0);
+        assert_eq!(w.runs[0].len(), 5);
+        assert_eq!(w.runs[1].dest, 35);
+        assert_eq!(w.runs[1].len(), 5);
+
+        let (data, _, _) =
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Nan)).unwrap();
+        let row = &data[0..40];
+        assert!(row[..5].iter().all(|v| !v.is_nan()));
+        assert!(row[5..35].iter().all(|v| v.is_nan()));
+        assert!(row[35..].iter().all(|v| !v.is_nan()));
     }
 
     #[test]
@@ -515,17 +644,18 @@ mod tests {
         let file = crate::file::EdfFile::open(f.path()).unwrap();
         let group = group_of(&file, &[0, 1]);
         let events = [1.0, 3.4, 8.7];
-        let (windows, flags) = plan_epochs(&file, &group, &events, 0.5, 0.5).unwrap();
-        let (data, valid, dropped) =
-            extract_epochs(&file, &group, &windows, &flags, EpochPad::Drop).unwrap();
+        let plan = plan_epochs(&file, &group, &events, 0.5, 0.5).unwrap();
+        let (data, valid, dropped) = extract_epochs(&file, &group, &plan, EpochPad::Drop).unwrap();
         assert_eq!(valid, vec![true, true, true]);
         assert!(dropped.is_empty());
-        let n = 10usize; // window samples
+        let n = plan.n_samples;
         let nc = group.indices().len();
-        for (e, w) in windows.iter().enumerate() {
+        for (e, w) in plan.windows.iter().enumerate() {
             for (c, &idx) in group.indices().iter().enumerate() {
                 let p = file.signal(idx).unwrap();
-                let want = p.read_at(w.s_start as f64 / 10.0, w.s_end as f64 / 10.0).unwrap();
+                let want = p
+                    .read_at(w.s_start as f64 / 10.0, w.s_end as f64 / 10.0)
+                    .unwrap();
                 let row = &data[(e * nc + c) * n..(e * nc + c) * n + n];
                 assert_eq!(row, want.as_slice(), "epoch {e} channel {c}");
             }
@@ -538,12 +668,51 @@ mod tests {
         write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
         let file = crate::file::EdfFile::open(f.path()).unwrap();
         let group = group_of(&file, &[0, 1]);
-        let (windows, flags) = plan_epochs(&file, &group, &[0.0, 5.0, 9.9], 2.0, 2.0).unwrap();
-        let (data, valid, dropped) =
-            extract_epochs(&file, &group, &windows, &flags, EpochPad::Drop).unwrap();
+        let plan = plan_epochs(&file, &group, &[0.0, 5.0, 9.9], 2.0, 2.0).unwrap();
+        let (data, valid, dropped) = extract_epochs(&file, &group, &plan, EpochPad::Drop).unwrap();
         assert_eq!(dropped, vec![0, 2]);
         assert_eq!(valid, vec![true]);
         assert_eq!(data.len(), 2 * 40); // one kept epoch, 2 channels, window = 4 s * 10 Hz
+    }
+
+    /// Row width and pad placement must come from `pre`/`post` alone. When every epoch is
+    /// edge-clipped there is no full-width row to infer the width from, and a width taken from
+    /// the decoded spans would drop the leading pad and misalign the rows against each other.
+    #[test]
+    fn all_clipped_rows_keep_nominal_width_and_alignment() {
+        let f = NamedTempFile::new().unwrap();
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0, 1]);
+        let plan = plan_epochs(&file, &group, &[1.0, 9.0], 2.0, 2.0).unwrap();
+        assert_eq!(plan.valid, vec![false, false]);
+        assert_eq!(plan.n_samples, 40);
+        let (data, _, _) =
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Nan)).unwrap();
+        assert_eq!(data.len(), 2 * 2 * 40);
+        // Event 1.0 spans [-1.0, 3.0): the first 1 s of columns is off the file.
+        let row0 = &data[0..40];
+        assert!(row0[..10].iter().all(|v| v.is_nan()));
+        assert!(row0[10..].iter().all(|v| !v.is_nan()));
+        // Event 9.0 spans [7.0, 11.0): the last 1 s of columns is off the file.
+        let row1 = &data[2 * 40..3 * 40];
+        assert!(row1[..30].iter().all(|v| !v.is_nan()));
+        assert!(row1[30..].iter().all(|v| v.is_nan()));
+    }
+
+    /// With everything dropped the block is empty but still nominally shaped.
+    #[test]
+    fn drop_everything_keeps_nominal_width() {
+        let f = NamedTempFile::new().unwrap();
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0, 1]);
+        let plan = plan_epochs(&file, &group, &[1.0], 2.0, 2.0).unwrap();
+        let (data, valid, dropped) = extract_epochs(&file, &group, &plan, EpochPad::Drop).unwrap();
+        assert_eq!(plan.n_samples, 40);
+        assert!(valid.is_empty());
+        assert_eq!(dropped, vec![0]);
+        assert!(data.is_empty());
     }
 
     #[test]
@@ -552,13 +721,14 @@ mod tests {
         write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
         let file = crate::file::EdfFile::open(f.path()).unwrap();
         let group = group_of(&file, &[0, 1]);
-        let (windows, flags) = plan_epochs(&file, &group, &[0.0, 5.0], 2.0, 2.0).unwrap();
+        let plan = plan_epochs(&file, &group, &[0.0, 5.0], 2.0, 2.0).unwrap();
         let (data, valid, dropped) =
-            extract_epochs(&file, &group, &windows, &flags, EpochPad::Fill(PadMode::Nan)).unwrap();
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Nan)).unwrap();
         assert!(dropped.is_empty());
         assert_eq!(valid, vec![false, true]);
-        // Row width is the widest kept row: the interior epoch decodes 4 s * 10 Hz = 40.
-        let n = 40usize;
+        // Nominal window width: 4 s * 10 Hz.
+        let n = plan.n_samples;
+        assert_eq!(n, 40);
         let e0c0 = &data[0..n];
         // Event 0.0 with pre=2.0: the first 2.0 * rate columns fall off the file start.
         assert!(e0c0[..20].iter().all(|v| v.is_nan()));

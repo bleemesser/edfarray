@@ -230,7 +230,7 @@ impl EdfFile {
             start_sec,
             end_sec,
             use_time,
-            |proxy, (start, end)| crate::epoch::read_samples(self, proxy, start, end),
+            |proxy, (start, end)| crate::epoch::read_samples(proxy, start, end),
         )
     }
 
@@ -247,7 +247,7 @@ impl EdfFile {
             start_sec,
             end_sec,
             use_time,
-            |proxy, (start, end)| crate::epoch::read_digital_samples(self, proxy, start, end),
+            |proxy, (start, end)| crate::epoch::read_digital_samples(proxy, start, end),
         )
     }
 

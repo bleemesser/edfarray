@@ -590,12 +590,16 @@ impl PyEdfFile {
     fn extract_epochs(
         &self,
         py: Python<'_>,
-        #[gen_stub(override_type(type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation] | builtins.NoneType"))]
+        #[gen_stub(override_type(
+            type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation] | builtins.NoneType"
+        ))]
         events: &Bound<'_, PyAny>,
         pre: f64,
         post: f64,
         group: Option<&Bound<'_, PyAny>>,
-        #[gen_stub(override_type(type_repr = "builtins.str | builtins.float | builtins.NoneType"))]
+        #[gen_stub(override_type(
+            type_repr = "builtins.str | builtins.float | builtins.NoneType"
+        ))]
         pad: Option<&Bound<'_, PyAny>>,
         query: Option<&str>,
         regex: bool,
@@ -616,30 +620,17 @@ impl PyEdfFile {
             crate::epoch::event_onsets(events)?
         };
         let pad_policy = crate::epoch::parse_epoch_pad(pad)?;
-        let (onsets, valid, data, dropped, n) = py
-            .detach(|| {
-                crate::epoch::plan_and_extract(
-                    inner,
-                    &group,
-                    &events_owned,
-                    pre,
-                    post,
-                    pad_policy,
-                )
-            })?;
+        let (onsets, valid, data, dropped, n) = py.detach(|| {
+            crate::epoch::plan_and_extract(inner, &group, &events_owned, pre, post, pad_policy)
+        })?;
         let labels = group
             .indices()
             .iter()
             .map(|&i| inner.header().signals[i].label.clone())
             .collect();
-        let n_samples = if events_owned.is_empty() {
-            ((pre + post) * group.sample_rate().unwrap_or(0.0)).ceil() as usize
-        } else {
-            n
-        };
         Ok(crate::epoch::PyEpochs {
             data,
-            shape: (valid.len(), group.indices().len(), n_samples),
+            shape: (valid.len(), group.indices().len(), n),
             onsets,
             labels,
             sample_rate: group.sample_rate().unwrap_or(0.0),
@@ -657,7 +648,9 @@ impl PyEdfFile {
     fn epoch_windows<'py>(
         &self,
         py: Python<'py>,
-        #[gen_stub(override_type(type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation]"))]
+        #[gen_stub(override_type(
+            type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation]"
+        ))]
         events: &Bound<'_, PyAny>,
         pre: f64,
         post: f64,
@@ -666,16 +659,19 @@ impl PyEdfFile {
         let inner = self.get()?;
         let group = crate::epoch::resolve_group(inner, group)?;
         let events_owned = crate::epoch::event_onsets(events)?;
-        let (windows, flags) = py
-            .detach(|| {
-                edfarray_core::epoch::plan_epochs(inner, &group, &events_owned, pre, post)
-                    .map_err(to_py_err)
-            })?;
-        let table = windows
+        let plan = py.detach(|| {
+            edfarray_core::epoch::plan_epochs(inner, &group, &events_owned, pre, post)
+                .map_err(to_py_err)
+        })?;
+        let table = plan
+            .windows
             .iter()
             .map(|w| (w.onset, w.s_start, w.s_end))
             .collect();
-        Ok((table, numpy::PyArray1::from_iter(py, flags.iter().copied())))
+        Ok((
+            table,
+            numpy::PyArray1::from_iter(py, plan.valid.iter().copied()),
+        ))
     }
 }
 

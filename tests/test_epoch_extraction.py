@@ -146,6 +146,43 @@ def test_empty_events():
         assert len(ep) == 0
 
 
+def test_row_width_is_independent_of_event_placement():
+    """The sample axis is ceil((pre + post) * rate) whatever the events do.
+
+    A width inferred from the decoded spans collapses when every epoch is edge-clipped,
+    which silently drops the leading pad and misaligns the rows against each other."""
+    with edfarray.EdfFile(GEN) as f:
+        group = max(f.signal_groups(), key=len)
+        rate = group.sample_rate
+        n = int(4.0 * rate)
+        kw = dict(pre=2.0, post=2.0, group=group, pad="nan")
+
+        interior = f.extract_epochs([400.0, 500.0], **kw)
+        clipped = f.extract_epochs([1.0, f.duration - 1.0], **kw)
+        assert interior.data.shape == (2, len(group.indices), n)
+        assert clipped.data.shape == (2, len(group.indices), n)
+        assert not clipped.valid.any()
+
+        # Event at 1.0 s starts 1 s before the file; the event near the end runs 1 s past it.
+        pad = int(1.0 * rate)
+        assert np.isnan(clipped.data[0, 0, :pad]).all()
+        assert not np.isnan(clipped.data[0, 0, pad:]).any()
+        assert not np.isnan(clipped.data[1, 0, :-pad]).any()
+        assert np.isnan(clipped.data[1, 0, -pad:]).all()
+
+        # Both rows share a time axis: column j is j / rate - pre seconds from its event.
+        sig = f.signal(group.indices[0])
+        assert np.allclose(clipped.data[0, 0, pad:], sig[0 : n - pad])
+
+
+def test_drop_everything_keeps_nominal_width():
+    with edfarray.EdfFile(GEN) as f:
+        group = max(f.signal_groups(), key=len)
+        ep = f.extract_epochs([1.0], pre=2.0, post=2.0, group=group)
+        assert ep.dropped == [0]
+        assert ep.data.shape == (0, len(group.indices), int(4.0 * group.sample_rate))
+
+
 def test_open_group_rejected():
     with edfarray.EdfFile(GEN) as f:
         groups = sorted(f.signal_groups(), key=len, reverse=True)
@@ -218,12 +255,32 @@ def test_plus_d_drop_straddler(gap_file):
         np.testing.assert_allclose(ep.data[1, 0], sig[windows[2][1] : windows[2][2]])
 
 
-def test_plus_d_gap_epoch_decodes_contiguous_span(gap_file):
+def test_plus_d_gap_epoch_pads_the_gap_columns(gap_file):
     with edfarray.EdfFile(gap_file) as f:
-        ((onset, s0, s1),) = [w for w, _v in zip(*f.epoch_windows([5.2], pre=0.7, post=0.3))]
+        # Event 5.2 with pre=0.7 opens the window at 4.5, inside the gap [2.0, 5.0).
         ep = f.extract_epochs([5.2], pre=0.7, post=0.3, pad="nan")
         assert ep.valid.tolist() == [False]
+        row = ep.data[0, 0]
+        assert row.shape == (10,)
+        # The first 0.5 s of the window is gap time with no samples behind it.
+        assert np.isnan(row[:5]).all()
         sig = f.signal(0)
-        # The gap straddle makes the epoch invalid in *time*, but the flat sample span
-        # [s0, s1) exists in the file, so it decodes rather than padding.
-        np.testing.assert_allclose(ep.data[0, 0], sig[s0:s1])
+        np.testing.assert_allclose(row[5:], sig[20:25])
+
+
+def test_plus_d_window_spanning_a_gap_is_not_spliced(gap_file):
+    """Both sides of the gap keep their own time offsets, with the gap columns padded.
+
+    Closing the two runs up against each other would present samples 3 s apart as
+    neighbours, which is the one thing gap awareness exists to prevent."""
+    with edfarray.EdfFile(gap_file) as f:
+        ep = f.extract_epochs([3.5], pre=2.0, post=2.0, pad="nan")
+        assert ep.valid.tolist() == [False]
+        row = ep.data[0, 0]
+        assert row.shape == (40,)
+        sig = f.signal(0)
+        # Window [1.5, 5.5): record 1 covers columns 0-5, the gap covers 5-35,
+        # record 2 covers 35-40.
+        np.testing.assert_allclose(row[:5], sig[15:20])
+        assert np.isnan(row[5:35]).all()
+        np.testing.assert_allclose(row[35:], sig[20:25])
