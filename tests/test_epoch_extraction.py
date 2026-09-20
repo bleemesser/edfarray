@@ -1,6 +1,7 @@
 """Epoch extraction: inputs, windows, data, padding."""
 
 import edfarray
+import edfarray.aio as aio
 import numpy as np
 import pytest
 from conftest import FIXTURES
@@ -151,3 +152,31 @@ def test_open_group_rejected():
         mixed = f.signal_group(indices)
         with pytest.raises(edfarray.InvalidArgumentError):
             f.extract_epochs([10.0], pre=1.0, post=1.0, group=mixed)
+
+
+async def test_async_extract_matches_sync():
+    async with await aio.open(GEN) as af:
+        ep = await af.extract_epochs([10.0, 20.0], pre=1.0, post=1.0)
+        windows, valid = await af.epoch_windows([10.0, 20.0], pre=1.0, post=1.0)
+    with edfarray.EdfFile(GEN) as f:
+        sync_ep = f.extract_epochs([10.0, 20.0], pre=1.0, post=1.0)
+    np.testing.assert_array_equal(ep.data, sync_ep.data)
+    assert ep.labels == sync_ep.labels
+    assert len(windows) == 2
+    assert valid.tolist() == [True, True]
+
+
+async def test_async_extract_pad_and_drop():
+    async with await aio.open(GEN) as af:
+        ep = await af.extract_epochs([0.0, 30.0], pre=2.0, post=2.0, pad="drop")
+        assert ep.dropped == [0]
+        ep2 = await af.extract_epochs([0.0, 30.0], pre=2.0, post=2.0, pad="nan")
+        assert ep2.valid.tolist() == [False, True]
+
+
+async def test_async_events_alias_and_query():
+    async with await aio.open(GEN2) as af:
+        assert af.events("record") == af.filter_annotations("record", regex=False)
+        anns = af.filter_annotations("record", regex=False)
+        ep = await af.extract_epochs(None, pre=0.5, post=0.5, query="record")
+        assert len(ep) + len(ep.dropped) == len(anns)
