@@ -166,6 +166,31 @@ def test_edffile_write_to(tmp_path: Path):
     assert [a.text for a in g.annotations] == ["mid"]
 
 
+def test_write_to_inherits_large_annotation_channel(tmp_path: Path):
+    src = tmp_path / "wide.edf"
+    dst = tmp_path / "copy.edf"
+    from edfbuilder import build_edf_plus
+
+    text = "N" * 200
+    anns = [(r, r + 0.5, text, 0) for r in range(4)]
+    build_edf_plus(
+        str(src),
+        record_onsets=[0.0, 1.0, 2.0, 3.0],
+        annotations=anns,
+        variant="EDF+C",
+        annotation_bytes=512,
+    )
+    f = edfarray.EdfFile(str(src))
+    assert len(f.annotations) == 4
+    f.write_to(str(dst))
+    g = edfarray.EdfFile(str(dst))
+    got = list(g.annotations)
+    assert len(got) == 4
+    for i, ann in enumerate(got):
+        assert ann.text == text
+        assert ann.onset == pytest.approx(i + 0.5)
+
+
 def test_write_with_patient_recording_ids(tmp_path: Path):
     p = tmp_path / "meta.edf"
     sig = _signal()

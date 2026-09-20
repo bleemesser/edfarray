@@ -471,6 +471,21 @@ impl EdfFile {
             });
         }
 
+        // Inherit the source annotation channel's byte budget so copying a file whose
+        // annotation channel is larger than the writer's 120-byte default does not
+        // overflow. The budget is in bytes; `EdfWriter::create` rounds it up to a
+        // multiple of the target sample size.
+        let annotation_bytes_per_record = if target_variant.is_plus() {
+            let source_sample_size = header.variant.sample_size_bytes();
+            header
+                .signals
+                .iter()
+                .find(|s| s.is_annotation)
+                .map(|s| s.num_samples * source_sample_size)
+        } else {
+            None
+        };
+
         let spec = WriterSpec {
             variant: target_variant,
             patient_id: header.patient_id.clone(),
@@ -478,7 +493,7 @@ impl EdfFile {
             start_datetime,
             record_duration_secs: header.record_duration_secs,
             signals: signals_spec,
-            annotation_bytes_per_record: None,
+            annotation_bytes_per_record,
         };
 
         let mut writer = EdfWriter::create(path, spec)?;
