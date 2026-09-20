@@ -24,17 +24,18 @@ epochs.onsets      # array([10., 20., 30.])
 ```
 
 The sample axis is always `ceil((pre + post) * sample_rate)` columns wide. That width
-comes from your request alone, never from where the events landed, so column `j` of
-every row sits at `j / sample_rate - pre` seconds from its own event and shapes match
-across files.
+comes from your request alone, never from where the events landed, so shapes match
+across files. Column 0 of a row is the first sample at or after `onset - pre`, and column
+`j` is the sample `j` places later. An event that falls between two samples therefore
+shifts its row by less than one sample period.
 
 `epochs.data` is float64 physical samples. `np.asarray(epochs)` returns the same
 array. Other metadata comes off the object:
 
 - `labels`: channel labels, in group order.
 - `sample_rate`: the common rate in Hz.
-- `valid`: per-epoch boolean, `False` where the window ran off the file or straddled an
-  EDF+D gap.
+- `valid`: per-epoch boolean, `True` only when every column of the row is a real sample.
+  It is `False` where the window ran off the file or touched an EDF+D gap.
 - `dropped`: indices into your `events` list for epochs that `pad="drop"` removed.
 
 ### Choosing channels
@@ -69,7 +70,8 @@ no data exists. The `pad=` argument decides what you get:
 - `"nan"`: keep it, fill missing samples with NaN, mark it `valid=False`.
 - `"zero"`: keep it, fill with 0.0.
 - a number, for example `pad=-100.0`: fill with that value.
-- `"edge"`: fill with the nearest real sample.
+- `"edge"`: fill with the nearest real sample. A window with no real samples holds the
+  last sample before it, or the first sample of the file when it starts before time 0.
 - `"raise"`: raise `SampleOutOfRange` on the first offending epoch.
 
 ```python

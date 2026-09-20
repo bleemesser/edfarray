@@ -5,8 +5,9 @@ use crate::file::EdfFile;
 use crate::group::{GroupKind, PadMode, SignalGroup};
 use crate::proxy::SignalProxy;
 
-/// Tolerance for onset/gap comparisons, in seconds.
-const EPS: f64 = 1e-9;
+/// Tolerance, in samples, for treating a time as exactly on the sample grid. It absorbs
+/// float noise such as `0.1 + 0.2` without moving any time that is genuinely between samples.
+const GRID_EPS: f64 = 1e-6;
 
 /// One contiguous piece of an epoch: flat samples `s_start..s_end` land at row column `dest`.
 ///
@@ -35,6 +36,8 @@ impl EpochRun {
 /// `s_start..s_end` is the outer decoded span, the range reported by `epoch_windows`. It is
 /// shorter than the nominal window when the window clips a file boundary. For a window that
 /// crosses an EDF+D gap it covers both sides, and `runs` says where each side actually belongs.
+/// A window with no samples at all has `s_start == s_end`, the index of the first sample after
+/// it, or the sample count when the window is past the end of the file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EpochWindow {
     pub onset: f64,
@@ -90,11 +93,39 @@ fn validate_pre_post(pre: f64, post: f64) -> Result<()> {
     Ok(())
 }
 
+/// Ceil of a time expressed in samples, snapping values within `GRID_EPS` of a grid point.
+fn ceil_snapped(x: f64) -> i64 {
+    let nearest = x.round();
+    if (x - nearest).abs() < GRID_EPS {
+        nearest as i64
+    } else {
+        x.ceil() as i64
+    }
+}
+
+/// Append flat samples `s0..s1` at column `dest`, merging with the previous run when both the
+/// samples and the columns continue it.
+fn push_run(runs: &mut Vec<EpochRun>, s0: usize, s1: usize, dest: usize) {
+    if let Some(last) = runs.last_mut()
+        && last.s_end == s0
+        && last.dest + last.len() == dest
+    {
+        last.s_end = s1;
+        return;
+    }
+    runs.push(EpochRun {
+        s_start: s0,
+        s_end: s1,
+        dest,
+    });
+}
+
 /// Plan event times into fixed-length sample windows. No data is read.
 ///
-/// `valid[i]` is false when window `i` runs outside `[0, duration)` or straddles an EDF+D
-/// gap, independent of the pad policy chosen later. The decoded span is the same
-/// `[s_start, s_end)` a `read_page` of that time range would touch.
+/// Window `i` starts at the first sample at or after `events[i] - pre` and is `n_samples`
+/// wide. `valid[i]` is true only when every one of those samples exists, so it is false when
+/// the window runs off either end of the file or touches an EDF+D gap, independent of the pad
+/// policy chosen later.
 pub fn plan_epochs(
     file: &EdfFile,
     group: &SignalGroup,
@@ -127,45 +158,28 @@ pub fn plan_epochs(
     let num_records = file.num_records();
     let total_samples = num_records.saturating_mul(spr);
 
-    let is_plus_d = file.header().variant.is_plus_d();
-    let record_dur = file.header().record_duration_secs;
-
-    // The onset table, gap intervals, and wall-clock duration all come from the same table for
-    // EDF+D. `sampled_duration` is the wall-clock span only when there are no gaps.
-    let onsets: Option<Vec<f64>> = is_plus_d.then(|| {
+    // EDF+D record onsets are non-uniform, so they come from the annotation index.
+    let onsets: Option<Vec<f64>> = file.header().variant.is_plus_d().then(|| {
         file.file()
             .with_annotations(|idx| idx.record_onsets.clone())
     });
-    let duration = match &onsets {
-        Some(o) => o.last().copied().unwrap_or(0.0) + record_dur,
-        None => total_samples as f64 / sample_rate,
-    };
 
-    // Gap intervals (start, end) sorted ascending by start. A window straddles a gap when the
-    // gap overlaps its time span away from the file edges.
-    let gaps: Vec<(f64, f64)> = match &onsets {
-        Some(o) => {
-            let mut g = Vec::new();
-            for r in 1..o.len() {
-                let prev_end = o[r - 1] + record_dur;
-                if o[r] > prev_end + EPS {
-                    g.push((prev_end, o[r]));
-                }
-            }
-            g
-        }
-        None => Vec::new(),
-    };
-    let gap_starts: Vec<f64> = gaps.iter().map(|&(s, _)| s).collect();
-    let gap_ends: Vec<f64> = gaps.iter().map(|&(_, e)| e).collect();
+    // Every window is placed on one sample grid: grid index `k` is time `k / rate`. A record
+    // with onset `o` holds grid indices `grid(o)..grid(o) + spr`. An onset that falls between
+    // grid points rounds to the nearest one, which moves that record by under half a sample.
+    let record_grid: Option<Vec<i64>> = onsets.as_ref().map(|o| {
+        o.iter()
+            .take(num_records)
+            .map(|&onset| (onset * sample_rate).round() as i64)
+            .collect()
+    });
 
-    let proxy = is_plus_d
-        .then(|| SignalProxy::new(file.file().clone(), group.indices()[0]))
-        .transpose()?;
-
-    // Nominal width, derived from the request alone. Every row is this wide, so column j of
-    // any row is always `j / rate - pre` seconds from its event.
-    let n_samples = ((pre + post) * sample_rate).ceil() as usize;
+    // Nominal width, derived from the request alone. Every row is this wide, and column j of
+    // a row is always grid index `first + j`, where `first` is the first sample at or after
+    // the window start.
+    let n_samples = ceil_snapped((pre + post) * sample_rate).max(1) as usize;
+    let n = n_samples as i64;
+    let spr_i = spr as i64;
 
     let mut windows = Vec::with_capacity(events.len());
     let mut valid = Vec::with_capacity(events.len());
@@ -176,93 +190,62 @@ pub fn plan_epochs(
                 format!("event time {t} is not finite"),
             ));
         }
-        let w_start = t - pre;
-        let w_end = t + post;
-        let (s_start, s_end) = if let Some(proxy) = &proxy {
-            file.file().sample_range_for_time(proxy, w_start, w_end)
-        } else {
-            let to_index = |s: f64| ((s.max(0.0) * sample_rate).ceil() as usize).min(total_samples);
-            (to_index(w_start), to_index(w_end))
-        };
+        let first = ceil_snapped((t - pre) * sample_rate);
+        let end = first.saturating_add(n);
 
-        // Place each contiguous piece of the window at its own time offset in the row. For
-        // EDF+C the window is one piece; for EDF+D each record contributes its overlap, and
-        // adjacent records coalesce, so only real gaps leave a hole.
+        // Each record contributes its overlap with the window at its own column. Adjacent
+        // records coalesce, so only real gaps and file boundaries leave a hole.
         let mut runs: Vec<EpochRun> = Vec::new();
-        let push_run = |runs: &mut Vec<EpochRun>, s0: usize, s1: usize, dest: f64| {
-            if s1 <= s0 {
-                return;
-            }
-            let dest = dest.round().max(0.0) as usize;
-            if dest >= n_samples {
-                return;
-            }
-            let len = (s1 - s0).min(n_samples - dest);
-            if let Some(last) = runs.last_mut()
-                && last.s_end == s0
-                && last.dest + last.len() == dest
-            {
-                last.s_end = s0 + len;
-                return;
-            }
-            runs.push(EpochRun {
-                s_start: s0,
-                s_end: s0 + len,
-                dest,
-            });
-        };
-
-        match &onsets {
-            Some(o) => {
-                let first = o.partition_point(|&s| s + record_dur <= w_start + EPS);
-                let last = o.partition_point(|&s| s < w_end - EPS);
-                for (r, &rec_onset) in o.iter().enumerate().take(last.min(num_records)).skip(first)
-                {
-                    let seg_start = rec_onset.max(w_start);
-                    let seg_end = (rec_onset + record_dur).min(w_end);
-                    if seg_end <= seg_start + EPS {
+        // Flat index of the first sample at or after the window, used when no run exists.
+        let next_sample;
+        match &record_grid {
+            Some(grid) => {
+                let from = grid.partition_point(|&b| b.saturating_add(spr_i) <= first);
+                next_sample = from.saturating_mul(spr).min(total_samples);
+                let mut filled = 0i64;
+                for (r, &b) in grid.iter().enumerate().skip(from) {
+                    if b >= end {
+                        break;
+                    }
+                    // `filled` keeps runs disjoint if two records overlap in time.
+                    let lo = first.max(b).max(first + filled);
+                    let hi = end.min(b.saturating_add(spr_i));
+                    if hi <= lo {
                         continue;
                     }
-                    let k0 = ((seg_start - rec_onset) * sample_rate).ceil().max(0.0) as usize;
-                    let k1 = (((seg_end - rec_onset) * sample_rate).ceil() as usize).min(spr);
-                    if k1 <= k0 {
-                        continue;
-                    }
-                    // Columns are padded only where data is genuinely missing. A window
-                    // opening inside this record has nothing missing before it, so its run
-                    // starts at column 0 even when the window edge falls between samples.
-                    let column = if rec_onset <= w_start + EPS {
-                        0.0
-                    } else {
-                        (rec_onset - w_start) * sample_rate
-                    };
-                    push_run(&mut runs, r * spr + k0, r * spr + k1, column);
+                    push_run(
+                        &mut runs,
+                        r * spr + (lo - b) as usize,
+                        r * spr + (hi - b) as usize,
+                        (lo - first) as usize,
+                    );
+                    filled = hi - first;
                 }
             }
             None => {
-                // The only data missing from a contiguous file is what sits before t = 0.
-                let column = (-w_start).max(0.0) * sample_rate;
-                push_run(&mut runs, s_start, s_end, column);
+                let total = i64::try_from(total_samples).unwrap_or(i64::MAX);
+                let lo = first.clamp(0, total);
+                let hi = end.clamp(0, total);
+                next_sample = lo as usize;
+                if hi > lo {
+                    push_run(&mut runs, lo as usize, hi as usize, (lo - first) as usize);
+                }
             }
         }
 
-        // In-file and gap-free. The last gap beginning before `w_end` is the only candidate
-        // that can overlap the window, since gap ends ascend with their starts.
-        let mut ok = w_start >= -EPS && w_end <= duration + EPS;
-        if ok && !gaps.is_empty() {
-            let upto = gap_starts.partition_point(|&s| s < w_end - EPS);
-            if upto > 0 {
-                ok = gap_ends[upto - 1] <= w_start + EPS;
-            }
-        }
-
-        windows.push(EpochWindow {
+        let (s_start, s_end) = match (runs.first(), runs.last()) {
+            (Some(a), Some(b)) => (a.s_start, b.s_end),
+            _ => (next_sample, next_sample),
+        };
+        let window = EpochWindow {
             onset: t,
             s_start,
             s_end,
             runs,
-        });
-        valid.push(ok);
+        };
+        // Valid means every column has a real sample behind it.
+        valid.push(window.decoded() == n_samples);
+        windows.push(window);
     }
     Ok(EpochPlan {
         windows,
@@ -302,8 +285,15 @@ pub fn extract_epochs(
         ));
     }
     let n = *n;
+    let edge = matches!(pad, EpochPad::Fill(PadMode::Edge));
     let nc = group.indices().len();
-    let total_samples = file.num_records() * group.samples_per_record().unwrap_or(0);
+    let spr = group
+        .samples_per_record()
+        .ok_or_else(|| epoch_argument("group", "group has no samples-per-record".into()))?;
+    let total_samples = file.num_records().saturating_mul(spr);
+    if edge && total_samples == 0 && windows.iter().any(|w| w.runs.is_empty()) {
+        return Err(EdfError::SampleOutOfRange { index: 0, count: 0 });
+    }
 
     if matches!(pad, EpochPad::Fill(PadMode::Raise))
         && let Some(i) = valid.iter().position(|&v| !v)
@@ -335,14 +325,12 @@ pub fn extract_epochs(
 
     let row_size = nc * n;
     let mut data = vec![fill; kept.len() * row_size];
-    let edge = matches!(pad, EpochPad::Fill(PadMode::Edge));
 
     // Each task owns one row block (disjoint mutable slice), so the parallel closure never
     // shares `data`. Nothing to fill when no rows survived or the row width collapsed to zero.
     if row_size > 0 {
-        data.chunks_mut(row_size)
-            .zip(kept.iter())
-            .par_bridge()
+        data.par_chunks_mut(row_size)
+            .zip(kept.par_iter())
             .map(|(block, &wi)| -> Result<()> {
                 let w = &windows[wi];
                 for (c, &idx) in group.indices().iter().enumerate() {
@@ -356,7 +344,16 @@ pub fn extract_epochs(
                             &mut row[run.dest..run.dest + len],
                         )?;
                     }
-                    if !edge || w.runs.is_empty() {
+                    if !edge {
+                        continue;
+                    }
+                    // A window with no samples of its own holds the nearest sample before it,
+                    // or the first sample of the file when it sits before the start.
+                    if w.runs.is_empty() {
+                        let at = w.s_start.saturating_sub(1).min(total_samples - 1);
+                        let mut held = [0.0f64; 1];
+                        proxy.read_physical(at, at + 1, &mut held)?;
+                        row.fill(held[0]);
                         continue;
                     }
                     // Hold the nearest real sample across every hole: the leading run's first
@@ -733,5 +730,84 @@ mod tests {
         // Event 0.0 with pre=2.0: the first 2.0 * rate columns fall off the file start.
         assert!(e0c0[..20].iter().all(|v| v.is_nan()));
         assert!(e0c0[20..].iter().all(|v| !v.is_nan()));
+    }
+
+    /// A fractional window width must not leave a never-read column in a valid row. Every
+    /// valid row holds exactly `n_samples` consecutive real samples, whatever the event phase.
+    #[test]
+    fn fractional_width_rows_are_fully_read() {
+        let f = NamedTempFile::new().unwrap();
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 1);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0]);
+        // Width 0.25 s * 10 Hz = 2.5, so 3 columns. 9.9 needs sample 100, which does not exist.
+        let plan = plan_epochs(&file, &group, &[1.0, 1.04, 1.05, 9.9], 0.125, 0.125).unwrap();
+        assert_eq!(plan.n_samples, 3);
+        assert_eq!(plan.valid, vec![true, true, true, false]);
+        let (data, _, _) =
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Nan)).unwrap();
+        assert_eq!(&data[0..3], &[9.0, 10.0, 11.0]);
+        assert_eq!(&data[3..6], &[10.0, 11.0, 12.0]);
+        assert_eq!(&data[6..9], &[10.0, 11.0, 12.0]);
+        assert_eq!(&data[9..11], &[98.0, 99.0]);
+        assert!(data[11].is_nan());
+    }
+
+    #[test]
+    fn float_noise_does_not_widen_the_row() {
+        let f = NamedTempFile::new().unwrap();
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 1);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0]);
+        let plan = plan_epochs(&file, &group, &[5.0], 0.1, 0.2).unwrap();
+        assert_eq!(plan.n_samples, 3);
+    }
+
+    /// Edge fill holds the nearest real sample even when the window has no samples of its own.
+    #[test]
+    fn edge_fill_without_any_samples_holds_nearest() {
+        let f = NamedTempFile::new().unwrap();
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 1);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0]);
+        let plan = plan_epochs(&file, &group, &[-5.0, 20.0], 0.5, 0.5).unwrap();
+        assert_eq!(plan.valid, vec![false, false]);
+        let (data, _, _) =
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Edge)).unwrap();
+        assert!(data[..10].iter().all(|&v| v == 0.0));
+        assert!(data[10..].iter().all(|&v| v == 99.0));
+
+        let g = NamedTempFile::new().unwrap();
+        write_plus_d(g.path().to_str().unwrap(), &[0.0, 1.0, 5.0, 6.0]);
+        let file = open(g.path());
+        let group = group_of(&file, &[0]);
+        // [3.0, 4.0) lies inside the gap; the last sample before it is record 1's last, 19.
+        let plan = plan_epochs(&file, &group, &[3.5], 0.5, 0.5).unwrap();
+        assert!(plan.windows[0].runs.is_empty());
+        let (data, _, _) =
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Edge)).unwrap();
+        assert!(data.iter().all(|&v| v == 19.0));
+    }
+
+    /// A window that opens between samples inside a record and then crosses a gap keeps one
+    /// column grid for both sides, and edge fill over the hole does not panic.
+    #[test]
+    fn off_grid_window_across_gap_stays_aligned() {
+        let f = NamedTempFile::new().unwrap();
+        write_plus_d(f.path().to_str().unwrap(), &[0.0, 1.0, 5.0, 6.0]);
+        let file = open(f.path());
+        let group = group_of(&file, &[0]);
+        // Window [1.55, 5.55): first sample at or after 1.55 is grid index 16.
+        let plan = plan_epochs(&file, &group, &[3.55], 2.0, 2.0).unwrap();
+        let w = &plan.windows[0];
+        assert_eq!(plan.n_samples, 40);
+        assert_eq!(w.runs.len(), 2);
+        assert_eq!((w.runs[0].dest, w.runs[0].len()), (0, 4));
+        assert_eq!((w.runs[1].dest, w.runs[1].len()), (34, 6));
+        let (data, _, _) =
+            extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Edge)).unwrap();
+        assert_eq!(&data[..4], &[16.0, 17.0, 18.0, 19.0]);
+        assert!(data[4..34].iter().all(|&v| v == 19.0));
+        assert_eq!(&data[34..], &[20.0, 21.0, 22.0, 23.0, 24.0, 25.0]);
     }
 }

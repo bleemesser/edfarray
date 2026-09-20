@@ -284,3 +284,28 @@ def test_plus_d_window_spanning_a_gap_is_not_spliced(gap_file):
         np.testing.assert_allclose(row[:5], sig[15:20])
         assert np.isnan(row[5:35]).all()
         np.testing.assert_allclose(row[35:], sig[20:25])
+
+
+def test_fractional_width_valid_rows_are_fully_real(tmp_path):
+    """A valid row never carries a padded column, whatever the event phase."""
+    path = tmp_path / "frac.edf"
+    rate = 256
+    data = np.arange(10 * rate, dtype=np.float64)
+    sig = edfarray.WriterSignal(
+        label="EEG",
+        physical_dimension="uV",
+        physical_min=-32768.0,
+        physical_max=32767.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=rate,
+    )
+    edfarray.write_edf(
+        str(path), variant="EDF", record_duration=1.0, signals=[sig], data=[data]
+    )
+    with edfarray.EdfFile(str(path)) as f:
+        ep = f.extract_epochs([1.0, 1.001, 1.002, 1.003], pre=0.1, post=0.1, pad="nan")
+    assert ep.data.shape == (4, 1, 52)
+    assert ep.valid.all()
+    assert not np.isnan(ep.data).any()
+    assert (np.diff(ep.data, axis=2) == 1.0).all()

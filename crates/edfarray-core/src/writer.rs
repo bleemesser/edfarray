@@ -211,6 +211,13 @@ impl EdfWriter {
                     reason: "record_onsets must not be empty".to_string(),
                 });
             }
+            // Checked first because NaN compares false and would pass the ordering test.
+            if onsets.iter().any(|o| !o.is_finite() || *o < 0.0) {
+                return Err(EdfError::InvalidArgument {
+                    name: "record_onsets",
+                    reason: "record onsets must be finite and non-negative".to_string(),
+                });
+            }
             if onsets.windows(2).any(|w| w[1] < w[0]) {
                 return Err(EdfError::InvalidArgument {
                     name: "record_onsets",
@@ -527,8 +534,12 @@ pub fn write_edf(
 
     let mut by_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
     for ann in annotations {
-        let r = (ann.onset / record_dur).floor() as i64;
-        let r = r.max(0) as usize;
+        // With a gapped onset table an annotation belongs to the last record whose onset is at
+        // or before it, which `floor(onset / record_dur)` does not give.
+        let r = match &writer.spec.record_onsets {
+            Some(table) => table.partition_point(|&o| o <= ann.onset).saturating_sub(1),
+            None => (ann.onset / record_dur).floor().max(0.0) as usize,
+        };
         if r < num_records {
             by_record[r].push(ann.clone());
         } else if num_records > 0 {
@@ -1103,6 +1114,21 @@ mod tests {
                 name: "record_onsets",
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn record_onsets_must_be_finite() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusD);
+        spec.record_onsets = Some(vec![0.0, f64::NAN, 3.0]);
+        assert!(matches!(
+            EdfWriter::create(&path, spec),
+            Err(EdfError::InvalidArgument {
+                name: "record_onsets",
+                ..
+            })
         ));
     }
 

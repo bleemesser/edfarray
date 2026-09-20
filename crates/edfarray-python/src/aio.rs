@@ -442,21 +442,15 @@ impl PyAsyncEdfFile {
             .map(|&i| inner.header().signals[i].label.clone())
             .collect();
         let sample_rate = group.sample_rate().unwrap_or(0.0);
-        let empty = events_owned.is_empty();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let (onsets, valid, data, dropped, n) = tokio::task::spawn_blocking(move || {
                 crate::epoch::plan_and_extract(&inner, &group, &events_owned, pre, post, pad_policy)
             })
             .await
             .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
-            let n_samples = if empty {
-                ((pre + post) * sample_rate).ceil() as usize
-            } else {
-                n
-            };
             Ok(crate::epoch::PyEpochs {
                 data,
-                shape: (valid.len(), nchan, n_samples),
+                shape: (valid.len(), nchan, n),
                 onsets,
                 labels,
                 sample_rate,
