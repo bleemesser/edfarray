@@ -16,7 +16,9 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync
+      # The bench group carries pyedflib, which tests/test_differential.py compares
+      # against. Without it that module skips itself.
+      - run: uv sync --group bench
       - run: uv run pytest
       - run: cargo test -p edfarray-core
       - run: cargo test -p edfarray-core --release

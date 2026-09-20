@@ -58,6 +58,16 @@ uv run examples/benchmark.py
 uv run examples/benchmark_paging.py
 ```
 
+The benchmark scripts compare against pyedflib. pyedflib is not installed by default.
+To get the comparison columns, install the `bench` group:
+
+```bash
+uv sync --group bench
+```
+
+pyedflib builds from source, so this step needs a C compiler and the Python
+development headers (`python3-devel` on Fedora, `python3-dev` on Debian).
+
 ## Benchmarks
 
 Compared against [pyedflib](https://github.com/holgern/pyedflib) (Python bindings for edflib C library).
@@ -107,16 +117,45 @@ Prerequisites: [Rust toolchain](https://rustup.rs/), Python 3.12+, [uv](https://
 
 ```bash
 uv sync
+```
+
+`uv sync` creates `.venv`, compiles the Rust extension through maturin, and installs
+`edfarray` into that environment. Run it once before anything else. After you change
+Rust code, rebuild the extension in place:
+
+```bash
 uv run maturin develop
-cargo run --bin gen_stubs --no-default-features --package edfarray  # regenerate .pyi stubs
+```
+
+To regenerate the `.pyi` stubs:
+
+```bash
+cargo run --bin gen_stubs --no-default-features --package edfarray
+```
+
+`--no-default-features` turns off `pyo3/extension-module`, so this binary links against
+libpython. If the link step fails with `unable to find library -lpython3.x`, your system
+Python has no shared library to link against. Install the Python development package, or
+point the build at an interpreter that ships one, such as a uv-managed Python:
+
+```bash
+PYO3_PYTHON="$(uv python find 3.13)" cargo run --bin gen_stubs --no-default-features --package edfarray
 ```
 
 ## Running tests
 
+Run `uv sync` first. The Python tests import the built extension, and they fail to
+collect if the package is not installed in `.venv`.
+
 ```bash
 uv run pytest
 cargo test --package edfarray-core
+cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+`tests/test_differential.py` compares edfarray against pyedflib, so it skips itself
+unless the `bench` group is installed. CI installs that group. To run the full suite
+locally, use `uv sync --group bench` as described under Examples.
 
 ## Releasing
 
@@ -124,7 +163,8 @@ Bump the version in `crates/edfarray-core/Cargo.toml` and `crates/edfarray-pytho
 
 ```bash
 cargo run --bin gen_stubs --no-default-features --package edfarray
-git add -A && git commit -m "bump version to x.y.z"
+git add crates/edfarray-core/Cargo.toml crates/edfarray-python/Cargo.toml Cargo.lock edfarray/_core/__init__.pyi
+git commit -m "bump version to x.y.z"
 git tag vx.y.z
 git push && git push origin vx.y.z
 ```
