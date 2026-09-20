@@ -16,6 +16,7 @@ def build_edf_plus(
     *,
     record_onsets,
     annotations=(),
+    signals=None,
     variant="EDF+C",
     samples_per_record=10,
     annotation_channels=1,
@@ -29,9 +30,17 @@ def build_edf_plus(
 
     `annotations` is a sequence of `(record_idx, onset, text, channel)` tuples placed after
     the time-keeping TAL of the given annotation channel.
+
+    `signals` is an optional list of ordinary-signal dicts, each `{"label", "rate", "values"}`
+    where `values(record_idx, sample)` returns the digital value to write. Defaulting it keeps
+    the historical single `Sig1` channel holding the record index, so existing callers are
+    unaffected.
     """
     num_records = len(record_onsets)
-    num_signals = 1 + annotation_channels
+    if signals is None:
+        signals = [{"label": "Sig1", "rate": samples_per_record, "values": lambda r, s: r}]
+    n_ord = len(signals)
+    num_signals = n_ord + annotation_channels
     ann_samples = annotation_bytes // 2
 
     header = b"".join(
@@ -49,17 +58,17 @@ def build_edf_plus(
         ]
     )
 
-    labels = ["Sig1"] + ["EDF Annotations"] * annotation_channels
+    labels = [s["label"] for s in signals] + ["EDF Annotations"] * annotation_channels
     per_signal = [
         (labels, 16),
         ([""] * num_signals, 80),
-        (["uV"] + [""] * annotation_channels, 8),
-        ([-100] + [-1] * annotation_channels, 8),
-        ([100] + [1] * annotation_channels, 8),
+        (["uV"] * n_ord + [""] * annotation_channels, 8),
+        ([-100] * n_ord + [-1] * annotation_channels, 8),
+        ([100] * n_ord + [1] * annotation_channels, 8),
         ([-32768] * num_signals, 8),
         ([32767] * num_signals, 8),
         ([""] * num_signals, 80),
-        ([samples_per_record] + [ann_samples] * annotation_channels, 8),
+        ([s["rate"] for s in signals] + [ann_samples] * annotation_channels, 8),
         ([""] * num_signals, 32),
     ]
     for values, width in per_signal:
@@ -67,7 +76,9 @@ def build_edf_plus(
 
     body = b""
     for rec_idx, onset in enumerate(record_onsets):
-        body += struct.pack("<%dh" % samples_per_record, *([rec_idx] * samples_per_record))
+        for sig in signals:
+            rate = sig["rate"]
+            body += struct.pack("<%dh" % rate, *[sig["values"](rec_idx, s) for s in range(rate)])
         for channel in range(annotation_channels):
             tal = b""
             if channel == 0 and timekeeping:

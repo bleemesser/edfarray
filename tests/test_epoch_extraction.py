@@ -5,6 +5,7 @@ import edfarray.aio as aio
 import numpy as np
 import pytest
 from conftest import FIXTURES
+from edfbuilder import build_edf_plus
 
 GEN = str(FIXTURES / "test_generator.edf")
 GEN2 = str(FIXTURES / "test_generator_2.edf")  # EDF+C, has annotations
@@ -180,3 +181,49 @@ async def test_async_events_alias_and_query():
         anns = af.filter_annotations("record", regex=False)
         ep = await af.extract_epochs(None, pre=0.5, post=0.5, query="record")
         assert len(ep) + len(ep.dropped) == len(anns)
+
+
+@pytest.fixture
+def gap_file(tmp_path):
+    """EDF+D, records at 0,1 then a 3s gap then 5,6. One 10 Hz signal, value 10*record+sample."""
+    path = tmp_path / "gap.edf"
+    build_edf_plus(
+        str(path),
+        record_onsets=[0.0, 1.0, 5.0, 6.0],
+        variant="EDF+D",
+        signals=[{"label": "S1", "rate": 10, "values": lambda r, s: 10 * r + s}],
+    )
+    return str(path)
+
+
+def test_plus_d_windows(gap_file):
+    with edfarray.EdfFile(gap_file) as f:
+        # 1.5 and 5.5 sit inside a segment; 3.5 is inside the gap [2.0, 5.0).
+        # pre/post are binary fractions so the sample grid stays exact.
+        windows, valid = f.epoch_windows([1.5, 3.5, 5.5], pre=0.25, post=0.25)
+        assert valid.tolist() == [True, False, True]
+        assert [w[0] for w in windows] == [1.5, 3.5, 5.5]
+
+
+def test_plus_d_drop_straddler(gap_file):
+    with edfarray.EdfFile(gap_file) as f:
+        events = [1.5, 3.5, 5.5]
+        windows, _ = f.epoch_windows(events, pre=0.25, post=0.25)
+        ep = f.extract_epochs(events, pre=0.25, post=0.25)
+        assert ep.dropped == [1]
+        assert ep.onsets.tolist() == [1.5, 5.5]
+        sig = f.signal(0)
+        # Both kept epochs decode their full planned span with no pad cells.
+        np.testing.assert_allclose(ep.data[0, 0], sig[windows[0][1] : windows[0][2]])
+        np.testing.assert_allclose(ep.data[1, 0], sig[windows[2][1] : windows[2][2]])
+
+
+def test_plus_d_gap_epoch_decodes_contiguous_span(gap_file):
+    with edfarray.EdfFile(gap_file) as f:
+        ((onset, s0, s1),) = [w for w, _v in zip(*f.epoch_windows([5.2], pre=0.7, post=0.3))]
+        ep = f.extract_epochs([5.2], pre=0.7, post=0.3, pad="nan")
+        assert ep.valid.tolist() == [False]
+        sig = f.signal(0)
+        # The gap straddle makes the epoch invalid in *time*, but the flat sample span
+        # [s0, s1) exists in the file, so it decodes rather than padding.
+        np.testing.assert_allclose(ep.data[0, 0], sig[s0:s1])
