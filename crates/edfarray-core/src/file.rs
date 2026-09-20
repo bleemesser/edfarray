@@ -55,6 +55,11 @@ impl EdfFile {
         &self.file.header
     }
 
+    /// The shared mapped file. Exposed for the epoch module's onset-table and proxy reuse.
+    pub(crate) fn file(&self) -> &Arc<MappedFile> {
+        &self.file
+    }
+
     /// File variant: EDF, EDF+C, or EDF+D.
     pub fn variant(&self) -> EdfVariant {
         self.file.header.variant
@@ -225,7 +230,7 @@ impl EdfFile {
             start_sec,
             end_sec,
             use_time,
-            |proxy, (start, end)| self.read_samples(proxy, start, end),
+            |proxy, (start, end)| crate::epoch::read_samples(self, proxy, start, end),
         )
     }
 
@@ -242,7 +247,7 @@ impl EdfFile {
             start_sec,
             end_sec,
             use_time,
-            |proxy, (start, end)| self.read_digital_samples(proxy, start, end),
+            |proxy, (start, end)| crate::epoch::read_digital_samples(self, proxy, start, end),
         )
     }
 
@@ -277,63 +282,10 @@ impl EdfFile {
 
     /// OS read-ahead hint for the records covering a time range.
     fn advise_time_range(&self, start_sec: f64, end_sec: f64) {
-        let (first, last) = self.record_range_for_time(start_sec, end_sec);
+        let (first, last) = crate::epoch::record_range_for_time(self, start_sec, end_sec);
         if first < last {
             self.file.advise_records(first, last, Advice::WillNeed);
         }
-    }
-
-    /// Record range covering `[start_sec, end_sec)`.
-    ///
-    /// EDF+D record onsets are non-uniform, so they must be looked up rather than derived from
-    /// the record duration.
-    fn record_range_for_time(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
-        let num_records = self.num_records();
-        let dur = self.file.header.record_duration_secs;
-
-        if self.file.header.variant.is_plus_d() {
-            return self.file.with_annotations(|idx| {
-                let onsets = &idx.record_onsets;
-                if onsets.is_empty() {
-                    return (0, 0);
-                }
-                let first = onsets.partition_point(|&o| o + dur <= start_sec);
-                let last = onsets.partition_point(|&o| o < end_sec);
-                (first.min(num_records), last.min(num_records))
-            });
-        }
-
-        if dur <= 0.0 {
-            return (0, 0);
-        }
-        let first = ((start_sec.max(0.0) / dur) as usize).min(num_records);
-        let last = (((end_sec.max(0.0) / dur).ceil()) as usize).min(num_records);
-        (first, last)
-    }
-
-    fn read_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<f64>> {
-        if s_start >= proxy.len() || s_start >= s_end {
-            return Ok(Vec::new());
-        }
-        let count = s_end - s_start;
-        let mut buf = vec![0.0f64; count];
-        proxy.read_physical(s_start, s_end, &mut buf)?;
-        Ok(buf)
-    }
-
-    fn read_digital_samples(
-        &self,
-        proxy: &SignalProxy,
-        s_start: usize,
-        s_end: usize,
-    ) -> Result<Vec<i32>> {
-        if s_start >= proxy.len() || s_start >= s_end {
-            return Ok(Vec::new());
-        }
-        let count = s_end - s_start;
-        let mut buf = vec![0i32; count];
-        proxy.read_digital(s_start, s_end, &mut buf)?;
-        Ok(buf)
     }
 
     /// Build a 3D proxy from a `Rectangular` `SignalGroup`.
