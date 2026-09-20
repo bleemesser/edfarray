@@ -17,6 +17,7 @@ AIO_STUB = Path(edfarray.__file__).parent / "aio" / "__init__.pyi"
 
 EXPECTED_EXPORTS = {
     "EdfFile",
+    "Epochs",
     "Signal",
     "Annotation",
     "Proxy2D",

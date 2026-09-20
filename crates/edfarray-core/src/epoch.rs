@@ -249,31 +249,33 @@ pub fn extract_epochs(
     let edge = matches!(pad, EpochPad::Fill(PadMode::Edge));
 
     // Each task owns one row block (disjoint mutable slice), so the parallel closure never
-    // shares `data`.
-    data.chunks_mut(row_size)
-        .zip(kept.iter())
-        .par_bridge()
-        .map(|(block, &wi)| -> Result<()> {
-            let w = windows[wi];
-            let decoded = w.decoded();
-            let dest = w.dest.min(n.saturating_sub(decoded));
-            for (c, &idx) in group.indices().iter().enumerate() {
-                let proxy = SignalProxy::new(file.file().clone(), idx)?;
-                let row = &mut block[c * n..(c + 1) * n];
-                if decoded > 0 {
-                    proxy.read_physical(w.s_start, w.s_end, &mut row[dest..dest + decoded])?;
+    // shares `data`. Nothing to fill when no rows survived or the row width collapsed to zero.
+    if row_size > 0 {
+        data.chunks_mut(row_size)
+            .zip(kept.iter())
+            .par_bridge()
+            .map(|(block, &wi)| -> Result<()> {
+                let w = windows[wi];
+                let decoded = w.decoded();
+                let dest = w.dest.min(n.saturating_sub(decoded));
+                for (c, &idx) in group.indices().iter().enumerate() {
+                    let proxy = SignalProxy::new(file.file().clone(), idx)?;
+                    let row = &mut block[c * n..(c + 1) * n];
+                    if decoded > 0 {
+                        proxy.read_physical(w.s_start, w.s_end, &mut row[dest..dest + decoded])?;
+                    }
+                    if valid[wi] || !edge || decoded == 0 {
+                        continue;
+                    }
+                    let first = row[dest];
+                    let last = row[dest + decoded - 1];
+                    row[..dest].fill(first);
+                    row[dest + decoded..].fill(last);
                 }
-                if valid[wi] || !edge || decoded == 0 {
-                    continue;
-                }
-                let first = row[dest];
-                let last = row[dest + decoded - 1];
-                row[..dest].fill(first);
-                row[dest + decoded..].fill(last);
-            }
-            Ok(())
-        })
-        .collect::<Result<Vec<()>>>()?;
+                Ok(())
+            })
+            .collect::<Result<Vec<()>>>()?;
+    }
 
     Ok((data, flags, dropped))
 }

@@ -233,6 +233,12 @@ impl PyAsyncEdfFile {
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
+    /// Named alias of `filter_annotations`, mirroring the sync API. See `EdfFile.events`.
+    #[pyo3(signature = (query, regex=false))]
+    fn events(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
+        self.filter_annotations(query, regex)
+    }
+
     fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
             .get()?

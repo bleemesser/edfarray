@@ -1,6 +1,7 @@
 mod aio;
 mod annotations;
 mod edit;
+mod epoch;
 mod errors;
 mod file;
 mod group;
@@ -18,6 +19,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Before anything that can raise: to_py_err looks these up.
     errors::register(m.py(), m)?;
     m.add_class::<file::PyEdfFile>()?;
+    m.add_class::<epoch::PyEpochs>()?;
     m.add_class::<signal::PySignal>()?;
     m.add_class::<annotations::PyAnnotation>()?;
     m.add_class::<proxy_2d::PyProxy2D>()?;

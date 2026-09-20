@@ -294,6 +294,16 @@ impl PyEdfFile {
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
+    /// Annotations whose text matches `query`, as a named alias of `filter_annotations`.
+    ///
+    /// Provided so the epoch-extraction path reads clearly: `f.events("Spindle")` feeds
+    /// straight into `f.extract_epochs(...)`. Same matching rules: case-insensitive substring,
+    /// or case-insensitive regex when `regex=True`.
+    #[pyo3(signature = (query, regex=false))]
+    fn events(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
+        self.filter_annotations(query, regex)
+    }
+
     /// Annotations whose text exactly matches `text` (case-sensitive).
     pub fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
@@ -561,7 +571,117 @@ impl PyEdfFile {
         }
         Ok(arrays)
     }
+
+    /// Extract fixed windows around events as a dense `(n_epochs, n_channels, n_samples)`
+    /// block, decoded in parallel and gap-aware (EDF+D onsets are honored).
+    ///
+    /// `events` accepts floats, `Annotation`s, a mixed sequence, a numpy float64 array, or a
+    /// single value. Pass `events=None` together with `query` to extract around annotation
+    /// text (same matching as `filter_annotations`).
+    ///
+    /// `group` selects channels: a `SignalGroup` or a sequence of signal indices. The group
+    /// must be rectangular; the default is the largest rectangular group.
+    ///
+    /// `pad` governs epochs whose window runs off the file or straddles an EDF+D gap: `"drop"`
+    /// (default) omits them, `"nan"`/`"zero"`/a number/`"edge"` keep and fill them (marked
+    /// `valid=False`), `"raise"` errors on the first offender.
+    #[pyo3(signature = (events, *, pre, post, group=None, pad=None, query=None, regex=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn extract_epochs(
+        &self,
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation] | builtins.NoneType"))]
+        events: &Bound<'_, PyAny>,
+        pre: f64,
+        post: f64,
+        group: Option<&Bound<'_, PyAny>>,
+        #[gen_stub(override_type(type_repr = "builtins.str | builtins.float | builtins.NoneType"))]
+        pad: Option<&Bound<'_, PyAny>>,
+        query: Option<&str>,
+        regex: bool,
+    ) -> PyResult<crate::epoch::PyEpochs> {
+        let inner = self.get()?;
+        if query.is_some() && !events.is_none() {
+            return Err(invalid_argument_err("pass events or query, not both"));
+        }
+        let group = crate::epoch::resolve_group(inner, group)?;
+        let events_owned = if let Some(q) = query {
+            inner
+                .filter_annotations(q, regex)
+                .map_err(to_py_err)?
+                .iter()
+                .map(|a| a.onset)
+                .collect()
+        } else {
+            crate::epoch::event_onsets(events)?
+        };
+        let pad_policy = crate::epoch::parse_epoch_pad(pad)?;
+        let (onsets, valid, data, dropped, n) = py
+            .detach(|| {
+                crate::epoch::plan_and_extract(
+                    inner,
+                    &group,
+                    &events_owned,
+                    pre,
+                    post,
+                    pad_policy,
+                )
+            })?;
+        let labels = group
+            .indices()
+            .iter()
+            .map(|&i| inner.header().signals[i].label.clone())
+            .collect();
+        let n_samples = if events_owned.is_empty() {
+            ((pre + post) * group.sample_rate().unwrap_or(0.0)).ceil() as usize
+        } else {
+            n
+        };
+        Ok(crate::epoch::PyEpochs {
+            data,
+            shape: (valid.len(), group.indices().len(), n_samples),
+            onsets,
+            labels,
+            sample_rate: group.sample_rate().unwrap_or(0.0),
+            valid,
+            dropped,
+        })
+    }
+
+    /// Planned epoch windows without reading data: `([(onset, s_start, s_end)], valid)`.
+    ///
+    /// The window table is the same one `extract_epochs` decodes, so callers can inspect or
+    /// clip what would be extracted before paying for the reads.
+    #[pyo3(signature = (events, *, pre, post, group=None))]
+    #[gen_stub(override_return_type(type_repr = "tuple[builtins.list[builtins.tuple[builtins.float, builtins.int, builtins.int]], numpy.typing.NDArray[numpy.bool_]]", imports = ("builtins", "numpy")))]
+    fn epoch_windows<'py>(
+        &self,
+        py: Python<'py>,
+        #[gen_stub(override_type(type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation]"))]
+        events: &Bound<'_, PyAny>,
+        pre: f64,
+        post: f64,
+        group: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<EpochWindows<'py>> {
+        let inner = self.get()?;
+        let group = crate::epoch::resolve_group(inner, group)?;
+        let events_owned = crate::epoch::event_onsets(events)?;
+        let (windows, flags) = py
+            .detach(|| {
+                edfarray_core::epoch::plan_epochs(inner, &group, &events_owned, pre, post)
+                    .map_err(to_py_err)
+            })?;
+        let table = windows
+            .iter()
+            .map(|w| (w.onset, w.s_start, w.s_end))
+            .collect();
+        Ok((table, numpy::PyArray1::from_iter(py, flags.iter().copied())))
+    }
 }
+
+/// Planned-window table returned by `epoch_windows`: one `(onset, s_start, s_end)` per event,
+/// plus the per-window validity mask.
+type EpochWindows<'py> = (Vec<(f64, usize, usize)>, Bound<'py, numpy::PyArray1<bool>>);
 
 /// Lightweight metadata extracted from an EDF/EDF+ file header without
 /// scanning data records or building an annotation index.
