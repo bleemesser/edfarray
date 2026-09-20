@@ -414,8 +414,8 @@ impl EdfFile {
     /// Copy this file to `path`. Override `variant` (`None` = keep current) to transcode. Rebuilds annotation channel from parsed annotations.
     ///
     /// Transcoding caveats:
-    /// - Records are streamed contiguously, so transcoding from EDF+D to any
-    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
+    ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
     ///   onsets/gaps are replaced by uniform `record_idx * record_duration`
     ///   timing.
     /// - The destination annotation channel is rebuilt from parsed annotations,
@@ -486,6 +486,16 @@ impl EdfFile {
             None
         };
 
+        // An EDF+D to EDF+D copy preserves the source record onsets, so the discontinuity
+        // survives the rewrite. Any other target flattens to uniform timing. Reading the
+        // table blocks until the source annotation scan finishes.
+        let source_onsets: Option<Vec<f64>> =
+            if self.variant().is_plus_d() && target_variant.is_plus_d() {
+                Some(self.file.with_annotations(|idx| idx.record_onsets.clone()))
+            } else {
+                None
+            };
+
         let spec = WriterSpec {
             variant: target_variant,
             patient_id: header.patient_id.clone(),
@@ -494,18 +504,26 @@ impl EdfFile {
             record_duration_secs: header.record_duration_secs,
             signals: signals_spec,
             annotation_bytes_per_record,
+            record_onsets: source_onsets.clone(),
         };
 
         let mut writer = EdfWriter::create(path, spec)?;
 
-        // Group annotations by record window.
+        // Group annotations by record window. A gapped source needs the onset table, not
+        // `floor(onset / record_dur)`: an annotation belongs to the last record whose onset
+        // is at or before it.
         let record_dur = header.record_duration_secs;
         let num_records = self.num_records();
         let mut by_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
         if target_variant.is_plus() {
+            let onset_table = source_onsets.as_deref();
             for ann in self.annotations().into_iter() {
-                let r = (ann.onset / record_dur).floor() as i64;
-                let r = r.max(0) as usize;
+                let r = match onset_table {
+                    Some(table) if !table.is_empty() => {
+                        table.partition_point(|&o| o <= ann.onset).saturating_sub(1)
+                    }
+                    _ => (ann.onset / record_dur).floor().max(0.0) as usize,
+                };
                 let r = r.min(num_records.saturating_sub(1));
                 if num_records > 0 {
                     by_record[r].push(ann);

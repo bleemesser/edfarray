@@ -111,6 +111,12 @@ pub struct WriterSpec {
     /// Minimum bytes reserved for the annotation channel per record.
     /// Ignored for plain EDF/BDF. Defaults to 120.
     pub annotation_bytes_per_record: Option<usize>,
+    /// Per-record time-keeping onsets for a `+D` target, in seconds relative to the
+    /// recording start (subsecond excluded, matching the annotation index's table).
+    /// When set, the writer emits `record_onsets[i]` as record `i`'s time-keeping TAL
+    /// onset instead of the uniform `i * record_duration`, preserving EDF+D gaps.
+    /// Requires a `+D` variant and a non-decreasing table with one entry per record.
+    pub record_onsets: Option<Vec<f64>>,
 }
 
 impl WriterSpec {
@@ -123,6 +129,7 @@ impl WriterSpec {
             record_duration_secs,
             signals: Vec::new(),
             annotation_bytes_per_record: None,
+            record_onsets: None,
         }
     }
 }
@@ -190,6 +197,21 @@ impl EdfWriter {
         } else {
             0
         };
+
+        if let Some(onsets) = &spec.record_onsets {
+            if !spec.variant.is_plus_d() {
+                return Err(EdfError::InvalidArgument {
+                    name: "record_onsets",
+                    reason: "record_onsets requires a +D variant (EDF+D or BDF+D)".to_string(),
+                });
+            }
+            if onsets.windows(2).any(|w| w[1] < w[0]) {
+                return Err(EdfError::InvalidArgument {
+                    name: "record_onsets",
+                    reason: "record onsets must be non-decreasing".to_string(),
+                });
+            }
+        }
 
         let start_subsecond = {
             let nanos = spec.start_datetime.nanosecond();
@@ -321,11 +343,25 @@ impl EdfWriter {
         combined.extend(pending_refs);
 
         if self.spec.variant.is_plus() {
+            let record_idx = self.num_records_written;
+            let record_onset = match &self.spec.record_onsets {
+                Some(onsets) => {
+                    let i = record_idx as usize;
+                    *onsets.get(i).ok_or_else(|| EdfError::InvalidArgument {
+                        name: "record_onsets",
+                        reason: format!(
+                            "record {record_idx} has no onset: the table holds {} entries",
+                            onsets.len()
+                        ),
+                    })?
+                }
+                None => record_idx as f64 * self.spec.record_duration_secs,
+            };
             write_annotation_channel(
                 &self.path,
                 writer,
-                self.num_records_written,
-                self.spec.record_duration_secs,
+                record_idx,
+                record_onset,
                 self.start_subsecond,
                 &combined,
                 self.ann_bytes_per_record,
@@ -675,14 +711,14 @@ fn write_annotation_channel<W: Write>(
     path: &Path,
     w: &mut W,
     record_idx: u64,
-    record_duration: f64,
+    record_onset: f64,
     start_subsecond: f64,
     annotations: &[&Annotation],
     byte_budget: usize,
 ) -> Result<()> {
     let mut buf = Vec::with_capacity(byte_budget);
 
-    let onset = record_idx as f64 * record_duration + start_subsecond;
+    let onset = record_onset + start_subsecond;
     buf.extend_from_slice(format_tal_onset(onset).as_bytes());
     buf.push(TAL_SEPARATOR);
     buf.push(TAL_SEPARATOR);
@@ -797,6 +833,7 @@ mod tests {
                 "EEG Fpz", "uV", -3200.0, 3200.0, -32768, 32767, 256,
             )],
             annotation_bytes_per_record: None,
+            record_onsets: None,
         }
     }
 
@@ -991,5 +1028,123 @@ mod tests {
         }];
         let err = write_edf(&path, spec, &[&data], &anns).unwrap_err();
         assert!(matches!(err, EdfError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn record_onsets_rejected_on_non_plus_d() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusC);
+        spec.record_onsets = Some(vec![0.0, 1.0]);
+        let err = match EdfWriter::create(&path, spec) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "record_onsets",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn record_onsets_must_be_nondecreasing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusD);
+        spec.record_onsets = Some(vec![0.0, 5.0, 3.0]);
+        let err = match EdfWriter::create(&path, spec) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "record_onsets",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn write_edf_plus_d_preserves_record_onsets() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("gap.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusD);
+        spec.record_duration_secs = 1.0;
+        spec.signals[0].samples_per_record = 10;
+        spec.record_onsets = Some(vec![0.0, 1.0, 3.0, 6.0]);
+        let data: Vec<f64> = (0..40).map(|i| i as f64).collect();
+        let anns = vec![Annotation {
+            onset: 3.5,
+            duration: None,
+            text: "gap-event".into(),
+        }];
+        write_edf(&path, spec, &[&data], &anns).unwrap();
+
+        let f = EdfFile::open(&path).unwrap();
+        f.wait_for_annotations();
+        let sig = f.signal(0).unwrap();
+        for (r, &want) in [0.0f64, 1.0, 3.0, 6.0].iter().enumerate() {
+            assert!(
+                (sig.sample_time(r * 10) - want).abs() < 1e-9,
+                "record {r}: got {} want {want}",
+                sig.sample_time(r * 10)
+            );
+        }
+        let got = f.annotations();
+        assert_eq!(got.len(), 1);
+        assert!((got[0].onset - 3.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn write_to_preserves_edf_plus_d_onsets() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.edf");
+        let dst = dir.path().join("dst.edf");
+        let flat = dir.path().join("flat.edf");
+
+        let mut spec = sample_spec(EdfVariant::EdfPlusD);
+        spec.record_duration_secs = 1.0;
+        spec.signals[0].samples_per_record = 10;
+        spec.record_onsets = Some(vec![0.0, 1.0, 3.0, 6.0]);
+        let data: Vec<f64> = (0..40).map(|i| i as f64).collect();
+        let anns = vec![Annotation {
+            onset: 3.5,
+            duration: None,
+            text: "gap-event".into(),
+        }];
+        write_edf(&src, spec, &[&data], &anns).unwrap();
+
+        let f = EdfFile::open(&src).unwrap();
+        f.wait_for_annotations();
+        let src_sig = f.signal(0).unwrap();
+
+        f.write_to(&dst, None).unwrap();
+        let g = EdfFile::open(&dst).unwrap();
+        g.wait_for_annotations();
+        assert_eq!(g.variant(), EdfVariant::EdfPlusD);
+        let dst_sig = g.signal(0).unwrap();
+        for r in 0..4 {
+            assert!(
+                (dst_sig.sample_time(r * 10) - src_sig.sample_time(r * 10)).abs() < 1e-9,
+                "record {r} onset drifted in the +D copy"
+            );
+        }
+        let got = g.annotations();
+        assert_eq!(got.len(), 1);
+        assert!((got[0].onset - 3.5).abs() < 1e-6);
+
+        f.write_to(&flat, Some(EdfVariant::EdfPlusC)).unwrap();
+        let h = EdfFile::open(&flat).unwrap();
+        let h_sig = h.signal(0).unwrap();
+        for r in 0..4 {
+            assert!(
+                (h_sig.sample_time(r * 10) - r as f64).abs() < 1e-9,
+                "non-+D target must flatten record {r}"
+            );
+        }
     }
 }

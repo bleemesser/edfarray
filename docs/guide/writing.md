@@ -94,9 +94,9 @@ source variant is kept.
     Records are re-emitted contiguously, so transcoding changes more than the
     header tag:
 
-    - **EDF+D -> any non-EDF+D variant** discards the discontinuity. The
-      original per-record onsets/gaps are replaced by uniform
-      `record_idx * record_duration` timing.
+    - **EDF+D -> EDF+D** preserves the source record onsets, so gaps survive the
+      copy. **EDF+D -> any non-`+D` variant** flattens timing: the per-record
+      onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
     - **Any `+` variant -> a plain (non-`+`) variant** drops all annotations,
       because plain EDF/BDF has no annotation channel.
     - **Downconverting sample size** (e.g. BDF 24-bit -> EDF 16-bit) clamps the

@@ -191,6 +191,39 @@ def test_write_to_inherits_large_annotation_channel(tmp_path: Path):
         assert ann.onset == pytest.approx(i + 0.5)
 
 
+def test_write_to_preserves_edf_plus_d_gaps(tmp_path: Path):
+    src = tmp_path / "gap.edf"
+    dst = tmp_path / "copy.edf"
+    flat = tmp_path / "flat.edf"
+    from edfbuilder import build_edf_plus
+
+    onsets = [0.0, 1.0, 3.0, 6.0]
+    build_edf_plus(
+        str(src),
+        record_onsets=onsets,
+        annotations=[(2, 3.5, "gap-event", 0)],
+        variant="EDF+D",
+    )
+    f = edfarray.EdfFile(str(src))
+    src_times = f.signal(0).times()
+
+    f.write_to(str(dst))
+    g = edfarray.EdfFile(str(dst))
+    assert g.variant == "EDF+D"
+    np.testing.assert_allclose(g.signal(0).times(), src_times, atol=1e-9)
+    anns = list(g.annotations)
+    assert len(anns) == 1
+    assert anns[0].onset == pytest.approx(3.5)
+
+    # A non-+D target flattens timing: onsets become record_idx * record_duration, so the
+    # gap vanishes and sample times run contiguously from 0.
+    f.write_to(str(flat), variant="EDF+C")
+    h = edfarray.EdfFile(str(flat))
+    flat_times = h.signal(0).times()
+    rate = len(flat_times) / (h.num_records * h.record_duration)
+    np.testing.assert_allclose(flat_times, np.arange(len(flat_times)) / rate, atol=1e-9)
+
+
 def test_write_with_patient_recording_ids(tmp_path: Path):
     p = tmp_path / "meta.edf"
     sig = _signal()

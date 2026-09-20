@@ -402,8 +402,8 @@ impl PyAsyncEdfFile {
     /// Write to `path`, optionally transcoding to a different variant.
     ///
     /// Transcoding caveats:
-    /// - Records are streamed contiguously, so transcoding from EDF+D to any
-    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
+    ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
     ///   onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
     /// - Because the annotation channel is rebuilt from parsed annotations,
     ///   transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
