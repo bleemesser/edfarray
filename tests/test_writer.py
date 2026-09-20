@@ -224,6 +224,38 @@ def test_write_to_preserves_edf_plus_d_gaps(tmp_path: Path):
     np.testing.assert_allclose(flat_times, np.arange(len(flat_times)) / rate, atol=1e-9)
 
 
+def test_writer_rejects_non_finite_values(tmp_path: Path):
+    p = tmp_path / "nan.edf"
+    sig = _signal(samples_per_record=8)
+
+    data = np.zeros(8)
+    data[3] = np.nan
+    with pytest.raises(edfarray.InvalidArgumentError) as ei:
+        edfarray.write_edf(
+            str(p), variant="EDF", record_duration=1.0, signals=[sig], data=[data]
+        )
+    msg = str(ei.value)
+    assert "signal 0" in msg and "sample 3" in msg and "NaN" in msg
+
+    for bad in (np.inf, -np.inf):
+        d = np.zeros(8)
+        d[5] = bad
+        with pytest.raises(edfarray.InvalidArgumentError):
+            edfarray.write_edf(
+                str(p), variant="EDF", record_duration=1.0, signals=[sig], data=[d]
+            )
+
+
+def test_writer_rejects_non_finite_incremental(tmp_path: Path):
+    p = tmp_path / "nan_stream.edf"
+    sig = _signal(samples_per_record=8)
+    w = edfarray.EdfWriter(str(p), variant="EDF", record_duration=1.0, signals=[sig])
+    data = np.zeros(8)
+    data[7] = np.nan
+    with pytest.raises(edfarray.InvalidArgumentError):
+        w.write_record([data])
+
+
 def test_write_with_patient_recording_ids(tmp_path: Path):
     p = tmp_path / "meta.edf"
     sig = _signal()

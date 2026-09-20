@@ -301,6 +301,24 @@ impl EdfWriter {
                     ),
                 });
             }
+            // NaN casts to 0 and infinities saturate to the digital extremes, silently
+            // inventing in-band samples. Given the clinical-data context, reject instead.
+            if let Some((j, &phys)) = physical[i].iter().enumerate().find(|(_, v)| !v.is_finite())
+            {
+                let kind = if phys.is_nan() {
+                    "NaN"
+                } else if phys.is_sign_negative() {
+                    "-inf"
+                } else {
+                    "+inf"
+                };
+                return Err(EdfError::InvalidArgument {
+                    name: "data",
+                    reason: format!(
+                        "signal {i} sample {j} is {kind}; physical values must be finite"
+                    ),
+                });
+            }
         }
 
         if !self.spec.variant.is_plus()
@@ -1146,5 +1164,44 @@ mod tests {
                 "non-+D target must flatten record {r}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_non_finite_physical_values() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nan.edf");
+        let spec = sample_spec(EdfVariant::Edf);
+        let mut data = vec![0.0f64; 256];
+        data[3] = f64::NAN;
+        let err = write_edf(&path, spec.clone(), &[&data], &[]).unwrap_err();
+        match err {
+            EdfError::InvalidArgument { name, reason } => {
+                assert_eq!(name, "data");
+                assert!(reason.contains("signal 0"), "{reason}");
+                assert!(reason.contains("sample 3"), "{reason}");
+                assert!(reason.contains("NaN"), "{reason}");
+            }
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+
+        // +inf and -inf are rejected too, and the record is never emitted.
+        for bad in [f64::INFINITY, f64::NEG_INFINITY] {
+            let mut d = vec![0.0f64; 256];
+            d[5] = bad;
+            let err = write_edf(path.clone(), spec.clone(), &[&d], &[]).unwrap_err();
+            assert!(matches!(err, EdfError::InvalidArgument { .. }));
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_on_incremental_write() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nan_stream.edf");
+        let spec = sample_spec(EdfVariant::Edf);
+        let mut w = EdfWriter::create(&path, spec).unwrap();
+        let mut chunk = vec![0.0f64; 256];
+        chunk[7] = f64::NAN;
+        let err = w.write_record_physical(&[&chunk]).unwrap_err();
+        assert!(matches!(err, EdfError::InvalidArgument { .. }));
     }
 }
