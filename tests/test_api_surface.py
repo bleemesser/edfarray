@@ -116,6 +116,13 @@ def test_async_file_mirrors_sync_metadata():
     assert not missing_sync, f"missing on EdfFile: {sorted(missing_sync)}"
 
 
+def test_epoch_methods_present_in_both_apis():
+    # Epoch extraction is async-offloaded on the aio side but must exist on both.
+    for name in ("extract_epochs", "epoch_windows", "events"):
+        assert hasattr(edfarray.EdfFile, name), f"missing on EdfFile: {name}"
+        assert hasattr(aio.EdfFile, name), f"missing on aio.EdfFile: {name}"
+
+
 def test_signal_read_methods_match_between_apis():
     shared = {"to_physical", "to_digital", "times", "read_time_range"}
     assert shared <= set(dir(edfarray.Signal))
