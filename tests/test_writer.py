@@ -166,6 +166,96 @@ def test_edffile_write_to(tmp_path: Path):
     assert [a.text for a in g.annotations] == ["mid"]
 
 
+def test_write_to_inherits_large_annotation_channel(tmp_path: Path):
+    src = tmp_path / "wide.edf"
+    dst = tmp_path / "copy.edf"
+    from edfbuilder import build_edf_plus
+
+    text = "N" * 200
+    anns = [(r, r + 0.5, text, 0) for r in range(4)]
+    build_edf_plus(
+        str(src),
+        record_onsets=[0.0, 1.0, 2.0, 3.0],
+        annotations=anns,
+        variant="EDF+C",
+        annotation_bytes=512,
+    )
+    f = edfarray.EdfFile(str(src))
+    assert len(f.annotations) == 4
+    f.write_to(str(dst))
+    g = edfarray.EdfFile(str(dst))
+    got = list(g.annotations)
+    assert len(got) == 4
+    for i, ann in enumerate(got):
+        assert ann.text == text
+        assert ann.onset == pytest.approx(i + 0.5)
+
+
+def test_write_to_preserves_edf_plus_d_gaps(tmp_path: Path):
+    src = tmp_path / "gap.edf"
+    dst = tmp_path / "copy.edf"
+    flat = tmp_path / "flat.edf"
+    from edfbuilder import build_edf_plus
+
+    onsets = [0.0, 1.0, 3.0, 6.0]
+    build_edf_plus(
+        str(src),
+        record_onsets=onsets,
+        annotations=[(2, 3.5, "gap-event", 0)],
+        variant="EDF+D",
+    )
+    f = edfarray.EdfFile(str(src))
+    src_times = f.signal(0).times()
+
+    f.write_to(str(dst))
+    g = edfarray.EdfFile(str(dst))
+    assert g.variant == "EDF+D"
+    np.testing.assert_allclose(g.signal(0).times(), src_times, atol=1e-9)
+    anns = list(g.annotations)
+    assert len(anns) == 1
+    assert anns[0].onset == pytest.approx(3.5)
+
+    # A non-+D target flattens timing: onsets become record_idx * record_duration, so the
+    # gap vanishes and sample times run contiguously from 0.
+    f.write_to(str(flat), variant="EDF+C")
+    h = edfarray.EdfFile(str(flat))
+    flat_times = h.signal(0).times()
+    rate = len(flat_times) / (h.num_records * h.record_duration)
+    np.testing.assert_allclose(flat_times, np.arange(len(flat_times)) / rate, atol=1e-9)
+
+
+def test_writer_rejects_non_finite_values(tmp_path: Path):
+    p = tmp_path / "nan.edf"
+    sig = _signal(samples_per_record=8)
+
+    data = np.zeros(8)
+    data[3] = np.nan
+    with pytest.raises(edfarray.InvalidArgumentError) as ei:
+        edfarray.write_edf(
+            str(p), variant="EDF", record_duration=1.0, signals=[sig], data=[data]
+        )
+    msg = str(ei.value)
+    assert "signal 0" in msg and "sample 3" in msg and "NaN" in msg
+
+    for bad in (np.inf, -np.inf):
+        d = np.zeros(8)
+        d[5] = bad
+        with pytest.raises(edfarray.InvalidArgumentError):
+            edfarray.write_edf(
+                str(p), variant="EDF", record_duration=1.0, signals=[sig], data=[d]
+            )
+
+
+def test_writer_rejects_non_finite_incremental(tmp_path: Path):
+    p = tmp_path / "nan_stream.edf"
+    sig = _signal(samples_per_record=8)
+    w = edfarray.EdfWriter(str(p), variant="EDF", record_duration=1.0, signals=[sig])
+    data = np.zeros(8)
+    data[7] = np.nan
+    with pytest.raises(edfarray.InvalidArgumentError):
+        w.write_record([data])
+
+
 def test_write_with_patient_recording_ids(tmp_path: Path):
     p = tmp_path / "meta.edf"
     sig = _signal()

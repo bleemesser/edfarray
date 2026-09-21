@@ -55,6 +55,11 @@ impl EdfFile {
         &self.file.header
     }
 
+    /// The shared mapped file. Exposed for the epoch module's onset-table and proxy reuse.
+    pub(crate) fn file(&self) -> &Arc<MappedFile> {
+        &self.file
+    }
+
     /// File variant: EDF, EDF+C, or EDF+D.
     pub fn variant(&self) -> EdfVariant {
         self.file.header.variant
@@ -225,7 +230,7 @@ impl EdfFile {
             start_sec,
             end_sec,
             use_time,
-            |proxy, (start, end)| self.read_samples(proxy, start, end),
+            |proxy, (start, end)| crate::epoch::read_samples(proxy, start, end),
         )
     }
 
@@ -242,7 +247,7 @@ impl EdfFile {
             start_sec,
             end_sec,
             use_time,
-            |proxy, (start, end)| self.read_digital_samples(proxy, start, end),
+            |proxy, (start, end)| crate::epoch::read_digital_samples(proxy, start, end),
         )
     }
 
@@ -277,63 +282,10 @@ impl EdfFile {
 
     /// OS read-ahead hint for the records covering a time range.
     fn advise_time_range(&self, start_sec: f64, end_sec: f64) {
-        let (first, last) = self.record_range_for_time(start_sec, end_sec);
+        let (first, last) = crate::epoch::record_range_for_time(self, start_sec, end_sec);
         if first < last {
             self.file.advise_records(first, last, Advice::WillNeed);
         }
-    }
-
-    /// Record range covering `[start_sec, end_sec)`.
-    ///
-    /// EDF+D record onsets are non-uniform, so they must be looked up rather than derived from
-    /// the record duration.
-    fn record_range_for_time(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
-        let num_records = self.num_records();
-        let dur = self.file.header.record_duration_secs;
-
-        if self.file.header.variant.is_plus_d() {
-            return self.file.with_annotations(|idx| {
-                let onsets = &idx.record_onsets;
-                if onsets.is_empty() {
-                    return (0, 0);
-                }
-                let first = onsets.partition_point(|&o| o + dur <= start_sec);
-                let last = onsets.partition_point(|&o| o < end_sec);
-                (first.min(num_records), last.min(num_records))
-            });
-        }
-
-        if dur <= 0.0 {
-            return (0, 0);
-        }
-        let first = ((start_sec.max(0.0) / dur) as usize).min(num_records);
-        let last = (((end_sec.max(0.0) / dur).ceil()) as usize).min(num_records);
-        (first, last)
-    }
-
-    fn read_samples(&self, proxy: &SignalProxy, s_start: usize, s_end: usize) -> Result<Vec<f64>> {
-        if s_start >= proxy.len() || s_start >= s_end {
-            return Ok(Vec::new());
-        }
-        let count = s_end - s_start;
-        let mut buf = vec![0.0f64; count];
-        proxy.read_physical(s_start, s_end, &mut buf)?;
-        Ok(buf)
-    }
-
-    fn read_digital_samples(
-        &self,
-        proxy: &SignalProxy,
-        s_start: usize,
-        s_end: usize,
-    ) -> Result<Vec<i32>> {
-        if s_start >= proxy.len() || s_start >= s_end {
-            return Ok(Vec::new());
-        }
-        let count = s_end - s_start;
-        let mut buf = vec![0i32; count];
-        proxy.read_digital(s_start, s_end, &mut buf)?;
-        Ok(buf)
     }
 
     /// Build a 3D proxy from a `Rectangular` `SignalGroup`.
@@ -414,8 +366,8 @@ impl EdfFile {
     /// Copy this file to `path`. Override `variant` (`None` = keep current) to transcode. Rebuilds annotation channel from parsed annotations.
     ///
     /// Transcoding caveats:
-    /// - Records are streamed contiguously, so transcoding from EDF+D to any
-    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
+    ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
     ///   onsets/gaps are replaced by uniform `record_idx * record_duration`
     ///   timing.
     /// - The destination annotation channel is rebuilt from parsed annotations,
@@ -471,6 +423,31 @@ impl EdfFile {
             });
         }
 
+        // Inherit the source annotation channel's byte budget so copying a file whose
+        // annotation channel is larger than the writer's 120-byte default does not
+        // overflow. The budget is in bytes; `EdfWriter::create` rounds it up to a
+        // multiple of the target sample size.
+        let annotation_bytes_per_record = if target_variant.is_plus() {
+            let source_sample_size = header.variant.sample_size_bytes();
+            header
+                .signals
+                .iter()
+                .find(|s| s.is_annotation)
+                .map(|s| s.num_samples * source_sample_size)
+        } else {
+            None
+        };
+
+        // An EDF+D to EDF+D copy preserves the source record onsets, so the discontinuity
+        // survives the rewrite. Any other target flattens to uniform timing. Reading the
+        // table blocks until the source annotation scan finishes.
+        let source_onsets: Option<Vec<f64>> =
+            if self.variant().is_plus_d() && target_variant.is_plus_d() {
+                Some(self.file.with_annotations(|idx| idx.record_onsets.clone()))
+            } else {
+                None
+            };
+
         let spec = WriterSpec {
             variant: target_variant,
             patient_id: header.patient_id.clone(),
@@ -478,19 +455,27 @@ impl EdfFile {
             start_datetime,
             record_duration_secs: header.record_duration_secs,
             signals: signals_spec,
-            annotation_bytes_per_record: None,
+            annotation_bytes_per_record,
+            record_onsets: source_onsets.clone(),
         };
 
         let mut writer = EdfWriter::create(path, spec)?;
 
-        // Group annotations by record window.
+        // Group annotations by record window. A gapped source needs the onset table, not
+        // `floor(onset / record_dur)`: an annotation belongs to the last record whose onset
+        // is at or before it.
         let record_dur = header.record_duration_secs;
         let num_records = self.num_records();
         let mut by_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
         if target_variant.is_plus() {
+            let onset_table = source_onsets.as_deref();
             for ann in self.annotations().into_iter() {
-                let r = (ann.onset / record_dur).floor() as i64;
-                let r = r.max(0) as usize;
+                let r = match onset_table {
+                    Some(table) if !table.is_empty() => {
+                        table.partition_point(|&o| o <= ann.onset).saturating_sub(1)
+                    }
+                    _ => (ann.onset / record_dur).floor().max(0.0) as usize,
+                };
                 let r = r.min(num_records.saturating_sub(1));
                 if num_records > 0 {
                     by_record[r].push(ann);

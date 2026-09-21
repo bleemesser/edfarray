@@ -26,7 +26,10 @@ asyncio_mode = "auto"
 dev = [
     "pytest>=7",
     "maturin>=1.0",
-    "pyedflib>=0.1.42",
     "mkdocs-material>=9.7.5",
     "pytest-asyncio>=0.23",
 ]
+# pyedflib builds from source and needs the Python development headers. It is only
+# used by the benchmarks and by scripts/generate_references.py, so it stays out of
+# the default sync.
+bench = ["pyedflib>=0.1.42"]

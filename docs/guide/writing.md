@@ -94,9 +94,9 @@ source variant is kept.
     Records are re-emitted contiguously, so transcoding changes more than the
     header tag:
 
-    - **EDF+D -> any non-EDF+D variant** discards the discontinuity. The
-      original per-record onsets/gaps are replaced by uniform
-      `record_idx * record_duration` timing.
+    - **EDF+D -> EDF+D** preserves the source record onsets, so gaps survive the
+      copy. **EDF+D -> any non-`+D` variant** flattens timing: the per-record
+      onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
     - **Any `+` variant -> a plain (non-`+`) variant** drops all annotations,
       because plain EDF/BDF has no annotation channel.
     - **Downconverting sample size** (e.g. BDF 24-bit -> EDF 16-bit) clamps the
@@ -152,3 +152,23 @@ The writer rejects:
 - Annotations on plain `EDF`/`BDF` (use a `+C`/`+D` variant)
 - Mismatched data lengths or `samples_per_record` not dividing the data
 - Annotation channel overflow (increase `annotation_bytes_per_record`)
+- Non-finite physical values: `NaN`, `+inf`, or `-inf` raise `InvalidArgumentError`,
+  naming the signal and sample position. Clinical data is never silently coerced.
+
+Finite values outside the signal's physical range are not rejected: they clamp to the
+digital extremes (`digital_min` / `digital_max`) on write, exactly as the EDF format
+requires. So out-of-range input is clamped, while `NaN`/`Inf` is refused -- the former
+is a legal saturation, the latter carries no value to saturate to.
+
+## Editing existing files
+
+edfarray writes files; it does not edit them in place, with one narrow exception. The
+only in-place edits are the identity header fields -- patient id, recording id, and start
+datetime -- through [`edit_header`](anonymization.md) and [`anonymize`](anonymization.md),
+plus the [`audit`](anonymization.md) leak checker. These rewrite only the fixed header
+block and never touch data records.
+
+Everything else -- annotations, channel labels, other header fields, and sample data --
+requires a full rewrite via `write_to` or `write_edf`. There is no API to mutate a
+single record or annotation in an existing file.
+

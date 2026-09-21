@@ -250,6 +250,7 @@ pub(crate) fn build_spec(
         record_duration_secs: record_duration,
         signals,
         annotation_bytes_per_record,
+        record_onsets: None,
     })
 }
 

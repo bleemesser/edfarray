@@ -8,7 +8,7 @@ import datetime
 import numpy as np
 import numpy.typing as npt
 
-from edfarray._core import Annotation, Proxy2D, Proxy3D, SignalGroup, WriterSignal
+from edfarray._core import Annotation, Epochs, Proxy2D, Proxy3D, SignalGroup, WriterSignal
 
 
 class EdfFile:
@@ -61,6 +61,7 @@ class EdfFile:
     def annotations_after(self, t: float) -> list[Annotation]: ...
     def annotations_in_range(self, start: float, end: float) -> list[Annotation]: ...
     def filter_annotations(self, query: str, regex: bool = False) -> list[Annotation]: ...
+    def events(self, query: str, regex: bool = False) -> list[Annotation]: ...
     def annotations_by_text(self, text: str) -> list[Annotation]: ...
     def find_all_signals(self, label: str, exact: bool = False) -> list[int]: ...
     def proxy_2d(self, group: SignalGroup, pad_mode: Any | None = None) -> Proxy2D: ...
@@ -86,6 +87,35 @@ class EdfFile:
         signal_indices: list[int] | None = None,
         use_time: bool = False,
     ) -> Awaitable[list[npt.NDArray[np.int32]]]: ...
+    def extract_epochs(
+        self,
+        events: float | list[float] | Annotation | list[Annotation] | None,
+        *,
+        pre: float,
+        post: float,
+        group: Any | None = None,
+        pad: str | float | None = None,
+        query: str | None = None,
+        regex: bool = False,
+    ) -> Awaitable[Epochs]:
+        r"""
+        Extract a rectangular epoch array, offloaded to a blocking task.
+
+        Same semantics as the synchronous `EdfFile.extract_epochs`.
+        """
+        ...
+    def epoch_windows(
+        self,
+        events: float | list[float] | Annotation | list[Annotation],
+        *,
+        pre: float,
+        post: float,
+        group: Any | None = None,
+    ) -> Awaitable[tuple[list[tuple[float, int, int]], npt.NDArray[np.bool_]]]:
+        r"""
+        Planned epoch windows without reading data. See `EdfFile.epoch_windows`.
+        """
+        ...
     def signal(self, idx_or_label: int | str, cache_capacity: int = 0) -> Signal:
         r"""
         Get a signal by index or label.

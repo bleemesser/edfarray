@@ -777,6 +777,7 @@ mod tests {
                 64,
             )],
             annotation_bytes_per_record: None,
+            record_onsets: None,
         };
         let data: Vec<f64> = (0..256).map(|i| (i as f64) * 0.25 - 30.0).collect();
         let anns = vec![Annotation {
@@ -1077,6 +1078,7 @@ mod tests {
                 "EEG Fpz", "uV", -3200.0, 3200.0, -32768, 32767, 32,
             )],
             annotation_bytes_per_record: None,
+            record_onsets: None,
         };
         write_edf(&path, spec, &[&vec![0.0f64; 64]], &[]).unwrap();
 
@@ -1147,6 +1149,7 @@ mod tests {
                     "EEG Fpz", "uV", -3200.0, 3200.0, -32768, 32767, 32,
                 )],
                 annotation_bytes_per_record: None,
+                record_onsets: None,
             };
             write_edf(path, spec, &[&vec![0.0f64; 64]], &[]).unwrap();
         }

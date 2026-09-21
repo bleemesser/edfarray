@@ -17,6 +17,7 @@ AIO_STUB = Path(edfarray.__file__).parent / "aio" / "__init__.pyi"
 
 EXPECTED_EXPORTS = {
     "EdfFile",
+    "Epochs",
     "Signal",
     "Annotation",
     "Proxy2D",
@@ -113,6 +114,13 @@ def test_async_file_mirrors_sync_metadata():
     missing_sync = shared - set(dir(edfarray.EdfFile))
     assert not missing_async, f"missing on aio.EdfFile: {sorted(missing_async)}"
     assert not missing_sync, f"missing on EdfFile: {sorted(missing_sync)}"
+
+
+def test_epoch_methods_present_in_both_apis():
+    # Epoch extraction is async-offloaded on the aio side but must exist on both.
+    for name in ("extract_epochs", "epoch_windows", "events"):
+        assert hasattr(edfarray.EdfFile, name), f"missing on EdfFile: {name}"
+        assert hasattr(aio.EdfFile, name), f"missing on aio.EdfFile: {name}"
 
 
 def test_signal_read_methods_match_between_apis():

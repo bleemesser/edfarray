@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::error::{EdfError, Result};
+use crate::grid::first_sample_at_or_after;
 use crate::mmap::MappedFile;
 use crate::signal::SignalHeader;
 
@@ -333,20 +334,16 @@ impl SignalProxy {
 
     /// Sample range covering `[start_sec, end_sec)` for a uniformly timed recording.
     ///
-    /// Half-open and ceil-rounded at both ends, matching the EDF+D path in
-    /// `MappedFile::sample_range_for_time` so both variants return the same count.
+    /// Half-open, with both ends resolved by `first_sample_at_or_after`, matching the EDF+D
+    /// path in `MappedFile::sample_range_for_time` so both variants return the same count.
     pub fn uniform_sample_range(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
         let sr = self.sample_rate();
         if sr <= 0.0 || !sr.is_finite() {
             return (0, 0);
         }
         let to_index = |t: f64| -> usize {
-            let idx = (t.max(0.0) * sr).ceil();
-            if idx >= self.total_samples as f64 {
-                self.total_samples
-            } else {
-                idx as usize
-            }
+            let idx = first_sample_at_or_after(t.max(0.0) * sr).max(0) as u64;
+            usize::try_from(idx).map_or(self.total_samples, |i| i.min(self.total_samples))
         };
         (to_index(start_sec), to_index(end_sec))
     }

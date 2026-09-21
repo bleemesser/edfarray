@@ -233,6 +233,12 @@ impl PyAsyncEdfFile {
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
+    /// Named alias of `filter_annotations`, mirroring the sync API. See `EdfFile.events`.
+    #[pyo3(signature = (query, regex=false))]
+    fn events(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
+        self.filter_annotations(query, regex)
+    }
+
     fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
             .get()?
@@ -399,11 +405,105 @@ impl PyAsyncEdfFile {
         })
     }
 
+    /// Extract epochs as the sync API, offloaded to a blocking task. See `EdfFile.extract_epochs`.
+    #[pyo3(signature = (events, *, pre, post, group=None, pad=None, query=None, regex=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn extract_epochs<'py>(
+        &self,
+        py: Python<'py>,
+        events: &Bound<'_, PyAny>,
+        pre: f64,
+        post: f64,
+        group: Option<&Bound<'_, PyAny>>,
+        pad: Option<&Bound<'_, PyAny>>,
+        query: Option<&str>,
+        regex: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.get()?.clone();
+        if query.is_some() && !events.is_none() {
+            return Err(invalid_argument_err("pass events or query, not both"));
+        }
+        let group = crate::epoch::resolve_group(&inner, group)?;
+        let events_owned = if let Some(q) = query {
+            inner
+                .filter_annotations(q, regex)
+                .map_err(to_py_err)?
+                .iter()
+                .map(|a| a.onset)
+                .collect()
+        } else {
+            crate::epoch::event_onsets(events)?
+        };
+        let pad_policy = crate::epoch::parse_epoch_pad(pad)?;
+        let nchan = group.indices().len();
+        let labels: Vec<String> = group
+            .indices()
+            .iter()
+            .map(|&i| inner.header().signals[i].label.clone())
+            .collect();
+        let sample_rate = group.sample_rate().unwrap_or(0.0);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let (onsets, valid, data, dropped, n) = tokio::task::spawn_blocking(move || {
+                crate::epoch::plan_and_extract(&inner, &group, &events_owned, pre, post, pad_policy)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
+            Ok(crate::epoch::PyEpochs {
+                data,
+                shape: (valid.len(), nchan, n),
+                onsets,
+                labels,
+                sample_rate,
+                valid,
+                dropped,
+            })
+        })
+    }
+
+    /// Planned epoch windows without reading data, as the sync API. See `EdfFile.epoch_windows`.
+    #[pyo3(signature = (events, *, pre, post, group=None))]
+    fn epoch_windows<'py>(
+        &self,
+        py: Python<'py>,
+        events: &Bound<'_, PyAny>,
+        pre: f64,
+        post: f64,
+        group: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.get()?.clone();
+        let group = crate::epoch::resolve_group(&inner, group)?;
+        let events_owned = crate::epoch::event_onsets(events)?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let plan = tokio::task::spawn_blocking(move || {
+                edfarray_core::epoch::plan_epochs(&inner, &group, &events_owned, pre, post)
+                    .map_err(to_py_err)
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))??;
+            Python::attach(|py| -> PyResult<Py<PyAny>> {
+                let table: Vec<Py<PyAny>> = plan
+                    .windows
+                    .iter()
+                    .map(|w| {
+                        (w.onset, w.s_start, w.s_end)
+                            .into_pyobject(py)
+                            .map(|t| t.into_any().unbind())
+                    })
+                    .collect::<PyResult<_>>()?;
+                let list = pyo3::types::PyList::new(py, table)?.unbind();
+                let valid = numpy::PyArray1::from_iter(py, plan.valid.iter().copied()).unbind();
+                (list, valid)
+                    .into_pyobject(py)
+                    .map(|t| t.into_any().unbind())
+            })
+        })
+    }
+
     /// Write to `path`, optionally transcoding to a different variant.
     ///
     /// Transcoding caveats:
-    /// - Records are streamed contiguously, so transcoding from EDF+D to any
-    ///   non-EDF+D variant discards the discontinuity: the original per-record
+    /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
+    ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
     ///   onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
     /// - Because the annotation channel is rebuilt from parsed annotations,
     ///   transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,

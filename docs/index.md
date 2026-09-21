@@ -27,6 +27,7 @@ with edfarray.EdfFile("recording.edf") as f:
 - Async annotation scan. Files open instantly; the annotation index builds in a background thread.
 - 2D array proxy. `proxy[0:5, 1000:2000]` gives a numpy array across multiple channels.
 - Multi-channel page read acceleration.
+- Parallel event-locked epoch extraction into a dense numpy array, gap-aware for EDF+D.
 - Full EDF+D support, including discontinuous recordings with time gaps.
 - Lenient parsing. Malformed annotations and anonymized dates produce warnings, not errors.
 - Subsecond precision from time-keeping annotations applied automatically.
@@ -39,9 +40,11 @@ with edfarray.EdfFile("recording.edf") as f:
 - [Getting Started](guide/getting-started.md) -- open a file, read signals
 - [Working with Signals](guide/signals.md) -- indexing, slicing, physical vs digital
 - [Annotations & Time](guide/annotations.md) -- EDF+ annotations, discontinuous recordings
+- [Epoch Extraction](guide/epochs.md) -- event-locked windows into a numpy array
 - [Performance](guide/performance.md) -- bulk reads, architecture
 - [Writing Files](guide/writing.md) -- create EDF/BDF files from scratch
 - [Anonymization](guide/anonymization.md) -- scrub identifiers, audit for leaks
+- [Async API](guide/async.md) -- non-blocking reads and background annotation scan
 
 ## Reference
 

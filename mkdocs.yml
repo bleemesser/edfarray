@@ -35,6 +35,7 @@ nav:
     - Getting Started: guide/getting-started.md
     - Working with Signals: guide/signals.md
     - Annotations & Time: guide/annotations.md
+    - Epoch Extraction: guide/epochs.md
     - Performance: guide/performance.md
     - Writing Files: guide/writing.md
     - Anonymization: guide/anonymization.md
