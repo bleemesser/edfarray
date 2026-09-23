@@ -315,7 +315,7 @@ class EdfFile:
         structural kind, sample-count range, and whether it covers every
         ordinary signal in the file. Sub-Hz precision is preserved.
         """
-    def write_to(self, path: builtins.str, variant: typing.Optional[builtins.str] = None) -> None:
+    def write_to(self, path: builtins.str, variant: typing.Optional[builtins.str] = None, signals: SignalGroup | builtins.int | builtins.str | typing.Sequence[builtins.int | builtins.str] | builtins.NoneType = None) -> None:
         r"""
         Write this file to `path`, optionally transcoding to a different variant.
         
@@ -323,6 +323,17 @@ class EdfFile:
         channel is rebuilt from parsed annotations rather than copied verbatim.
         `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
         if omitted, uses the source variant.
+        
+        `signals` selects which ordinary channels are written: a `SignalGroup`, a
+        signal index, a label, or a sequence mixing both (labels match exactly, as
+        in `signal()`). Destination channels appear in the given order, so sets and
+        dicts are rejected. `None` (the default) writes every ordinary signal. The
+        annotation channel cannot be selected: it is always rebuilt automatically,
+        and annotations are copied in full regardless of the selection.
+        
+        Raises `EdfFileError` if `path` is open for reading, including when `path`
+        is this file. Close every `EdfFile` on that path, and drop every signal and
+        proxy taken from one, before writing to it.
         
         Transcoding caveats:
         - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
@@ -344,7 +355,7 @@ class EdfFile:
         sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
         the time range using actual record onset times.
         """
-    def extract_epochs(self, events: builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation] | builtins.NoneType, *, pre: builtins.float, post: builtins.float, group: typing.Optional[typing.Any] = None, pad: builtins.str | builtins.float | builtins.NoneType = None, query: typing.Optional[builtins.str] = None, regex: builtins.bool = ...) -> Epochs:
+    def extract_epochs(self, events: builtins.float | typing.Sequence[builtins.float] | Annotation | typing.Sequence[Annotation] | builtins.NoneType, *, pre: builtins.float, post: builtins.float, group: typing.Optional[typing.Any] = None, pad: builtins.str | builtins.float | builtins.NoneType = None, query: typing.Optional[builtins.str] = None, regex: builtins.bool = ...) -> Epochs:
         r"""
         Extract fixed windows around events as a dense `(n_epochs, n_channels, n_samples)`
         block, decoded in parallel and gap-aware (EDF+D onsets are honored).
@@ -360,7 +371,7 @@ class EdfFile:
         (default) omits them, `"nan"`/`"zero"`/a number/`"edge"` keep and fill them (marked
         `valid=False`), `"raise"` errors on the first offender.
         """
-    def epoch_windows(self, events: builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation], *, pre: builtins.float, post: builtins.float, group: typing.Optional[typing.Any] = None) -> tuple[builtins.list[builtins.tuple[builtins.float, builtins.int, builtins.int]], numpy.typing.NDArray[numpy.bool_]]:
+    def epoch_windows(self, events: builtins.float | typing.Sequence[builtins.float] | Annotation | typing.Sequence[Annotation], *, pre: builtins.float, post: builtins.float, group: typing.Optional[typing.Any] = None) -> tuple[builtins.list[builtins.tuple[builtins.float, builtins.int, builtins.int]], numpy.typing.NDArray[numpy.bool_]]:
         r"""
         Planned epoch windows without reading data: `([(onset, s_start, s_end)], valid)`.
         

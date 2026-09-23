@@ -501,6 +501,17 @@ impl PyAsyncEdfFile {
 
     /// Write to `path`, optionally transcoding to a different variant.
     ///
+    /// `signals` selects which ordinary channels are written: a `SignalGroup`, a
+    /// signal index, a label, or a sequence mixing both (labels match exactly, as
+    /// in `signal()`). Destination channels appear in the given order, so sets and
+    /// dicts are rejected. `None` (the default) writes every ordinary signal. The
+    /// annotation channel cannot be selected: it is always rebuilt automatically,
+    /// and annotations are copied in full regardless of the selection.
+    ///
+    /// Raises `EdfFileError` if `path` is open for reading, including when `path`
+    /// is this file. Close every `EdfFile` on that path, and drop every signal and
+    /// proxy taken from one, before writing to it.
+    ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
     ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
@@ -510,23 +521,28 @@ impl PyAsyncEdfFile {
     ///   since plain variants have no annotation channel.
     /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
     ///   digital range and re-encodes from physical values, losing precision.
-    #[pyo3(signature = (path, variant=None))]
+    #[pyo3(signature = (path, variant=None, signals=None))]
     fn write_to<'py>(
         &self,
         py: Python<'py>,
         path: String,
         variant: Option<String>,
+        signals: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.get()?.clone();
         let target = match variant.as_deref() {
             None => None,
             Some(s) => Some(parse_variant(s)?),
         };
+        let selected = crate::file::resolve_signal_selection(inner.as_ref(), signals)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            tokio::task::spawn_blocking(move || inner.write_to(&path, target))
-                .await
-                .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
-                .map_err(to_py_err)?;
+            tokio::task::spawn_blocking(move || match selected {
+                Some(selected) => inner.write_subset_to(&path, target, &selected),
+                None => inner.write_to(&path, target),
+            })
+            .await
+            .map_err(|e| PyRuntimeError::new_err(format!("task join: {e}")))?
+            .map_err(to_py_err)?;
             Ok(())
         })
     }

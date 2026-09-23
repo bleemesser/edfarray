@@ -9,7 +9,7 @@ use edfarray_core::mmap::ScanMode;
 use edfarray_core::proxy::ReadStrategy;
 
 use crate::annotations::PyAnnotation;
-use crate::errors::{closed_file_err, invalid_argument_err, to_py_err};
+use crate::errors::{closed_file_err, invalid_argument_err, out_of_range_err, to_py_err};
 use crate::group::PySignalGroup;
 use crate::proxy_2d::{PyProxy2D, parse_pad_mode};
 use crate::proxy_3d::PyProxy3D;
@@ -516,6 +516,17 @@ impl PyEdfFile {
     /// `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
     /// if omitted, uses the source variant.
     ///
+    /// `signals` selects which ordinary channels are written: a `SignalGroup`, a
+    /// signal index, a label, or a sequence mixing both (labels match exactly, as
+    /// in `signal()`). Destination channels appear in the given order, so sets and
+    /// dicts are rejected. `None` (the default) writes every ordinary signal. The
+    /// annotation channel cannot be selected: it is always rebuilt automatically,
+    /// and annotations are copied in full regardless of the selection.
+    ///
+    /// Raises `EdfFileError` if `path` is open for reading, including when `path`
+    /// is this file. Close every `EdfFile` on that path, and drop every signal and
+    /// proxy taken from one, before writing to it.
+    ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
     ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
@@ -525,8 +536,16 @@ impl PyEdfFile {
     ///   since plain variants have no annotation channel.
     /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
     ///   digital range and re-encodes from physical values, losing precision.
-    #[pyo3(signature = (path, variant=None))]
-    fn write_to(&self, path: &str, variant: Option<&str>) -> PyResult<()> {
+    #[pyo3(signature = (path, variant=None, signals=None))]
+    fn write_to(
+        &self,
+        path: &str,
+        variant: Option<&str>,
+        #[gen_stub(override_type(
+            type_repr = "SignalGroup | builtins.int | builtins.str | typing.Sequence[builtins.int | builtins.str] | builtins.NoneType"
+        ))]
+        signals: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
         use edfarray_core::header::EdfVariant;
         let target = match variant {
             None => None,
@@ -540,7 +559,12 @@ impl PyEdfFile {
                 return Err(invalid_argument_err(format!("unknown variant {:?}", other)));
             }
         };
-        self.get()?.write_to(path, target).map_err(to_py_err)
+        let f = self.get()?;
+        match resolve_signal_selection(f, signals)? {
+            Some(selected) => f.write_subset_to(path, target, &selected),
+            None => f.write_to(path, target),
+        }
+        .map_err(to_py_err)
     }
 
     /// Read a page of digital (raw int32) data for multiple signals over a time range.
@@ -591,7 +615,7 @@ impl PyEdfFile {
         &self,
         py: Python<'_>,
         #[gen_stub(override_type(
-            type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation] | builtins.NoneType"
+            type_repr = "builtins.float | typing.Sequence[builtins.float] | Annotation | typing.Sequence[Annotation] | builtins.NoneType"
         ))]
         events: &Bound<'_, PyAny>,
         pre: f64,
@@ -649,7 +673,7 @@ impl PyEdfFile {
         &self,
         py: Python<'py>,
         #[gen_stub(override_type(
-            type_repr = "builtins.float | builtins.Sequence[builtins.float] | Annotation | builtins.Sequence[Annotation]"
+            type_repr = "builtins.float | typing.Sequence[builtins.float] | Annotation | typing.Sequence[Annotation]"
         ))]
         events: &Bound<'_, PyAny>,
         pre: f64,
@@ -713,4 +737,92 @@ fn parse_strategy(value: &str) -> PyResult<ReadStrategy> {
             "strategy must be 'auto', 'mmap', or 'stream', got {other:?}"
         ))),
     }
+}
+
+/// Resolve the `signals` argument of `write_to` into file-level signal indices.
+///
+/// `None` means "copy every ordinary signal". Otherwise the argument must be a
+/// `SignalGroup`, a signal index, a label (exact match, as in `signal()`), or an
+/// ordered iterable mixing indices and labels. Returned indices are in destination
+/// order; bounds, annotation-channel, and duplicate checks are the core's job.
+pub(crate) fn resolve_signal_selection(
+    f: &EdfFile,
+    signals: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<Vec<usize>>> {
+    use pyo3::exceptions::PyTypeError;
+    use pyo3::types::{PyByteArray, PyBytes, PyDict, PyFrozenSet, PyMemoryView, PySet};
+
+    const EXPECTED: &str = "signals must be a SignalGroup, a signal index, a label, \
+                            or a sequence mixing indices and labels";
+
+    let Some(value) = signals else {
+        return Ok(None);
+    };
+    if let Ok(group) = value.extract::<PyRef<'_, PySignalGroup>>() {
+        return Ok(Some(group.inner().indices().to_vec()));
+    }
+    if let Some(idx) = selection_item(f, value)? {
+        return Ok(Some(vec![idx]));
+    }
+    // Bytes would iterate as small ints, and unordered containers would give an arbitrary
+    // channel order.
+    if value.cast::<PyBytes>().is_ok()
+        || value.cast::<PyByteArray>().is_ok()
+        || value.cast::<PyMemoryView>().is_ok()
+    {
+        return Err(PyTypeError::new_err(format!(
+            "{EXPECTED}; bytes are not accepted"
+        )));
+    }
+    if value.cast::<PySet>().is_ok()
+        || value.cast::<PyFrozenSet>().is_ok()
+        || value.cast::<PyDict>().is_ok()
+    {
+        return Err(PyTypeError::new_err(format!(
+            "{EXPECTED}; sets and dicts are unordered, so the channel order would be arbitrary"
+        )));
+    }
+
+    let iter = value
+        .try_iter()
+        .map_err(|_| PyTypeError::new_err(EXPECTED))?;
+    let mut selected = Vec::new();
+    for item in iter {
+        let item = item?;
+        match selection_item(f, &item)? {
+            Some(idx) => selected.push(idx),
+            None => {
+                return Err(PyTypeError::new_err(
+                    "each element of signals must be an int index or a str label",
+                ));
+            }
+        }
+    }
+    Ok(Some(selected))
+}
+
+/// Resolve one index or label. `Ok(None)` means `value` is neither.
+fn selection_item(f: &EdfFile, value: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
+    // bool subclasses int, but `True` as a channel index is almost certainly a mistake.
+    if value.cast::<pyo3::types::PyBool>().is_ok() {
+        return Ok(None);
+    }
+    if let Ok(idx) = value.extract::<usize>() {
+        return Ok(Some(idx));
+    }
+    if let Ok(idx) = value.extract::<i64>() {
+        return Err(out_of_range_err(format!(
+            "signal index {idx} out of range (file has {} signals)",
+            f.num_signals()
+        )));
+    }
+    if let Ok(label) = value.extract::<String>() {
+        let idx = f
+            .find_all_signals(&label, true)
+            .first()
+            .copied()
+            .ok_or_else(|| to_py_err(edfarray_core::error::EdfError::SignalNotFound { label }))?;
+        return Ok(Some(idx));
+    }
+    Ok(None)
 }

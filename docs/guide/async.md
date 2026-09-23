@@ -194,8 +194,11 @@ await f.write_to("output.edf", variant="EDF+C")
 
 Only ordinary signals are copied. Annotations are re-encoded from the parsed
 index rather than copied verbatim. The same [transcoding caveats](writing.md#round-tripping-an-existing-file)
-apply as for the sync `write_to` (EDF+D loses its discontinuity; transcoding to
-a plain variant drops annotations; downconverting sample size loses precision).
+apply as for the sync `write_to`. Transcoding EDF+D to a non-`+D` variant loses
+its discontinuity, transcoding to a plain variant drops annotations, and
+downconverting sample size loses precision. The async `write_to` also accepts a
+`signals` subset selection and refuses an open destination, with the same
+behavior as the sync method.
 
 ## Performance and when to choose async
 

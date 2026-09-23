@@ -95,7 +95,7 @@ See the `error` module for the full list of variants.
 
 ## Key types
 
-`EdfFile` -- Main entry point. Owns an `Arc<MappedFile>` and provides all public API methods. Opened with `EdfFile::open(path)`, or `EdfFile::open_with_variant(path, variant)` to force the variant for files that omit/misreport the `+C`/`+D` marker (the override controls only the plain/`+C`/`+D` distinction; changing the EDF-vs-BDF sample size is rejected).
+`EdfFile` -- Main entry point. Owns an `Arc<MappedFile>` and provides all public API methods. Opened with `EdfFile::open(path)`, or `EdfFile::open_with_variant(path, variant)` to force the variant for files that omit/misreport the `+C`/`+D` marker (the override controls only the plain/`+C`/`+D` distinction; changing the EDF-vs-BDF sample size is rejected). `write_to(path, variant)` re-emits the file, optionally transcoding. `write_subset_to(path, variant, signals)` does the same but keeps only the selected signal indices, in destination order. Both fail with an `EdfError::Io` of kind `ResourceBusy` when the destination is mapped by an open `EdfFile`, including the source itself.
 
 `SignalProxy` -- Lightweight view of one signal. Holds an `Arc` reference to the underlying `MappedFile`. Created by `EdfFile::signal()`. Translates global sample indices to record byte offsets and decodes on the fly.
 

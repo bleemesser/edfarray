@@ -375,7 +375,32 @@ impl EdfFile {
     ///   annotations, since plain variants have no annotation channel.
     /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
     ///   digital range and re-encodes from physical values, losing precision.
+    ///
+    /// Fails with an [`EdfError::Io`] of kind `ResourceBusy` when `path` is memory-mapped by any
+    /// open `EdfFile`, including `self`, or by a signal or proxy taken from one.
     pub fn write_to(&self, path: impl AsRef<Path>, variant: Option<EdfVariant>) -> Result<()> {
+        self.write_selected_to(path.as_ref(), variant, None)
+    }
+
+    /// Like [`Self::write_to`], but copies only the ordinary signals in `signals`, given as
+    /// file-level indices in destination order. The selection must be non-empty, contain each
+    /// signal at most once, and never name the annotation channel, which is rebuilt
+    /// automatically. Annotations are copied in full regardless of the selection.
+    pub fn write_subset_to(
+        &self,
+        path: impl AsRef<Path>,
+        variant: Option<EdfVariant>,
+        signals: &[usize],
+    ) -> Result<()> {
+        self.write_selected_to(path.as_ref(), variant, Some(signals))
+    }
+
+    fn write_selected_to(
+        &self,
+        path: &Path,
+        variant: Option<EdfVariant>,
+        signals: Option<&[usize]>,
+    ) -> Result<()> {
         use crate::writer::{EdfWriter, WriterSignal, WriterSpec};
         use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
@@ -390,7 +415,13 @@ impl EdfFile {
             ),
         };
 
-        let ordinary = self.ordinary_signal_indices();
+        let ordinary = match signals {
+            Some(selected) => {
+                validate_signal_selection(header, selected)?;
+                selected.to_vec()
+            }
+            None => self.ordinary_signal_indices(),
+        };
         let target_sample_size = target_variant.sample_size_bytes();
         let mut signals_spec: Vec<WriterSignal> = Vec::with_capacity(ordinary.len());
         for &idx in &ordinary {
@@ -507,6 +538,43 @@ impl EdfFile {
         writer.finish()?;
         Ok(())
     }
+}
+
+/// Check a `write_to` signal selection: non-empty, in range, no annotation
+/// channel, no duplicates.
+fn validate_signal_selection(header: &EdfHeader, selected: &[usize]) -> Result<()> {
+    if selected.is_empty() {
+        return Err(EdfError::InvalidArgument {
+            name: "signals",
+            reason: "at least one signal must be selected".to_string(),
+        });
+    }
+    let n = header.num_signals;
+    let mut seen = std::collections::HashSet::new();
+    for &idx in selected {
+        if idx >= n {
+            return Err(EdfError::SignalOutOfRange {
+                index: idx,
+                count: n,
+            });
+        }
+        if header.signals[idx].is_annotation {
+            return Err(EdfError::InvalidArgument {
+                name: "signals",
+                reason: format!(
+                    "signal {idx} is the annotation channel; it is written automatically \
+                     and cannot be selected"
+                ),
+            });
+        }
+        if !seen.insert(idx) {
+            return Err(EdfError::InvalidArgument {
+                name: "signals",
+                reason: format!("signal {idx} is selected more than once"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Header metadata without annotation scan or persistent mmap.
@@ -1206,5 +1274,180 @@ mod fixture_tests {
         assert_eq!(meta.signal_labels.len(), meta.num_signals);
         assert_eq!(meta.sample_rates.len(), meta.num_signals);
         assert_eq!(meta.signal_labels.len(), meta.sample_rates.len());
+    }
+
+    #[test]
+    fn write_to_subset_copies_selected_signals_in_order() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let dst = dir.path().join("subset.edf");
+
+        edf.write_subset_to(&dst, None, &[5, 0]).unwrap();
+
+        let g = EdfFile::open(&dst).unwrap();
+        assert_eq!(g.num_signals(), 2);
+        assert_eq!(g.num_records(), edf.num_records());
+        assert_eq!(g.header().signals[0].label, edf.header().signals[5].label);
+        assert_eq!(g.header().signals[1].label, edf.header().signals[0].label);
+
+        // Same-rate, same-family copy re-encodes through the same gain/offset,
+        // so digital values must round-trip exactly.
+        for (i, src_idx) in [5usize, 0].iter().enumerate() {
+            let src_sig = edf.signal(*src_idx).unwrap();
+            let dst_sig = g.signal(i).unwrap();
+            let n = src_sig.len();
+            assert_eq!(dst_sig.len(), n);
+            let mut src_buf = vec![0i32; n];
+            let mut dst_buf = vec![0i32; n];
+            src_sig.read_digital(0, n, &mut src_buf).unwrap();
+            dst_sig.read_digital(0, n, &mut dst_buf).unwrap();
+            assert_eq!(
+                src_buf, dst_buf,
+                "channel {i} digital values must match source channel {src_idx}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_to_copies_every_ordinary_signal() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let dst = dir.path().join("all.edf");
+
+        edf.write_to(&dst, None).unwrap();
+
+        let g = EdfFile::open(&dst).unwrap();
+        assert_eq!(g.signal_labels(), edf.signal_labels());
+        assert_eq!(g.num_signals(), edf.num_signals());
+    }
+
+    #[test]
+    fn write_to_subset_rejects_empty_selection() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let err = edf
+            .write_subset_to(dir.path().join("x.edf"), None, &[])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "signals",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn write_to_subset_rejects_out_of_range() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let err = edf
+            .write_subset_to(dir.path().join("x.edf"), None, &[1000])
+            .unwrap_err();
+        assert!(matches!(err, EdfError::SignalOutOfRange { .. }));
+    }
+
+    #[test]
+    fn write_to_subset_rejects_annotation_channel() {
+        let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
+        let ann_idx = edf.num_signals() - 1;
+        assert!(edf.header().signals[ann_idx].is_annotation);
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let err = edf
+            .write_subset_to(dir.path().join("x.edf"), None, &[ann_idx])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "signals",
+                ..
+            }
+        ));
+
+        // Selecting it alongside a valid channel is rejected as well.
+        let ordinary = edf.ordinary_signal_indices()[0];
+        let err = edf
+            .write_subset_to(dir.path().join("x.edf"), None, &[ordinary, ann_idx])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "signals",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn write_to_subset_rejects_duplicates() {
+        let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
+        let err = edf
+            .write_subset_to(dir.path().join("x.edf"), None, &[0, 3, 0])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "signals",
+                ..
+            }
+        ));
+    }
+
+    fn is_busy(err: &EdfError) -> bool {
+        matches!(err, EdfError::Io { source, .. } if source.kind() == std::io::ErrorKind::ResourceBusy)
+    }
+
+    #[test]
+    fn write_to_own_path_is_rejected_and_source_survives() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("src.edf");
+        std::fs::copy(fixture_path("edfPlusC.edf"), &path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let edf = EdfFile::open(&path).unwrap();
+        assert!(is_busy(&edf.write_to(&path, None).unwrap_err()));
+        assert!(is_busy(
+            &edf.write_subset_to(&path, None, &[0]).unwrap_err()
+        ));
+        drop(edf);
+
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn write_to_path_mapped_by_a_derived_proxy_is_rejected_until_dropped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dst = dir.path().join("dst.edf");
+        std::fs::copy(fixture_path("edfPlusC.edf"), &dst).unwrap();
+        let src = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
+
+        let held = EdfFile::open(&dst).unwrap();
+        let proxy = held.signal(0).unwrap();
+        drop(held);
+        assert!(is_busy(&src.write_to(&dst, None).unwrap_err()));
+
+        drop(proxy);
+        src.write_to(&dst, None).unwrap();
+        assert_eq!(
+            EdfFile::open(&dst).unwrap().signal_labels(),
+            src.signal_labels()
+        );
+    }
+
+    #[test]
+    fn dropping_a_file_mid_scan_releases_it_for_writing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("f.edf");
+        let src = EdfFile::open(fixture_path("S001R01.edf")).unwrap();
+        src.write_to(&path, None).unwrap();
+
+        // The eager annotation scan is usually still running when the handle drops. Dropping
+        // must stop it before the lock is released, or the next write fails as busy.
+        for _ in 0..20 {
+            drop(EdfFile::open(&path).unwrap());
+            src.write_to(&path, None).unwrap();
+        }
     }
 }

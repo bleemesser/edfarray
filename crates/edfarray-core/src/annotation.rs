@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::error::Result;
 use crate::header::{EdfHeader, EdfVariant};
@@ -44,6 +44,18 @@ impl AnnotationIndex {
         layout: &RecordLayout,
         progress: &AtomicUsize,
     ) -> Result<Self> {
+        Self::build_cancellable(data, header, layout, progress, &AtomicBool::new(false))
+    }
+
+    /// Like [`Self::build_with_progress`], but stops early once `cancel` is set. A cancelled
+    /// index covers only the records scanned so far.
+    pub(crate) fn build_cancellable(
+        data: &[u8],
+        header: &EdfHeader,
+        layout: &RecordLayout,
+        progress: &AtomicUsize,
+        cancel: &AtomicBool,
+    ) -> Result<Self> {
         let mut annotations = Vec::new();
         let mut record_onsets = Vec::new();
         let mut warnings = Vec::new();
@@ -73,6 +85,10 @@ impl AnnotationIndex {
         let num_records = header.num_records.max(0) as usize;
 
         for rec_idx in 0..num_records {
+            if cancel.load(Ordering::Relaxed) {
+                warnings.push(format!("annotation scan cancelled at record {rec_idx}"));
+                break;
+            }
             let rec_offset = data_start + rec_idx * layout.record_size;
             let rec_end = rec_offset + layout.record_size;
 

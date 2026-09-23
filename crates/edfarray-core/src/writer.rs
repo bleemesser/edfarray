@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -231,15 +231,35 @@ impl EdfWriter {
             (nanos as f64) / 1_000_000_000.0
         };
 
+        // Truncating a file that another EdfFile has mapped makes that mapping raise SIGBUS on
+        // its next read, so take the lock before truncating rather than at open.
         let file = OpenOptions::new()
             .write(true)
             .create(true)
-            .truncate(true)
+            .truncate(false)
             .open(&path)
             .map_err(|e| EdfError::FileOpen {
                 path: path.clone(),
                 source: e,
             })?;
+        // Filesystems without lock support return an error rather than WouldBlock. The lock is
+        // advisory, so writing proceeds without it there.
+        if let Err(TryLockError::WouldBlock) = file.try_lock() {
+            return Err(EdfError::Io {
+                path,
+                op: "writing",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::ResourceBusy,
+                    "the file is open for reading. Close or drop every EdfFile opened on it, \
+                     and every signal or proxy taken from one, then retry",
+                ),
+            });
+        }
+        file.set_len(0).map_err(|e| EdfError::Io {
+            path: path.clone(),
+            op: "truncating",
+            source: e,
+        })?;
 
         let mut writer = BufWriter::new(file);
 
@@ -1149,6 +1169,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn open_while_writer_is_active_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("w.edf");
+        let writer = EdfWriter::create(&path, sample_spec(EdfVariant::EdfPlusC)).unwrap();
+
+        let Err(err) = EdfFile::open(&path) else {
+            panic!("opening a file mid-write must fail");
+        };
+        assert!(matches!(
+            err,
+            EdfError::Io { ref source, .. } if source.kind() == std::io::ErrorKind::ResourceBusy
+        ));
+
+        writer.finish().unwrap();
+        EdfFile::open(&path).unwrap();
     }
 
     #[test]

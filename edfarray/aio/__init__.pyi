@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable
+from typing import Any, Awaitable, Sequence
 import datetime
 
 import numpy as np
@@ -137,14 +137,31 @@ class EdfFile:
         """
         ...
     def signal_group(self, indices: list[int]) -> SignalGroup: ...
-    def write_to(self, path: str, variant: str | None = None) -> Awaitable[None]:
+    def write_to(
+        self,
+        path: str,
+        variant: str | None = None,
+        signals: SignalGroup | int | str | Sequence[int | str] | None = None,
+    ) -> Awaitable[None]:
         r"""
         Write to `path`, optionally transcoding to a different variant.
 
+        `signals` selects which ordinary channels are written: a `SignalGroup`, a
+        signal index, a label, or a sequence mixing both (labels match exactly, as
+        in `signal()`). Destination channels appear in the given order, so sets and
+        dicts are rejected. `None` (the default) writes every ordinary signal. The
+        annotation channel cannot be selected: it is always rebuilt automatically,
+        and annotations are copied in full regardless of the selection.
+
+        Raises `EdfFileError` if `path` is open for reading, including when `path`
+        is this file. Close every `EdfFile` on that path, and drop every signal and
+        proxy taken from one, before writing to it.
+
         Transcoding caveats:
-        - Records are streamed contiguously, so transcoding from EDF+D to any
-          non-EDF+D variant discards the discontinuity: the original per-record
-          onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
+        - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
+          copy. Transcoding to any non-EDF+D variant flattens timing: the
+          per-record onsets/gaps are replaced by uniform `record_idx *
+          record_duration` timing.
         - Because the annotation channel is rebuilt from parsed annotations,
           transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
           since plain variants have no annotation channel.

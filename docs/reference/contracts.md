@@ -124,9 +124,14 @@ constructor cannot be awaited.
 
 By default the file is read through a memory map.
 
-- If the file is truncated by another process while open, touching the vanished pages raises
-  `SIGBUS`, which terminates the process and cannot be caught as a Python exception. Do not
-  read a file another process is rewriting in place.
+- An open file holds a shared advisory lock until the last `EdfFile`, `Signal`, and proxy on
+  it are dropped. edfarray's writers take an exclusive lock before they truncate, so writing
+  to an open file raises `EdfFileError` instead of corrupting the mapping. Opening a file
+  that an edfarray writer is still writing raises `EdfFileError` too.
+- The lock is advisory. Other programs that ignore it can still truncate the file, and on
+  NFS a process does not conflict with its own locks. If the file is truncated while open,
+  touching the vanished pages raises `SIGBUS`, which terminates the process and cannot be
+  caught as a Python exception. Do not read a file another program is rewriting in place.
 - On a network filesystem every page fault is a network round trip. For NFS/SMB, or any file
   larger than RAM, prefer `strategy="stream"` (see the performance guide), which uses ordinary
   positional reads.

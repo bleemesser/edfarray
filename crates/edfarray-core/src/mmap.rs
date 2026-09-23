@@ -1,7 +1,9 @@
+use std::fs::TryLockError;
+use std::ops::Deref;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use memmap2::Mmap;
 
@@ -95,7 +97,7 @@ fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
 
 /// Marks the annotation scan finished on drop, including during a panic unwind.
 struct ScanCompletion {
-    file: Arc<MappedFile>,
+    file: Arc<MappedData>,
 }
 
 impl Drop for ScanCompletion {
@@ -117,7 +119,18 @@ impl Drop for ScanCompletion {
 }
 
 /// Memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
+///
+/// While any `MappedFile` for a path is alive, the file holds a shared advisory lock, and
+/// [`EdfWriter`](crate::writer::EdfWriter) refuses to overwrite it. Dropping the last handle
+/// stops the background annotation scan before the mapping and the lock are released.
 pub struct MappedFile {
+    data: Arc<MappedData>,
+    scan: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// Shared state behind a [`MappedFile`]. The background annotation scan holds this rather than
+/// the `MappedFile`, so dropping the last user handle is what ends the mapping's lifetime.
+pub struct MappedData {
     mmap: Mmap,
     /// Kept open alongside the mapping for positional reads on the streaming path.
     file: std::fs::File,
@@ -127,6 +140,7 @@ pub struct MappedFile {
     scan_done: (Mutex<bool>, Condvar),
     /// Serializes on-demand index construction when the eager scan is disabled.
     scan_guard: Mutex<()>,
+    cancel_scan: AtomicBool,
 }
 
 /// How the annotation index is built.
@@ -139,7 +153,36 @@ pub enum ScanMode {
     Lazy,
 }
 
+impl Deref for MappedFile {
+    type Target = MappedData;
+
+    fn deref(&self) -> &MappedData {
+        &self.data
+    }
+}
+
+impl Drop for MappedFile {
+    fn drop(&mut self) {
+        self.data.cancel_scan.store(true, Ordering::Relaxed);
+        let handle = self
+            .scan
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(handle) = handle {
+            // A panicked scan already recorded its fallback index; nothing is left to report.
+            let _ = handle.join();
+        }
+    }
+}
+
 impl std::fmt::Debug for MappedFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.fmt(f)
+    }
+}
+
+impl std::fmt::Debug for MappedData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MappedFile")
             .field("len", &self.mmap.len())
@@ -177,6 +220,19 @@ impl MappedFile {
             path: path.to_path_buf(),
             source: e,
         })?;
+
+        // Filesystems without lock support return an error rather than WouldBlock. The lock is
+        // advisory, so opening proceeds without it there.
+        if let Err(TryLockError::WouldBlock) = file.try_lock_shared() {
+            return Err(EdfError::Io {
+                path: path.to_path_buf(),
+                op: "opening",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::ResourceBusy,
+                    "an EdfWriter is still writing this file",
+                ),
+            });
+        }
 
         // SAFETY: mapping a file is unsafe because another process can change its contents or
         // length underneath us. Concurrent writes can produce torn reads, and truncation makes
@@ -226,7 +282,7 @@ impl MappedFile {
             AnnotationState::NotStarted
         };
 
-        let mapped = Arc::new(MappedFile {
+        let data = Arc::new(MappedData {
             mmap,
             file,
             header,
@@ -234,17 +290,22 @@ impl MappedFile {
             annotations: RwLock::new(initial_state),
             scan_done: (Mutex::new(!has_annotations), Condvar::new()),
             scan_guard: Mutex::new(()),
+            cancel_scan: AtomicBool::new(false),
         });
 
-        if has_annotations && scan_mode == ScanMode::Eager {
-            mapped.start_annotation_scan();
-        }
+        let scan =
+            (has_annotations && scan_mode == ScanMode::Eager).then(|| data.start_annotation_scan());
 
-        Ok(mapped)
+        Ok(Arc::new(MappedFile {
+            data,
+            scan: Mutex::new(scan),
+        }))
     }
+}
 
+impl MappedData {
     /// Spawn a background thread to scan all data records and build the annotation index.
-    fn start_annotation_scan(self: &Arc<Self>) {
+    fn start_annotation_scan(self: &Arc<Self>) -> JoinHandle<()> {
         let num_records = self.header.num_records.max(0) as usize;
         let progress = Arc::new(AtomicUsize::new(0));
 
@@ -268,7 +329,7 @@ impl MappedFile {
             *write_lock(&file.annotations) = AnnotationState::Complete(resolved);
 
             drop(guard);
-        });
+        })
     }
 
     /// Scan every record's annotation channel and build the index.
@@ -279,8 +340,13 @@ impl MappedFile {
         let num_records = self.header.num_records.max(0) as usize;
         self.advise_records(0, num_records, Advice::Sequential);
 
-        let index =
-            AnnotationIndex::build_with_progress(&self.mmap, &self.header, &self.layout, progress);
+        let index = AnnotationIndex::build_cancellable(
+            &self.mmap,
+            &self.header,
+            &self.layout,
+            progress,
+            &self.cancel_scan,
+        );
 
         // Leave the mapping without a lingering sequential hint, since callers read randomly.
         self.advise_records(0, num_records, Advice::Normal);

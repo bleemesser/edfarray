@@ -90,6 +90,39 @@ Only ordinary signals are copied; the annotation channel is rebuilt from the
 parsed annotations rather than copied verbatim. If `variant` is omitted the
 source variant is kept.
 
+### Copying a subset of channels
+
+Pass `signals` to write only selected channels: a `SignalGroup`, a signal
+index, a label, or a sequence mixing both. The destination's channels appear
+in the given order, and annotations are copied in full either way:
+
+```python
+f.write_to("eeg_only.edf", signals=[0, 3])           # two channels, in order
+f.write_to("eeg_only.edf", signals=["EEG Fp1", 3])   # indices and labels mix
+f.write_to("eeg_only.edf", signals=f.signal_group([0, 3]))
+```
+
+The annotation channel itself cannot be selected: it is rebuilt automatically.
+Sets and dicts are rejected because they have no fixed order. An empty
+selection, a duplicated channel, or an out-of-range index is rejected before
+anything is written.
+
+### Writing over an open file
+
+`write_to`, `write_edf`, and `EdfWriter` refuse to write to a path that an
+`EdfFile` has open, and raise `EdfFileError`. This includes the source file
+itself, so you cannot strip channels in place:
+
+```python
+f = edfarray.EdfFile("rec.edf")
+f.write_to("rec.edf", signals=[0, 3])  # raises EdfFileError
+```
+
+A `Signal` or proxy taken from a file keeps the file open after `close()`. If
+you want to replace a file, close every `EdfFile` on it and drop every object
+taken from one. Then write to the path. Opening a file while an `EdfWriter` is
+still writing it also raises `EdfFileError`.
+
 !!! warning "Transcoding caveats"
     Records are re-emitted contiguously, so transcoding changes more than the
     header tag:
