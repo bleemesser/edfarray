@@ -1,12 +1,13 @@
 # Epoch Extraction
 
-An epoch is a short, fixed window of samples cut around an event time. Given an
-onset, `pre` and `post` seconds define the window `[onset - pre, onset + post)`.
-Stacking many windows gives you a dense `(n_epochs, n_channels, n_samples)` array
-you can feed straight into numpy.
+An epoch is a short, fixed window of samples around an event time. For an
+onset, the `pre` and `post` seconds set the window `[onset - pre, onset + post)`.
+A stack of many windows gives a dense `(n_epochs, n_channels, n_samples)` array.
+You can give this array directly to numpy.
 
-`extract_epochs` decodes every window in parallel, in one call. It reads the
-samples it needs and nothing else, and it respects EDF+D recording gaps.
+`extract_epochs` decodes all windows in parallel, in one call. It reads only the
+samples that it needs. It also obeys EDF+D gaps. An EDF+D gap is a time span
+with no recorded data.
 
 ## Extract around events
 
@@ -23,28 +24,30 @@ epochs.data.shape  # (3, n_channels, 240)
 epochs.onsets      # array([10., 20., 30.])
 ```
 
-The sample axis is always `ceil((pre + post) * sample_rate)` columns wide. A product
-within 1e-6 of an integer counts as that integer, so `pre=0.1, post=0.2` at 200 Hz gives
-60 columns, not 61. That width
-comes from your request alone, never from where the events landed, so shapes match
-across files. Column 0 of a row is the first sample at or after `onset - pre`, and column
-`j` is the sample `j` places later. An event that falls between two samples therefore
-shifts its row by less than one sample period.
+The sample axis always has `ceil((pre + post) * sample_rate)` columns. If the product
+is within 1e-6 of an integer, edfarray uses that integer. Thus `pre=0.1, post=0.2` at
+200 Hz gives 60 columns, not 61. The width comes only from your request, never from the
+positions of the events. So the shapes are the same across files.
 
-`epochs.data` is float64 physical samples. `np.asarray(epochs)` returns the same
-array. Other metadata comes off the object:
+Column 0 of a row is the first sample at or after `onset - pre`. Column `j` is the
+sample `j` places later. If an event is between two samples, its row thus moves by
+less than one sample period.
 
-- `labels`: channel labels, in group order.
-- `sample_rate`: the common rate in Hz.
-- `valid`: per-epoch boolean, `True` only when every column of the row is a real sample.
-  It is `False` where the window ran off the file or touched an EDF+D gap.
-- `dropped`: indices into your `events` list for epochs that `pad="drop"` removed.
+`epochs.data` contains float64 physical samples. `np.asarray(epochs)` returns the same
+array. The object also has this metadata:
+
+- `labels`: The signal labels, in group order.
+- `sample_rate`: The common rate in Hz.
+- `valid`: A boolean for each epoch. The value is `True` only for a row in which every column is a real sample.
+  The value is `False` for a window that ran off the file or touched an EDF+D gap.
+- `dropped`: The indices into your `events` list of the epochs that `pad="drop"` removed.
 
 ### Choosing channels
 
-Extraction needs a rectangular channel group: same rate, decoded together. Pass
-`group=` a `SignalGroup` or a list of signal indices. Left unset, it uses the
-largest rectangular group in the file.
+Extraction needs a rectangular group. The signals in a rectangular group have the
+same rate, and edfarray decodes them together. Set `group=` to a `SignalGroup` or
+to a list of signal indices. If you do not set `group=`, edfarray uses the largest
+rectangular group in the file.
 
 ```python
 group = max(f.signal_groups(), key=len)
@@ -53,46 +56,47 @@ epochs = f.extract_epochs(events, pre=0.5, post=1.0, group=group)
 
 ### Extracting around annotation text
 
-Pass `events=None` with `query=` to lock onto annotations by text, using the same
-matching rules as `filter_annotations`. `events` and `query` are mutually exclusive.
+To select annotations by their text, pass `events=None` with `query=`. The query
+uses the same matching rules as `filter_annotations`. You can set `events` or
+`query`, but not both.
 
 ```python
 spindles = f.extract_epochs(None, query="Spindle", pre=1.0, post=1.0)
 ```
 
-`f.events(query)` is a shortcut that returns the matching `Annotation` list, so you
-can inspect it before extracting.
+`f.events(query)` is a shortcut that returns the matching `Annotation` list. You
+can use it to examine the list before the extraction.
 
 ## What happens at the edges
 
-A window can run off the start or end of the file, or straddle an EDF+D gap where
-no data exists. The `pad=` argument decides what you get:
+A window can go past the start or the end of the file. A window can also cross an
+EDF+D gap, where no data exists. The `pad=` argument sets the result:
 
-- `"drop"` (default): leave the epoch out entirely. It appears in `dropped`.
-- `"nan"`: keep it, fill missing samples with NaN, mark it `valid=False`.
-- `"zero"`: keep it, fill with 0.0.
-- a number, for example `pad=-100.0`: fill with that value.
-- `"edge"`: fill with the nearest real sample. A window with no real samples holds the
-  last sample before it, or the first sample of the file when it starts before time 0.
-- `"raise"`: raise `OutOfRangeError` on the first offending epoch.
+- `"drop"` (default): Leave out the epoch. It appears in `dropped`.
+- `"nan"`: Keep the epoch, fill the missing samples with NaN, and set `valid=False`.
+- `"zero"`: Keep the epoch and fill with 0.0.
+- A number, for example `pad=-100.0`: Fill with that value.
+- `"edge"`: Fill with the nearest real sample. A window with no real samples holds the
+  last sample before it. If that window starts before time 0, it holds the first sample of the file.
+- `"raise"`: Raise `OutOfRangeError` on the first epoch that has missing samples.
 
 ```python
 epochs = f.extract_epochs(events, pre=2.0, post=2.0, pad="nan")
 clean = epochs.data[epochs.valid]  # keep only fully real epochs
 ```
 
-NaN fill pairs well with `np.nanmean` and friends, so a partly-padded epoch still
-averages over its real samples. A window that lands entirely inside a gap has no
-real samples at all, and its feature comes out NaN.
+NaN fill works well with `np.nanmean` and the other NaN-aware numpy functions. With
+these functions, the average of a partly padded epoch uses only its real samples. A
+window that is fully inside a gap has no real samples. Its feature value is NaN.
 
 ## Planning without reading
 
-`epoch_windows` runs the same planning as `extract_epochs` but reads no samples.
-It returns `([(onset, s_start, s_end)], valid)`, where `s_start` and `s_end` are
-flat sample indices into the group.
+`epoch_windows` does the same planning as `extract_epochs`, but it reads no samples.
+It returns `([(onset, s_start, s_end)], valid)`. `s_start` and `s_end` are flat
+sample indices into the group. A flat index is a sample count that ignores gaps.
 
-Use it to see what a batch of events would pull, and to drop bad epochs before you
-pay for the decode.
+Use it to see which samples a batch of events will read. Also use it to remove bad
+epochs before the decode.
 
 ```python
 windows, valid = f.epoch_windows(events, pre=0.5, post=1.0)
@@ -103,21 +107,22 @@ epochs = f.extract_epochs(good, pre=0.5, post=1.0)
 ## Gap awareness in EDF+D
 
 For a discontinuous recording, `s_start` and `s_end` address the flat sample space
-that `Signal` indexing uses. A window that straddles a gap is marked `valid=False`
-under fill policies and dropped under `"drop"`, so you never silently treat samples
-from opposite sides of a gap as contiguous.
+that `Signal` indexing uses. A fill policy is a `pad=` value that fills missing samples.
+If a window crosses a gap, a fill policy sets `valid=False` for it, and `"drop"`
+removes it. So you never treat samples from the two sides of a gap as contiguous
+without an indication.
 
-Under a fill policy the row keeps its real samples at their true time offsets and
-pads the columns that land in the gap, so the two sides never close up against each
-other. A window that opens inside a gap pads its leading columns the same way.
+With a fill policy, the row keeps its real samples at their true time offsets. It
+pads the columns that are in the gap. Thus the two sides of the gap never move
+together. If a window starts inside a gap, its first columns get padding in the same way.
 
-See [Annotations & Time](annotations.md) for how record onsets and flat sample
-indices relate in EDF+D.
+For the relation between record onsets and flat sample indices in EDF+D, see
+[Annotations & Time](annotations.md).
 
 ## Async
 
-The async API mirrors both methods. They offload the decode to a blocking task, so
-your event loop stays free.
+The async API has the same two methods. They move the decode to a blocking task,
+so your event loop stays free.
 
 ```python
 import edfarray.aio as aio
@@ -127,9 +132,9 @@ async with await aio.open("recording.edf") as f:
     epochs = await f.extract_epochs(None, query="Stim", pre=0.5, post=1.0)
 ```
 
-Run the bundled examples to see end-to-end use:
+To see complete examples of use, run the bundled examples:
 
-- `examples/epoch_extraction.py` shows planning, drop, and NaN fill on a gap-ridden
-  EDF+D file.
-- `examples/async_epoch_extraction.py` computes RMS and alpha-band power over grid
+- `examples/epoch_extraction.py`: Shows planning, drop, and NaN fill on an EDF+D file
+  with many gaps.
+- `examples/async_epoch_extraction.py`: Calculates RMS and alpha-band power over grid
   and event-locked epochs.

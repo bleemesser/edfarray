@@ -6,31 +6,31 @@ use crate::header::EdfHeader;
 pub enum GroupKind {
     /// Shared sample rate and total sample count.
     Rectangular,
-    /// Mixed sample rates (2D proxy only).
+    /// Mixed sample rates. Only a 2D proxy can use this kind of group.
     Open,
 }
 
-/// Fill-value policy when 2D proxy reads extend past a channel's valid length.
+/// Fill-value policy for a 2D proxy read that goes past the valid length of a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum PadMode {
-    /// Raise `SampleOutOfRange` on overflow. Default.
+    /// Fail with `SampleOutOfRange` when a read goes past the valid length. This is the default.
     #[default]
     Raise,
     /// Pad with `f64::NAN`. Physical reads only.
     Nan,
     /// Pad with `0.0` (physical) or `0` (digital).
     Zero,
-    /// Pad with caller-supplied value. Truncated to `i32` on digital reads.
+    /// Pad with a value from the caller. Digital reads truncate the value to `i32`.
     Value(f64),
-    /// Replicate last valid sample per channel.
+    /// Repeat the last valid sample of each channel.
     Edge,
 }
 
-/// Signal indices grouped for proxy construction with supporting metadata.
+/// Signal indices grouped to build a proxy, with supporting metadata.
 ///
-/// Fields are crate-visible rather than public: the invariants tie them together, and
-/// `Proxy3D` relies on a `Rectangular` group always carrying a sample rate and
-/// samples-per-record. Build one with [`SignalGroup::from_indices`].
+/// The fields are crate-visible, not public, because invariants connect them. `Proxy3D` relies
+/// on a `Rectangular` group that always has a sample rate and samples-per-record. Build one
+/// with [`SignalGroup::from_indices`].
 #[derive(Debug, Clone)]
 pub struct SignalGroup {
     /// File-level signal indices.
@@ -41,11 +41,11 @@ pub struct SignalGroup {
     pub(crate) sample_rate: Option<f64>,
     /// Common samples-per-record. `Some` only for `Rectangular`.
     pub(crate) samples_per_record: Option<usize>,
-    /// Min total sample count across channels.
+    /// Smallest total sample count across channels.
     pub(crate) min_samples: usize,
-    /// Max total sample count across channels.
+    /// Largest total sample count across channels.
     pub(crate) max_samples: usize,
-    /// True if group contains every ordinary signal. Set only by `EdfFile::signal_groups`.
+    /// True if the group contains every ordinary signal. Only `EdfFile::signal_groups` sets it.
     pub(crate) covers_all_ordinary: bool,
 }
 

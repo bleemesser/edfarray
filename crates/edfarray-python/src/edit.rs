@@ -9,20 +9,21 @@ use crate::errors::{invalid_argument_err, to_py_err};
 
 /// Replace header identification fields in place.
 ///
-/// Only the fixed-width header fields are rewritten; record data is never touched, so
-/// editing a multi-gigabyte recording costs a few hundred bytes of I/O. Pass `None` for
-/// fields to leave alone. Every value is validated before anything is written, so a
-/// rejected edit leaves the file unchanged.
+/// The function rewrites only the fixed-width header fields. It never changes the record
+/// data, so an edit of a multi-gigabyte recording costs a few hundred bytes of I/O. To leave
+/// a field unchanged, pass `None` for it. The function validates every value before it
+/// writes anything, so a rejected edit leaves the file unchanged.
 ///
-/// Returns a dict mapping each changed field name (`"patient_id"`, `"recording_id"`,
-/// `"start_datetime"`) to `{"before": str, "after": str}`. Fields whose value did not
-/// change are omitted.
+/// The function returns a dict that maps each changed field name (`"patient_id"`,
+/// `"recording_id"`, `"start_datetime"`) to `{"before": str, "after": str}`. The dict
+/// does not include fields whose value did not change.
 ///
-/// `start_datetime` is a `datetime.datetime` or `datetime.date` (midnight). Its wall-clock
-/// fields are written as given and any `tzinfo` is ignored. Only whole seconds are stored.
+/// `start_datetime` is a `datetime.datetime` or a `datetime.date` (midnight). The function
+/// writes its wall-clock fields as given and ignores any `tzinfo`. The header stores only
+/// whole seconds.
 ///
-/// If an `EdfFile`, or a signal or proxy taken from one, has `path` open, raises
-/// `EdfFileError`. Close the file and drop those objects before editing.
+/// If an `EdfFile`, or a signal or proxy taken from one, has `path` open, the function
+/// raises `EdfFileError`. Before you edit the file, close it and drop those objects.
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(signature = (path, patient_id=None, recording_id=None, start_datetime=None))]
@@ -58,38 +59,42 @@ pub fn edit_header<'py>(
     Ok(out)
 }
 
-/// Scrub patient and recording identification from a file in place.
+/// Anonymize the patient and recording identification of a file in place.
 ///
-/// The patient name is replaced by a pseudonym; the patient code, technician, admin code,
-/// and free-text subfields become `X` unless kept. All dates (birthdate, recording start,
-/// header startdate) shift by the same number of days, preserving age while moving the
-/// calendar.
+/// The function replaces the patient name with a pseudonym. The admin code always becomes `X`.
+/// The patient code, technician, and free-text subfields become `X` unless you keep them. All dates
+/// (birthdate, recording start, header startdate) move by the same number of days. Thus the
+/// age stays the same, but the calendar dates change.
 ///
-/// - `seed`: makes the pseudonym and date shift reproducible, so one subject's recordings
-///   stay linkable across a corpus. The pseudonym is keyed on the patient name, code, and
-///   birthdate, so per-session notes in the free-text subfield do not split a subject into
-///   several pseudonyms. Without a seed, each call uses a new random seed.
+/// - `seed`: makes the pseudonym and the date shift reproducible, so that the recordings of
+///   one subject stay linkable across a corpus. The function computes the pseudonym from the
+///   patient name, code, and birthdate. Thus per-session notes in the free-text subfield do
+///   not split a subject into several pseudonyms. Without a seed, each call uses a new random
+///   seed.
 ///
-///   A reused seed is the re-identification key: anyone holding it can recompute the
-///   pseudonym for a guessed name and recover the date shift. Keep it secret, and never
-///   publish it alongside the files it anonymized.
-/// - `pseudonym`: explicit replacement for the patient name; default `Subject-XXXXXXXX`.
-/// - `date_shift_days`: explicit shift; default seed-derived (less than 10 years).
+///   A reused seed is the re-identification key. A person who has the seed can compute the
+///   pseudonym for a guessed name and find the date shift. Keep the seed secret. Never
+///   publish it with the files that it anonymized.
+/// - `pseudonym`: an explicit replacement for the patient name. The default is
+///   `Subject-XXXXXXXX`.
+/// - `date_shift_days`: an explicit shift. The default shift comes from the seed (less than
+///   10 years).
 /// - `keep_sex`/`keep_code`/`keep_technician`/`keep_equipment`/`keep_additional`: control
-///   which subfields survive. Defaults: sex and equipment kept, everything else cleared.
-/// - `dry_run`: compute, validate, and report everything, write nothing. A dry run rejects
-///   exactly what a real run would reject.
+///   which subfields stay. By default, the function keeps sex and equipment, and clears all
+///   other subfields.
+/// - `dry_run`: compute, validate, and report everything, but write nothing. A dry run
+///   rejects exactly the same input as a real run.
 ///
-/// Returns a dict with `pseudonym`, `date_shift_days`, `patient_id_before`,
+/// The function returns a dict with `pseudonym`, `date_shift_days`, `patient_id_before`,
 /// `patient_id_after`, `recording_id_before`, `recording_id_after`,
 /// `start_datetime_before`, `start_datetime_after`, `scrubbed_terms`, and `dry_run`.
 ///
-/// Signal labels and annotation text are never rewritten and may repeat the original
-/// identity. Run `audit()` after anonymizing with the returned `scrubbed_terms` before
-/// shipping a file.
+/// The function never rewrites signal labels or annotation text. This text can repeat the
+/// original identity. After you anonymize a file and before you share it, run `audit()` with
+/// the returned `scrubbed_terms`.
 ///
-/// Unless `dry_run` is set, raises `EdfFileError` if an `EdfFile`, or a signal or proxy
-/// taken from one, has `path` open.
+/// If `dry_run` is not set and an `EdfFile`, or a signal or proxy taken from one, has `path`
+/// open, the function raises `EdfFileError`.
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(signature = (
@@ -150,12 +155,13 @@ pub fn anonymize<'py>(
 
 /// Scan a file for strings that repeat the patient identity.
 ///
-/// Checks signal labels, transducers, prefiltering text, and annotation text. By default
-/// the search terms are derived from the patient name/code and recording technician/admin
-/// code as they currently stand in the header -- so run it before `anonymize()`, or pass
-/// `terms` (the `scrubbed_terms` from an earlier anonymization) to re-check afterwards.
+/// The function examines signal labels, transducers, prefiltering text, and annotation text.
+/// By default, the function takes the search terms from the patient name/code and the
+/// recording technician/admin code in the current header. If you use the default terms, run
+/// `audit()` before `anonymize()`. To examine a file again after anonymization, pass `terms`
+/// (the `scrubbed_terms` from the earlier anonymization).
 ///
-/// Returns a dict with `terms`, `clean`, and `hits`, where each hit has `location`,
+/// The function returns a dict with `terms`, `clean`, and `hits`. Each hit has `location`,
 /// `signal_index` (None for annotation text), `term`, and `excerpt`.
 #[gen_stub_pyfunction]
 #[pyfunction]

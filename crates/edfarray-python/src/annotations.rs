@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-/// A single annotation from the EDF+ file.
+/// A single annotation taken from an EDF+ file.
 #[gen_stub_pyclass]
 #[pyclass(frozen, name = "Annotation", module = "edfarray._core", from_py_object)]
 #[derive(Clone)]
@@ -37,7 +37,7 @@ impl PyAnnotation {
         }
     }
 
-    /// Compare by value, so annotations work with `in`, `set`, and `==` on lists.
+    /// Compare by value, so that annotations work with `in`, `set`, and `==` on lists.
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         let Ok(other) = other.extract::<PyRef<'_, PyAnnotation>>() else {
             return false;
@@ -54,12 +54,12 @@ impl PyAnnotation {
         hasher.finish()
     }
 
-    /// Ordering follows onset, then text, matching the order annotations are returned in.
+    /// Order by onset, then by text. This is the same order in which edfarray returns annotations.
     fn __lt__(&self, other: PyRef<'_, PyAnnotation>) -> bool {
         (self.onset, &self.text) < (other.onset, &other.text)
     }
 
-    /// Support `copy` and `pickle`, so annotations survive multiprocessing.
+    /// Support `copy` and `pickle`, so that multiprocessing can send annotations to other processes.
     fn __reduce__<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
         let args = (slf.onset, slf.text.clone(), slf.duration)
             .into_pyobject(py)?

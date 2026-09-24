@@ -21,12 +21,12 @@ const START_TIME_OFFSET: u64 = 176;
 const ID_FIELD_SIZE: usize = 80;
 const DATE_FIELD_SIZE: usize = 8;
 
-/// SHA-256 iterations applied when deriving a pseudonym. The attack this defends against is
-/// an adversary who holds the seed and hashes a roster of candidate names looking for a match,
-/// so the stretch has to cover the name, not just the seed. It costs about 20 ms per call,
-/// paid once per file and invisible next to opening the recording, while putting a six-figure
-/// multiplier on a dictionary sweep. It is a cost knob, not a secret: changing it changes
-/// every pseudonym, so it cannot be raised without re-anonymizing a corpus.
+/// Number of SHA-256 iterations used to derive a pseudonym. This protects against an attacker
+/// who has the seed and hashes a list of candidate names to find a match. Thus the stretch must
+/// cover the name, not only the seed. It costs about 20 ms for each call, once per file, which
+/// is small compared with opening the recording. It multiplies the cost of a dictionary attack
+/// by the iteration count. The value is not a secret. A change to it changes every pseudonym,
+/// so you cannot increase it without anonymizing the corpus again.
 const PSEUDONYM_ITERATIONS: u32 = 500_000;
 
 /// Years representable in the two-digit startdate field under the EDF 85-pivot rule.
@@ -48,7 +48,7 @@ pub struct FieldChange {
     pub after: String,
 }
 
-/// What an edit actually changed. Fields whose new value equals the current value are omitted.
+/// What an edit changed. The diff omits fields whose new value equals the current value.
 #[derive(Debug, Clone, Default)]
 pub struct HeaderDiff {
     pub patient_id: Option<FieldChange>,
@@ -66,12 +66,12 @@ impl HeaderDiff {
 
 /// Replace header identification fields in place.
 ///
-/// Only the header block is written; record data is never touched. Returns the fields that
-/// actually changed. Fails with an [`EdfError::Io`] of kind `ResourceBusy` while an `EdfFile`,
+/// The function writes only the header block and never changes record data. Returns the
+/// fields that changed. Fails with an [`EdfError::Io`] of kind `ResourceBusy` while an `EdfFile`,
 /// or a signal or proxy taken from one, has `path` open.
 ///
-/// Every field is validated before the first byte is written, so a rejected edit leaves the
-/// file exactly as it was.
+/// The function makes sure that every field is correct before it writes the first byte. Thus
+/// a rejected edit leaves the file exactly as it was.
 pub fn edit_header(path: impl AsRef<Path>, edit: &HeaderEdit) -> Result<HeaderDiff> {
     let path = path.as_ref();
     let (mut file, buf, header) = open_header(path, true)?;
@@ -80,8 +80,9 @@ pub fn edit_header(path: impl AsRef<Path>, edit: &HeaderEdit) -> Result<HeaderDi
     Ok(planned.diff)
 }
 
-/// A fully validated set of header writes. Constructing one runs every check, so applying it
-/// fails only on I/O, never on a field that turns out to be unrepresentable partway through.
+/// A fully validated set of header writes. Constructing one runs every check, so the apply
+/// step can fail only on I/O. It never fails partway through on a field that the header cannot
+/// hold.
 struct PlannedEdit {
     /// `(offset, value, field width)`, in the order they are written.
     writes: Vec<(u64, String, usize)>,
@@ -165,32 +166,36 @@ fn plan_edit(buf: &[u8], header: &EdfHeader, edit: &HeaderEdit) -> Result<Planne
 /// Options for [`anonymize`].
 #[derive(Debug, Clone)]
 pub struct AnonymizeOptions {
-    /// Seed for the pseudonym and date shift. The same `(seed, subject)` always yields the
-    /// same pseudonym, keyed on the patient name, code, and birthdate, so every recording of
-    /// one subject links across a corpus even when their per-session notes differ. `None` draws
-    /// a new random seed on every call, so two calls never share a pseudonym or date shift.
+    /// Seed for the pseudonym and date shift. The same `(seed, subject)` always gives the same
+    /// pseudonym. The subject key is the patient name, code, and birthdate. Thus all recordings
+    /// of one subject link across a corpus, even when their per-session notes are different.
+    /// With `None`, each call draws a new random seed, so two calls never share a pseudonym or
+    /// date shift.
     ///
-    /// Treat a reused seed as a secret. It is the re-identification key: anyone holding it can
-    /// recompute the pseudonym for a guessed name and recover the date shift. Do not publish it
-    /// alongside the files it anonymized.
+    /// Keep a reused seed secret. It is the re-identification key: a person who has it can
+    /// calculate the pseudonym for a guessed name again and recover the date shift. Do not
+    /// publish it with the files that it anonymized.
     pub seed: Option<String>,
     /// Explicit patient pseudonym. Defaults to a hash-derived `Subject-XXXXXXXX`.
     pub pseudonym: Option<String>,
-    /// Explicit calendar shift applied to all dates. Defaults to a seed-derived shift in
-    /// +/-10 years. Both birthdate and recording dates move by the same amount, preserving age.
+    /// Explicit calendar shift applied to all dates. Defaults to a shift in +/-10 years, taken
+    /// from the seed. The birthdate and the recording dates move by the same amount, so the age
+    /// does not change.
     pub date_shift_days: Option<i32>,
-    /// Keep the sex subfield. Recommended: sex is rarely identifying and widely useful.
+    /// Keep the sex subfield. This is recommended: sex rarely identifies a person and is often
+    /// useful.
     pub keep_sex: bool,
-    /// Keep the hospital patient code. Defaults to false; codes often re-identify via the
-    /// hospital registry.
+    /// Keep the hospital patient code. Defaults to false. The hospital registry can often
+    /// re-identify a person from the code.
     pub keep_code: bool,
     /// Keep the recording technician field. Defaults to false.
     pub keep_technician: bool,
-    /// Keep the equipment field. Defaults to true; equipment is about the device, not the person.
+    /// Keep the equipment field. Defaults to true. This field describes the device, not the
+    /// person.
     pub keep_equipment: bool,
     /// Keep free-text `additional` subfields in both ids. Defaults to false.
     pub keep_additional: bool,
-    /// Compute everything, write nothing.
+    /// Compute all results, but write nothing to the file.
     pub dry_run: bool,
 }
 
@@ -210,7 +215,7 @@ impl Default for AnonymizeOptions {
     }
 }
 
-/// What an [`anonymize`] call did (or, with [`AnonymizeOptions::dry_run`], would do).
+/// What an [`anonymize`] call did. With [`AnonymizeOptions::dry_run`], what it plans to do.
 #[derive(Debug, Clone)]
 pub struct AnonymizeResult {
     pub pseudonym: String,
@@ -222,23 +227,24 @@ pub struct AnonymizeResult {
     /// Raw `dd.mm.yy hh.mm.ss` header startdate, before and after.
     pub start_datetime_before: String,
     pub start_datetime_after: String,
-    /// Identity tokens (`audit`-style terms) that were replaced. Pass them to
-    /// [`audit_terms`] to confirm no copy survives in signal labels or annotation text,
-    /// which header-only anonymization cannot rewrite.
+    /// Identity tokens (`audit`-style terms) that the call replaced. Pass them to
+    /// [`audit_terms`] to make sure that no copy stays in signal labels or annotation text.
+    /// Anonymization changes only the header, so it cannot rewrite these.
     pub scrubbed_terms: Vec<String>,
     /// The header diff that was written. Empty on dry runs.
     pub diff: HeaderDiff,
 }
 
-/// Scrub patient and recording identification in place.
+/// Anonymize patient and recording identification in place.
 ///
-/// Patient name becomes a pseudonym; code, technician, admin code, and free-text subfields are
-/// replaced with `X` unless kept. Birthdate and all recording dates are shifted by the same
-/// number of days, so age and within-file time-of-day survive while calendar dates do not.
+/// The patient name becomes a pseudonym. The admin code always becomes `X`. The code,
+/// technician, and free-text subfields become `X` unless an option keeps them. The birthdate and all recording dates
+/// move by the same number of days. Thus the age and the time of day in the file stay the same,
+/// but the calendar dates change.
 ///
-/// Does not touch signal labels or annotation text, which may repeat identifying strings.
-/// Use the returned [`AnonymizeResult::scrubbed_terms`] with [`audit_terms`] as the
-/// final gate before shipping.
+/// This function does not change signal labels or annotation text, which can repeat
+/// identifying strings. As the last check before you share the files, use the returned
+/// [`AnonymizeResult::scrubbed_terms`] with [`audit_terms`].
 ///
 /// Unless `dry_run` is set, fails with an [`EdfError::Io`] of kind `ResourceBusy` while an
 /// `EdfFile`, or a signal or proxy taken from one, has `path` open.
@@ -354,7 +360,7 @@ pub fn anonymize(path: impl AsRef<Path>, opts: &AnonymizeOptions) -> Result<Anon
         recording_id: Some(new_recording_id.clone()),
         start_datetime: new_start,
     };
-    // Plan unconditionally, so a dry run rejects exactly what the real call would reject.
+    // Plan unconditionally, so a dry run rejects exactly what the real call rejects.
     let planned = plan_edit(&buf, &header, &edit)?;
     let diff = if opts.dry_run {
         HeaderDiff::default()
@@ -380,7 +386,7 @@ pub fn anonymize(path: impl AsRef<Path>, opts: &AnonymizeOptions) -> Result<Anon
 /// One identified occurrence of an original identity string outside the id fields.
 #[derive(Debug, Clone)]
 pub struct LeakHit {
-    /// Human-readable location, e.g. `signal 3 label` or `annotation 12.500s`.
+    /// Human-readable location, for example `signal 3 label` or `annotation 12.500s`.
     pub location: String,
     /// Signal index for header-field hits, `None` for annotation text.
     pub signal_index: Option<usize>,
@@ -399,7 +405,7 @@ pub struct AuditReport {
 }
 
 impl AuditReport {
-    /// No identity terms leaked outside the identification fields.
+    /// True if no identity terms appear outside the identification fields.
     pub fn is_clean(&self) -> bool {
         self.hits.is_empty()
     }
@@ -427,11 +433,12 @@ fn identity_terms(header: &EdfHeader) -> Vec<String> {
 }
 
 /// Scan signal labels, transducers, prefilters, and annotation text for strings that repeat
-/// the patient identity currently stored in the header fields. Read-only.
+/// the patient identity currently stored in the header fields. This function does not write
+/// to the file.
 ///
-/// Run this *before* anonymizing: once the header is scrubbed it no longer knows what the
-/// original identity was. After anonymizing, re-check with [`audit_terms`] and the
-/// [`AnonymizeResult::scrubbed_terms`] captured at anonymization time.
+/// Run this before you anonymize the file. After the header is anonymized, it no longer holds
+/// the original identity. After you anonymize, check again with [`audit_terms`] and the
+/// [`AnonymizeResult::scrubbed_terms`] from the anonymization.
 pub fn audit(path: impl AsRef<Path>) -> Result<AuditReport> {
     let file = EdfFile::open_with_options(path, None, ScanMode::Lazy)?;
     let terms = identity_terms(file.header());
@@ -498,7 +505,7 @@ fn open_header(path: &Path, write: bool) -> Result<(File, Vec<u8>, EdfHeader)> {
         path: path.to_path_buf(),
         source: e,
     })?;
-    // An open EdfFile keeps the header it parsed at open time, so editing under it would leave
+    // An open EdfFile keeps the header it parsed at open time, so an edit under it will leave
     // that handle reporting the old identity.
     if write {
         lock_exclusive(&file, path, "editing")?;
@@ -579,8 +586,8 @@ fn raw_field(buf: &[u8], offset: usize, size: usize) -> String {
         .to_string()
 }
 
-/// `code sex birthdate name [additional]` with `X` for unknowns and underscores for spaces,
-/// the EDF+ patient id layout.
+/// Build the EDF+ patient id layout, `code sex birthdate name [additional]`, with `X` for
+/// unknown values and underscores for spaces.
 fn build_patient_id(
     code: Option<&str>,
     sex: Option<Sex>,
@@ -603,9 +610,10 @@ fn build_patient_id(
     id
 }
 
-/// `Startdate date admincode technician equipment [additional]`, the EDF+ recording id layout.
-/// The admin code is always `X`; callers anonymize through [`anonymize`], and there is no
-/// option to keep it (it is an institution-registry pointer).
+/// Build the EDF+ recording id layout,
+/// `Startdate date admincode technician equipment [additional]`.
+/// The admin code is always `X`. Callers anonymize through [`anonymize`], and no option keeps
+/// the admin code, because it points into an institution registry.
 fn build_recording_id(
     start_date: Option<&MaybeDate>,
     technician: Option<&str>,
@@ -665,7 +673,7 @@ fn shift_date(d: NaiveDate, days: i32) -> Option<NaiveDate> {
 fn shift_maybe_date(date: &MaybeDate, days: i32) -> Option<MaybeDate> {
     match date {
         MaybeDate::Parsed(d) => shift_date(*d, days).map(MaybeDate::Parsed),
-        // An unparseable date cannot be shifted, and emitting it verbatim would leak the
+        // An unparseable date cannot be shifted, and emitting it verbatim will leak the
         // original. Dropping it (the caller renders `None` as `X`) is the safe failure.
         MaybeDate::Raw(_) => None,
     }
@@ -678,9 +686,9 @@ fn shift_datetime(dt: NaiveDateTime, days: i32) -> NaiveDateTime {
 
 /// The stable part of a subject's identity, used to key the pseudonym.
 ///
-/// Deliberately excludes the free-text `additional` subfield and the raw field spacing: those
-/// carry per-session notes that differ between recordings of one subject, and keying on them
-/// would hand the same person a different pseudonym in every file.
+/// It excludes the free-text `additional` subfield and the raw field spacing on purpose. These
+/// hold per-session notes that differ between recordings of one subject. A key that includes
+/// them gives the same person a different pseudonym in every file.
 fn subject_identity(header: &EdfHeader) -> String {
     let name = header.patient.name.as_deref().unwrap_or("").trim();
     let code = header.patient.code.as_deref().unwrap_or("").trim();
@@ -704,8 +712,9 @@ fn subject_identity(header: &EdfHeader) -> String {
 /// HMAC-SHA256 keyed on `seed`, stretched over [`PSEUDONYM_ITERATIONS`], base32-encoded to an
 /// 8-character suffix.
 ///
-/// Keying on the seed means an adversary without it learns nothing; stretching means one who
-/// has it still pays [`PSEUDONYM_ITERATIONS`] hashes per candidate name they want to test.
+/// Because the seed is the key, an attacker without the seed learns nothing. Because of the
+/// stretch, an attacker with the seed still pays [`PSEUDONYM_ITERATIONS`] hashes for each
+/// candidate name.
 fn generate_pseudonym(seed: &str, subject: &str) -> String {
     let mut digest = hmac_sha256(seed.as_bytes(), b"pseudonym", subject.as_bytes());
     for _ in 0..PSEUDONYM_ITERATIONS {
@@ -721,12 +730,12 @@ fn generate_pseudonym(seed: &str, subject: &str) -> String {
     format!("Subject-{suffix}")
 }
 
-/// Deliberately not stretched: the shift has only `span` possible values, so an attacker can
-/// try them all regardless of how the seed is hashed. Stretching would buy nothing here and
-/// would double the cost of every call.
+/// Date shift in days, taken from `seed`. The hash is not stretched, on purpose. The shift has
+/// only `span` possible values, so an attacker can try all of them, whatever the seed hash is.
+/// A stretch will give no protection here and will double the cost of every call.
 fn derive_shift_days(seed: &str) -> i32 {
     let digest = hmac_sha256(seed.as_bytes(), b"dates", b"");
-    // +/-10 years, skipping 0 (a zero shift would leave dates untouched).
+    // +/-10 years, skipping 0 (a zero shift leaves dates untouched).
     let span = 3652i64;
     let raw = i64::from_le_bytes(digest[..8].try_into().unwrap()) % span;
     if raw == 0 { 1 } else { raw as i32 }

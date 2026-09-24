@@ -1,13 +1,19 @@
 # Async API
 
-The async API lives in `edfarray.aio` and has the same classes and methods as the sync API, with two exceptions. `aio.open(path, variant=None)` has no `scan_annotations` argument, and `aio.EdfFile.signal(idx_or_label, cache_capacity=0)` has no `strategy` argument. It is intended for applications that run an event loop and cannot afford to block on mmap decode. Typical cases are a desktop reader serving a browser UI, a local server feeding multiple clients, or any pipeline where Python work must interleave with signal decoding.
+The async API is in `edfarray.aio`. It has the same classes and methods as the sync API, with two exceptions. `aio.open(path, variant=None)` has no `scan_annotations` argument, and `aio.EdfFile.signal(idx_or_label, cache_capacity=0)` has no `strategy` argument.
 
-Every async method releases the GIL during decode via `tokio::task::spawn_blocking` on a multi-threaded tokio runtime. Multiple concurrent reads on the same file run in parallel.
+The async API is for applications that run an event loop and must not block on mmap decode. An event loop is the scheduler that runs asyncio coroutines. Typical applications are:
+
+- A desktop reader that serves a browser UI.
+- A local server that sends data to multiple clients.
+- A pipeline where Python work must interleave with signal decoding.
+
+Every async method releases the GIL (the Python global interpreter lock) during decode. It uses `tokio::task::spawn_blocking` on a multi-threaded tokio runtime. Concurrent reads on the same file run in parallel.
 
 ## Opening files
 
-Open a file asynchronously. The `open` call reads the header and starts a
-background annotation scan, so it returns quickly:
+Open a file asynchronously. The `open` call reads the header and starts an
+annotation scan in the background. Thus it returns quickly:
 
 ```python
 import asyncio
@@ -18,32 +24,32 @@ async def main():
     print(f.num_signals, f.duration)
 ```
 
-For a quick metadata lookup without keeping the file open, use `inspect`:
+To get the metadata quickly without keeping the file open, use `inspect`:
 
 ```python
 meta = await aio.inspect("recording.edf")
 print(meta["variant"], meta["num_signals"], meta["duration"])
 ```
 
-The async context manager form ensures the file is closed when the block exits:
+When the block exits, the async context manager closes the file:
 
 ```python
 async with await aio.open("recording.edf") as f:
     data = await f.signal(0).read_range(0, 1000)
 ```
 
-`aio.open` takes the same `variant` override as the sync constructor, for files
-whose `+C`/`+D` marker is missing or wrong:
+`aio.open` takes the same `variant` override as the sync constructor. Use it for
+files whose `+C`/`+D` marker is missing or wrong:
 
 ```python
 f = await aio.open("recording.edf", variant="EDF+D")
 ```
 
-Metadata getters (`num_signals`, `variant`, `start_datetime`, etc.) are sync even on the async `EdfFile`. They read from an `Arc`-shared header that was already loaded and return immediately without I/O.
+Metadata getters such as `num_signals`, `variant`, and `start_datetime` are sync, also on the async `EdfFile`. They read from a header that is already loaded and shared through an `Arc`. They return immediately and do no I/O.
 
 ## Reading signals
 
-Get a `Signal` proxy with `f.signal()` (sync), then read data asynchronously:
+Get a `Signal` object with `f.signal()` (sync). Then read data asynchronously:
 
 ```python
 f = await aio.open("recording.edf")
@@ -55,25 +61,27 @@ raw   = await sig.to_digital() # async: entire signal as int32 array
 times = await sig.times() # async: timestamp for each sample
 ```
 
-Time-based reads map seconds to sample indices internally:
+Time-based reads convert seconds to sample indices internally:
 
 ```python
 data = await sig.read_time_range(0.0, 10.0)  # physical values in [0, 10) seconds
 ```
 
-For repeated reads on the same signal, pass `cache_capacity` to enable an LRU
-cache of decoded physical records (the unit is data records, not samples):
+If you read the same signal again and again, pass `cache_capacity`. This
+enables an LRU (least recently used) cache of decoded physical records. A record
+is a block of samples with a fixed duration. The unit of `cache_capacity` is data
+records, not samples:
 
 ```python
 sig = f.signal(0, cache_capacity=4)  # cache 4 decoded records
 ```
 
-See [Caching repeated reads](signals.md#caching-repeated-reads) for how to size
-`cache_capacity` and when it helps -- the behavior is identical to the sync API.
+The cache behaves the same as in the sync API. [Caching repeated reads](signals.md#caching-repeated-reads) tells how to size
+`cache_capacity` and in which cases the cache helps.
 
 ## Concurrent reads
 
-Multiple coroutines reading different regions of the same file run concurrently on separate OS threads:
+If multiple coroutines read different regions of the same file, they run concurrently on separate OS threads:
 
 ```python
 import asyncio
@@ -90,20 +98,20 @@ results = await asyncio.gather(
 # Each element of results is a list of numpy arrays (one per signal).
 ```
 
-The four reads decode in parallel on the tokio thread pool. Total wall time is close to the time of a single page read, not four times that.
+The four reads decode in parallel on the tokio thread pool. The total wall time is close to the time of one page read, not four times that time.
 
-While Rust is decoding, other Python coroutines that do not need the extension continue to run. The event loop is not blocked.
+While Rust decodes, other Python coroutines that do not need the extension continue to run. The decode does not block the event loop.
 
 ## Multi-channel access in async mode
 
-The array proxies (`Proxy2D`, `Proxy3D`) are sync-only. Their value is the synchronous numpy-style `proxy[ch, samp_range]` indexing surface, which does not translate cleanly to `await` points. ML preprocessing pipelines that want this access pattern are themselves sync.
+The array proxies (`Proxy2D` and `Proxy3D`) are sync only. A proxy is an array view that reads from the file on access. Their purpose is synchronous numpy-style `proxy[ch, samp_range]` indexing. This indexing does not map well to `await` points. The ML preprocessing pipelines that use this access pattern are also sync.
 
-For multi-channel async reads, use `read_page`, which decodes signals in parallel on the tokio thread pool. If you need numpy-style indexing, open the file synchronously. `signal_groups()` and `signal_group()` are exposed on the async file for discovery as plain sync getters.
+For async reads of multiple signals, use `read_page`. It decodes signals in parallel on the tokio thread pool. If you need numpy-style indexing, open the file synchronously. The async file also has `signal_groups()` and `signal_group()` as plain sync getters. You can use them to find the signal groups.
 
 ## Waiting for annotations
 
 Opening a file is fast because the annotation scan runs in the background. If
-your code needs the full annotation index before proceeding, wait for it:
+your code needs the full annotation index before it continues, wait for it:
 
 ```python
 f = await aio.open("recording.edf")
@@ -114,14 +122,14 @@ for ann in f.annotations:
     print(ann.onset, ann.text)
 ```
 
-Check `f.annotations_ready` (sync) to see if the scan has finished without
-blocking.
+To find out whether the scan is finished, read `f.annotations_ready` (sync). This
+read does not block.
 
 ## Writing
 
-Two writing paths are available, matching the sync API.
+The async API has the same two ways to write a file as the sync API.
 
-One-shot write using `write_edf`:
+To write a file in one call, use `write_edf`:
 
 ```python
 import numpy as np
@@ -147,8 +155,8 @@ await aio.write_edf(
 )
 ```
 
-Streaming write using `EdfWriter`. The constructor is a classmethod -- call
-`create()`, not `EdfWriter(...)` directly:
+To write a file as a stream, use `EdfWriter`. Its constructor is a classmethod.
+Call `create()`. Do not call `EdfWriter(...)` directly:
 
 ```python
 w = await aio.EdfWriter.create(
@@ -164,7 +172,7 @@ for record in produce_records():
 await w.finish()
 ```
 
-Or use the async context manager:
+You can also use the async context manager:
 
 ```python
 async with await aio.EdfWriter.create(
@@ -177,7 +185,7 @@ async with await aio.EdfWriter.create(
         await w.write_record([record])
 ```
 
-`add_annotation` is sync and queues an annotation for the next record:
+`add_annotation` is sync. It puts an annotation in a queue for the next record:
 
 ```python
 import edfarray
@@ -187,24 +195,30 @@ w.add_annotation(edfarray.Annotation(onset=5.0, text="event"))
 
 ## Transcoding
 
-Write an open file to a new path, optionally changing the variant:
+Transcoding writes an open file to a new path. You can change the variant at the
+same time:
 
 ```python
 f = await aio.open("input.edfd")
 await f.write_to("output.edf", variant="EDF+C")
 ```
 
-Only ordinary signals are copied. Annotations are re-encoded from the parsed
-index rather than copied verbatim. The same [transcoding caveats](writing.md#round-tripping-an-existing-file)
-apply as for the sync `write_to`. Transcoding EDF+D to a non-`+D` variant loses
-its discontinuity, transcoding to a plain variant drops annotations, and
-downconverting sample size loses precision. The async `write_to` also accepts a
-`signals` subset selection and refuses an open destination, with the same
-behavior as the sync method.
+`write_to` copies only the ordinary signals. An ordinary signal is a signal that
+is not the annotation channel. `write_to` encodes the annotations again from the
+parsed index. It does not copy them byte for byte. The same [transcoding caveats](writing.md#round-tripping-an-existing-file)
+apply as for the sync `write_to`:
+
+- Transcoding EDF+D to a non-`+D` variant loses the EDF+D gaps. An EDF+D gap is
+  a time gap between two records.
+- Transcoding to a plain variant drops annotations.
+- Transcoding to a smaller sample size loses precision.
+
+The async `write_to` also accepts a `signals` subset selection. It also rejects
+a destination that is open. Both behave the same as in the sync method.
 
 ## Performance and when to choose async
 
-The async API is not universally faster than the sync API. It trades a small per-call overhead for parallel decode and event-loop responsiveness. The benchmarks under `examples/` quantify this on a 4 MB fixture (`test_generator.edf`, 180 000 samples @ 200 Hz). Absolute numbers vary by file size and machine.
+The async API is not always faster than the sync API. It adds a small overhead to each call. In return, it gives parallel decode and a responsive event loop. The benchmarks in `examples/` measure this on a 4 MB test file (`test_generator.edf`, 180 000 samples @ 200 Hz). Absolute numbers change with the file size and the machine.
 
 ### Parallel decode scales near-linearly up to core count
 
@@ -218,25 +232,26 @@ The async API is not universally faster than the sync API. It trades a small per
 | 4 | 20.79 ms   | 5.70 ms | 3.65x   | 91%        |
 | 8 | 41.11 ms   | 9.43 ms | 4.36x   | 55%        |
 
-Speedup tracks N up to the available core count, then plateaus.
+The speedup is close to N up to the number of available cores. Above that number, the speedup stops increasing.
 
 ### The event loop stays responsive under load
 
-`benchmark_async_gil_release.py` runs a busy Python thread alongside 10 full decodes. Both APIs release the GIL during decode (the busy thread runs at ~95% of its free-running tick rate either way), but the wall-clock time for the decodes differs substantially:
+`benchmark_async_gil_release.py` runs a busy Python thread at the same time as 10 full decodes. Both APIs release the GIL during decode. With both APIs, the busy thread runs at about 95% of its free-running tick rate. But the wall-clock time for the decodes is very different:
 
 | API   | Wall time (10 decodes, busy thread) |
 | ----- | ----------------------------------- |
 | sync  | 4296 ms                             |
 | async | 325 ms (~13x faster)                |
 
-Sync runs decode on the calling thread, which then contends with the busy
-thread for the GIL and the CPU. Async dispatches to a tokio worker on a
-separate OS thread, so the Python side does only event-loop work.
+The sync API runs decode on the calling thread. That thread releases the GIL
+during each decode, but it must take the GIL back between decodes. So it competes
+with the busy thread for the GIL and the CPU. The async API sends the work to a tokio
+worker on a separate OS thread. Thus the Python side does only event-loop work.
 
 ### Single-shot overhead is small for bulk reads, noticeable for tiny ones
 
 `benchmark_async_vs_sync.py` runs the same operations through both APIs
-serially (concurrency = 1):
+in series (concurrency = 1):
 
 | Operation             | sync     | async    | overhead |
 | --------------------- | -------- | -------- | -------- |
@@ -245,39 +260,40 @@ serially (concurrency = 1):
 | full read (digital)   | 4.46 ms  | 4.53 ms  | +1.5%    |
 | 1-second slice        | 11 us    | 107 us   | +880%    |
 
-The fixed ~100 us cost of a tokio dispatch plus event-loop hop is negligible against a multi-millisecond decode but dominates a microsecond-scale slice.
+A tokio dispatch and an event-loop hop have a fixed cost of about 100 us. This cost is very small compared with a decode of several milliseconds. But it is most of the time for a slice at microsecond scale.
 
 ### Recommendations
 
-Use **async** (`edfarray.aio`) when:
+Use async (`edfarray.aio`) in these cases:
 
-- you read multiple files or multiple regions concurrently and want true
-  parallel decode (`asyncio.gather`, multi-client server, etc.);
-- you serve a UI or other event loop and cannot afford to stall it during
-  long decodes;
-- you are already inside an asyncio application.
+- You read multiple files or multiple regions concurrently and want true
+  parallel decode. Examples are `asyncio.gather` and a server with multiple
+  clients.
+- You serve a UI or another event loop and must not stall it during long
+  decodes.
+- You already work inside an asyncio application.
 
-Use **sync** (`edfarray.EdfFile`) when:
+Use sync (`edfarray.EdfFile`) in these cases:
 
-- you are doing a serial pipeline of small reads (sub-millisecond) where the
-  ~100 us per-call overhead matters;
-- the program is not otherwise async and you don't need concurrency;
-- you are writing a one-off script. The sync API is simpler for that.
+- You run a serial pipeline of small reads (less than one millisecond each).
+  In this pipeline, the overhead of about 100 us per call is important.
+- The program is not async for other reasons, and you do not need concurrency.
+- You write a one-off script. The sync API is simpler for that.
 
-Both APIs share the same Rust decode path, so for a single bulk read they
-finish in essentially the same wall time.
+Both APIs use the same Rust decode path. Thus, for one bulk read, they finish in
+almost the same wall time.
 
 ## GIL release and parallelism
 
 The async runtime is a multi-threaded tokio executor. Every async method that
-performs decode or file I/O wraps the work in `tokio::task::spawn_blocking`,
-which releases the Python GIL for the duration. This means:
+does decode or file I/O wraps the work in `tokio::task::spawn_blocking`. This
+releases the Python GIL while the work runs. The results are:
 
 - Decode of large signals does not block the event loop.
 - Other Python-only coroutines can run while decode is in progress.
 - Multiple reads on the same file are dispatched to separate OS threads and
   run in parallel.
 
-Tests verify this with a busy-thread counter: a background thread increments a
-counter while async reads are in flight. The counter advances during decode,
-confirming the GIL is released.
+The tests prove this with a busy-thread counter. A background thread increments
+a counter while async reads run. The counter increases during decode. This result
+shows that the decode releases the GIL.

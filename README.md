@@ -1,8 +1,8 @@
 # edfarray
 
-An EDF/EDF+ and BDF/BDF+ file parsing library with numpy-like Python bindings. Handles EDF, EDF+C (contiguous), and EDF+D (discontinuous) recordings, and the matching 24-bit BDF variants.
+edfarray is a library that parses EDF/EDF+ and BDF/BDF+ files. It has Python bindings with a numpy-like interface. It reads EDF, EDF+C (contiguous), and EDF+D (discontinuous) recordings, and the matching 24-bit BDF variants.
 
-**Read the [documentation](https://bleemesser.github.io/edfarray/)**
+Read the [documentation](https://bleemesser.github.io/edfarray/).
 
 ## Install
 
@@ -53,7 +53,7 @@ with edfarray.EdfFile("recording.edf") as f:
     print(epochs.data.shape) # (3, 64, 240)
 ```
 
-See the [docs](https://bleemesser.github.io/edfarray/) for the full guide on signals, annotations, epoch extraction, EDF+D time gaps, and performance.
+The [docs](https://bleemesser.github.io/edfarray/) contain the full guide to signals, annotations, epoch extraction, EDF+D time gaps, and performance.
 
 ## Examples
 
@@ -65,19 +65,19 @@ uv run examples/benchmark.py
 uv run examples/benchmark_paging.py
 ```
 
-The benchmark scripts compare against pyedflib. pyedflib is not installed by default.
+The benchmark scripts compare edfarray with pyedflib. By default, pyedflib is not installed.
 To get the comparison columns, install the `bench` group:
 
 ```bash
 uv sync --group bench
 ```
 
-pyedflib builds from source, so this step needs a C compiler and the Python
+pyedflib builds from source. Thus this step needs a C compiler and the Python
 development headers (`python3-devel` on Fedora, `python3-dev` on Debian).
 
 ## Benchmarks
 
-Compared against [pyedflib](https://github.com/holgern/pyedflib) (Python bindings for edflib C library).
+These benchmarks compare edfarray with [pyedflib](https://github.com/holgern/pyedflib), the Python bindings for the edflib C library.
 
 Single-signal reads:
 
@@ -92,7 +92,7 @@ S001R01.edf               Read full signal          11 us       450 us      39x
 (1.2 MB, 64 channels)     Read digital               7 us       450 us      67x
 ```
 
-EEG viewer paging (all channels, 10s window):
+EEG viewer paging (all signals, 10s window):
 
 ```text
 File                      Operation              edfarray     pyedflib    speedup
@@ -104,7 +104,7 @@ S001R01.edf               Page forward (median)    114 us      5.30 ms      47x
 (64 channels)              Random seek (median)     81 us      5.34 ms      66x
 ```
 
-Large files, where the data does not fit in the page cache. One full channel read from a 4.0 GiB, 64-channel recording:
+Large files, where the data does not fit in the page cache. The page cache is memory where the OS keeps file data. The test reads one full signal from a 4.0 GiB recording with 64 signals:
 
 ```text
 Cache state    edfarray   pyedflib    speedup
@@ -113,20 +113,22 @@ Warm             113 ms    1021 ms        9.1x
 Cold             659 ms    5624 ms        8.5x
 ```
 
-EDF interleaves channels within each record, so reading one channel touches every record in the file. edfarray checks how much of the range is already resident and switches to a bounded sequential read when it is not, which is what keeps the cold number close to the warm one. Forcing the memory map (`strategy="mmap"`) instead takes 3959 ms and causes 131,073 major page faults.
+EDF interleaves the signals within each record. A record is one fixed-duration block of samples. Thus a read of one signal touches every record in the file. edfarray first finds how much of the range is already in the page cache. If the range is not in the page cache, edfarray switches to a bounded sequential read. This switch keeps the cold number close to the warm number.
+
+A memory map makes the bytes of a file readable as memory. If you force the memory map (`strategy="mmap"`), the same read takes 3959 ms and causes 131,073 major page faults.
 
 ^ `examples/benchmark.py`, `examples/benchmark_paging.py`, `scripts/bench_large.py`
 (M3 Pro MacBook Pro, release build)
 
 ## Building from source
 
-Prerequisites: [Rust toolchain](https://rustup.rs/), Python 3.12+, [uv](https://docs.astral.sh/uv/).
+Before you build, install the [Rust toolchain](https://rustup.rs/), Python 3.12+, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
 ```
 
-`uv sync` creates `.venv`, compiles the Rust extension through maturin, and installs
+`uv sync` creates `.venv`, compiles the Rust extension with maturin, and installs
 `edfarray` into that environment. Run it once before anything else. After you change
 Rust code, rebuild the extension in place:
 
@@ -134,16 +136,17 @@ Rust code, rebuild the extension in place:
 uv run maturin develop
 ```
 
-To regenerate the `.pyi` stubs:
+To regenerate the `.pyi` stubs, run this command:
 
 ```bash
 cargo run --bin gen_stubs --no-default-features --package edfarray
 ```
 
-`--no-default-features` turns off `pyo3/extension-module`, so this binary links against
+`--no-default-features` turns off `pyo3/extension-module`. Thus this binary links against
 libpython. If the link step fails with `unable to find library -lpython3.x`, your system
-Python has no shared library to link against. Install the Python development package, or
-point the build at an interpreter that ships one, such as a uv-managed Python:
+Python has no shared library to link against. In that case, install the Python development
+package. As an alternative, point the build at an interpreter that has a shared library,
+for example a Python that uv manages:
 
 ```bash
 PYO3_PYTHON="$(uv python find 3.13)" cargo run --bin gen_stubs --no-default-features --package edfarray
@@ -151,8 +154,8 @@ PYO3_PYTHON="$(uv python find 3.13)" cargo run --bin gen_stubs --no-default-feat
 
 ## Running tests
 
-Run `uv sync` first. The Python tests import the built extension, and they fail to
-collect if the package is not installed in `.venv`.
+Run `uv sync` first. The Python tests import the built extension. If the package is not
+installed in `.venv`, pytest cannot collect the tests.
 
 ```bash
 uv run pytest
@@ -160,13 +163,13 @@ cargo test --package edfarray-core
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-`tests/test_differential.py` compares edfarray against pyedflib, so it skips itself
-unless the `bench` group is installed. CI installs that group. To run the full suite
-locally, use `uv sync --group bench` as described under Examples.
+`tests/test_differential.py` compares edfarray with pyedflib. If the `bench` group is not
+installed, the test skips itself. CI installs that group. To run the full suite locally,
+run `uv sync --group bench`, as the Examples section describes.
 
 ## Releasing
 
-Bump the version in `crates/edfarray-core/Cargo.toml` and `crates/edfarray-python/Cargo.toml`, regenerate the stubs, then:
+Increase the version in `crates/edfarray-core/Cargo.toml` and `crates/edfarray-python/Cargo.toml`. Then run these commands to regenerate the stubs, commit, tag, and push:
 
 ```bash
 cargo run --bin gen_stubs --no-default-features --package edfarray
@@ -176,9 +179,10 @@ git tag vx.y.z
 git push && git push origin vx.y.z
 ```
 
-Pushing the tag runs the release job in `.github/workflows/ci.yml`, which builds wheels for
-CPython 3.12-3.14 on Linux (x86_64, aarch64), macOS (x86_64, arm64), and Windows, plus an
-sdist, then publishes to PyPI via trusted publishing from the `pypi` environment.
+When you push the tag, the release job in `.github/workflows/ci.yml` starts. The job builds
+wheels for CPython 3.12-3.14 on Linux (x86_64, aarch64), macOS (x86_64, arm64), and Windows.
+It also builds an sdist. Then it publishes to PyPI through trusted publishing from the `pypi`
+environment.
 
 ## License
 

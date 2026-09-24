@@ -9,7 +9,7 @@ const MAIN_HEADER_SIZE: usize = 256;
 /// Size of the per-signal header block for one signal.
 const SIGNAL_HEADER_SIZE: usize = 256;
 
-/// Parsed datetime or raw string when date fields are non-standard.
+/// Parsed datetime, or the raw strings when the date fields are not standard.
 #[derive(Debug, Clone)]
 pub enum MaybeDateTime {
     Parsed(NaiveDateTime),
@@ -173,7 +173,7 @@ pub struct EdfHeader {
 }
 
 impl EdfHeader {
-    /// Parse EDF header from byte slice. Requires `256 + 256 * num_signals` bytes.
+    /// Parse an EDF header from a byte slice. The slice must hold `256 + 256 * num_signals` bytes.
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < MAIN_HEADER_SIZE {
             return Err(EdfError::FileTooSmall {
@@ -200,7 +200,7 @@ impl EdfHeader {
         }
 
         // Everything downstream divides by this (sample rates, time-to-sample mapping, group
-        // bucketing), so a non-finite or negative value would poison the whole file with NaN.
+        // bucketing), so a non-finite or negative value will poison the whole file with NaN.
         if !record_duration_secs.is_finite() || record_duration_secs < 0.0 {
             return Err(EdfError::InvalidHeaderField {
                 field: "record_duration",
@@ -268,9 +268,9 @@ impl EdfHeader {
 
     /// Size of one complete data record in bytes.
     ///
-    /// Saturating, so a header declaring absurd sample counts yields a size that fails bounds
-    /// checks rather than one that wraps into a small plausible value. `RecordLayout` takes its
-    /// total from here so the two cannot disagree.
+    /// The arithmetic saturates. Thus, if a header declares very large sample counts, the size
+    /// fails bounds checks and does not wrap to a small value that looks correct. `RecordLayout`
+    /// takes its total from this function, so the two values cannot disagree.
     pub fn record_size(&self) -> usize {
         let bytes = self.variant.sample_size_bytes();
         self.signals.iter().fold(0usize, |acc, s| {
@@ -285,9 +285,10 @@ impl EdfHeader {
 
     /// Reconcile `num_records` with the actual file size.
     ///
-    /// Recovers the count from the file size when the header declares -1 (EDF-L), and clamps it
-    /// when the header declares more records than the file can hold. A header count is never
-    /// trusted on its own: downstream sizing (sample counts, output buffers) is derived from it.
+    /// If the header declares -1 (EDF-L), this function recovers the count from the file size.
+    /// If the header declares more records than the file can hold, it clamps the count. The
+    /// header count is never trusted alone, because sample counts and output buffer sizes come
+    /// from it.
     pub fn reconcile_num_records_with_file_size(&mut self, file_size: usize) {
         let record_size = self.record_size();
         if record_size == 0 {
@@ -366,7 +367,8 @@ fn read_f64(data: &[u8], offset: usize, size: usize, name: &'static str) -> Resu
     })
 }
 
-/// Parse start date (dd.mm.yy) and time (hh.mm.ss). Year clipping: 85-99 -> 1985-1999, 00-84 -> 2000-2084.
+/// Parse the start date (dd.mm.yy) and time (hh.mm.ss). Years 85-99 become 1985-1999, and
+/// years 00-84 become 2000-2084.
 fn parse_start_datetime(date_str: &str, time_str: &str) -> MaybeDateTime {
     match try_parse_datetime(date_str, time_str) {
         Some(dt) => MaybeDateTime::Parsed(dt),
@@ -408,7 +410,7 @@ fn try_parse_datetime(date_str: &str, time_str: &str) -> Option<NaiveDateTime> {
     Some(NaiveDateTime::new(date, time))
 }
 
-/// Parse EDF+ patient_id. "X" means unknown; underscores replaced with spaces.
+/// Parse the EDF+ patient_id. "X" means unknown. Underscores become spaces.
 fn parse_patient_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>) -> PatientInfo {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() < 4 {
@@ -497,7 +499,7 @@ fn parse_recording_id(raw: &str, variant: EdfVariant, warnings: &mut Vec<String>
     }
 }
 
-/// Parse a date in EDF+ format: DD-MMM-YYYY (e.g., "02-MAR-1951").
+/// Parse a date in EDF+ format: DD-MMM-YYYY (for example, "02-MAR-1951").
 fn parse_edf_plus_date(s: &str) -> Option<NaiveDate> {
     let parts: Vec<&str> = s.split('-').collect();
     if parts.len() != 3 {

@@ -12,10 +12,10 @@ use edfarray_core::writer::{EdfWriter, WriterSignal, WriterSpec, write_edf};
 use crate::annotations::PyAnnotation;
 use crate::errors::{invalid_argument_err, to_py_err};
 
-/// Per-signal description used by `EdfWriter` and `write_edf`.
+/// The description of one signal for `EdfWriter` and `write_edf`.
 ///
 /// `physical_min`/`physical_max` define the unit range. `digital_min`/`digital_max`
-/// define the integer range used in the binary file (16-bit for EDF, 24-bit for BDF).
+/// define the integer range in the binary file (16-bit for EDF, 24-bit for BDF).
 #[gen_stub_pyclass]
 #[pyclass(name = "WriterSignal", module = "edfarray._core", from_py_object)]
 #[derive(Clone)]
@@ -74,13 +74,13 @@ impl PyWriterSignal {
         }
     }
 
-    /// Signal label written to the header.
+    /// The signal label that the writer puts in the header.
     #[getter]
     fn label(&self) -> &str {
         &self.inner.label
     }
 
-    /// Physical unit, e.g. "uV".
+    /// The physical unit, for example "uV".
     #[getter]
     fn physical_dimension(&self) -> &str {
         &self.inner.physical_dimension
@@ -106,7 +106,7 @@ impl PyWriterSignal {
         self.inner.digital_max
     }
 
-    /// Samples this signal contributes to each data record.
+    /// The number of samples that this signal adds to each data record.
     #[getter]
     fn samples_per_record(&self) -> usize {
         self.inner.samples_per_record
@@ -127,7 +127,7 @@ impl PyWriterSignal {
         &self.inner.reserved
     }
 
-    /// Compare by value so specs can be checked in tests and round-tripped.
+    /// Compare by value, so that tests can compare specs and round-trip them.
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         let Ok(o) = other.extract::<PyRef<'_, PyWriterSignal>>() else {
             return false;
@@ -264,9 +264,9 @@ pub(crate) fn anns_to_core(anns: &[PyAnnotation]) -> Vec<Annotation> {
         .collect()
 }
 
-/// Streaming EDF/BDF writer.
+/// A streaming EDF/BDF writer.
 ///
-/// Use as a context manager (`with edfarray.EdfWriter(...) as w:`) or call
+/// Use the writer as a context manager (`with edfarray.EdfWriter(...) as w:`), or call
 /// `.finish()` explicitly. `__exit__` calls `finish()` automatically.
 #[gen_stub_pyclass]
 #[pyclass(name = "EdfWriter", module = "edfarray._core")]
@@ -330,7 +330,7 @@ impl PyEdfWriter {
         Ok(())
     }
 
-    /// Queue an annotation to be embedded in the next written record.
+    /// Queue an annotation. The writer puts it in the next record that it writes.
     fn add_annotation(&mut self, annotation: PyAnnotation) -> PyResult<()> {
         let w = self
             .inner
@@ -346,10 +346,10 @@ impl PyEdfWriter {
 
     /// Write one data record from physical (float) values.
     ///
-    /// `physical` is a list of 1D float64 numpy arrays (one per user signal),
-    /// each of length `samples_per_record`. `annotations` is an optional list
-    /// of annotations to embed in this record's annotation channel (only valid
-    /// for `+C`/`+D` variants).
+    /// `physical` is a list of 1D float64 numpy arrays, one per ordinary signal. An ordinary
+    /// signal is a signal that is not the annotation channel. Each array has the length
+    /// `samples_per_record`. `annotations` is an optional list of annotations to put in the
+    /// annotation channel of this record. It is valid only for `+C`/`+D` variants.
     #[pyo3(signature = (physical, annotations=None))]
     fn write_record(
         &mut self,
@@ -373,8 +373,8 @@ impl PyEdfWriter {
             .map_err(to_py_err)
     }
 
-    /// Finalize the file: flush buffers and patch `num_records` in the header.
-    /// After calling, the writer is no longer usable.
+    /// Finalize the file: flush the buffers and write `num_records` into the header.
+    /// After this call, you cannot use the writer again.
     fn finish(&mut self) -> PyResult<()> {
         if let Some(w) = self.inner.take() {
             w.finish().map_err(to_py_err)?;
@@ -393,9 +393,9 @@ impl PyEdfWriter {
 
 /// Write a complete EDF/BDF file in one call.
 ///
-/// `data` is a list of 1D float64 numpy arrays, one per user signal. Each
-/// array's length must be `num_records * samples_per_record` and consistent
-/// across signals.
+/// `data` is a list of 1D float64 numpy arrays, one per ordinary signal. An ordinary
+/// signal is a signal that is not the annotation channel. The length of each array must be
+/// `num_records * samples_per_record`, with the same `num_records` for all signals.
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(name = "write_edf", signature = (

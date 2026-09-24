@@ -1,6 +1,6 @@
 use crate::error::{EdfError, Result};
 
-/// Label used by EDF+ to identify annotation signals.
+/// Label that EDF+ uses to identify an annotation channel.
 const EDF_ANNOTATIONS_LABEL: &str = "EDF Annotations";
 
 /// Metadata for a single signal, parsed from the per-signal header fields.
@@ -22,7 +22,7 @@ pub struct SignalHeader {
 }
 
 impl SignalHeader {
-    /// Parse the header fields for signal at `index` from the per-signal header bytes.
+    /// Parse the header fields for the signal at `index` from the per-signal header bytes.
     pub fn parse(
         data: &[u8],
         index: usize,
@@ -103,7 +103,7 @@ impl SignalHeader {
         self.gain * digital as f64 + self.offset
     }
 
-    /// Computed sample rate given the data record duration in seconds.
+    /// Sample rate, computed from the data record duration in seconds.
     pub fn sample_rate(&self, record_duration_secs: f64) -> f64 {
         if record_duration_secs == 0.0 {
             0.0

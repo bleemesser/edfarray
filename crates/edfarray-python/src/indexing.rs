@@ -7,8 +7,8 @@ use crate::errors::out_of_range_err;
 /// Extract an integer index, rejecting `bool`.
 ///
 /// `bool` subclasses `int` in Python, so a plain `extract::<isize>()` accepts `True` and reads
-/// it as index 1. numpy treats a bool as a mask, so silently returning element 1 would be a
-/// wrong answer rather than an unsupported one.
+/// it as index 1. numpy reads a bool as a mask. If this function returned element 1, the caller
+/// gets a wrong answer and not an error for an unsupported index.
 pub fn extract_index(key: &Bound<'_, PyAny>) -> Option<isize> {
     if key.is_instance_of::<PyBool>() {
         return None;

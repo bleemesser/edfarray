@@ -1,14 +1,14 @@
 # Anonymization
 
-Sharing recordings? Scrub them first. edfarray edits the identification fields in place, so
-a 4 GiB recording costs a few hundred bytes of I/O instead of a full rewrite. Nothing else
-in the file moves, which means the signal data, timings, and annotations of a release
-candidate stay byte-identical to what you validated.
+Anonymize a recording before you share it. edfarray edits the identification fields in
+place. For a 4 GiB recording, this costs a few hundred bytes of I/O, not a full rewrite. No
+other part of the file moves. Thus the signal data, timings, and annotations of a release
+candidate stay byte-identical to the version that you reviewed.
 
 Three functions cover the workflow:
 
-- `edfarray.edit_header(path, ...)` replaces header fields you choose.
-- `edfarray.anonymize(path, ...)` does the usual scrub in one call.
+- `edfarray.edit_header(path, ...)` replaces the header fields that you choose.
+- `edfarray.anonymize(path, ...)` does the usual anonymization in one call.
 - `edfarray.audit(path)` reports where identity strings still appear.
 
 ## Editing header fields
@@ -25,16 +25,18 @@ diff = edfarray.edit_header(
 # diff maps each changed field to {"before": ..., "after": ...}
 ```
 
-Pass `None` for a field to leave it alone. Values must fit the fixed-width ASCII fields, so
-at most 80 bytes for the two id fields. Every value is checked before anything is written, so
-a rejected edit leaves the file byte-identical.
+To leave a field unchanged, pass `None` for it. Values must fit the fixed-width ASCII
+fields. Thus each of the two id fields holds at most 80 bytes. `edit_header` checks every
+value before it writes anything. Thus a rejected edit leaves the file byte-identical.
 
 If another edfarray handle has the file open, `edit_header` and `anonymize` raise
 `EdfFileError`. An open `EdfFile` keeps the header that it parsed at open time. Without
-this check, that `EdfFile` would report the old identity after an edit. Before you edit,
-close the file. Then drop every signal and proxy taken from it. A dry run (`dry_run=True`,
-which reports the result but writes nothing) and `audit` only read the file, so they work
-on an open file.
+this check, that `EdfFile` will report the old identity after an edit. Before you edit a
+file, close it. Then drop every signal and proxy taken from it. A proxy is a `Proxy2D` or
+`Proxy3D` array view.
+
+A dry run is a run that reports the result but writes nothing. To start a dry run, pass
+`dry_run=True`. A dry run and `audit` only read the file, so they work on an open file.
 
 ## Anonymizing
 
@@ -48,39 +50,45 @@ result = edfarray.anonymize(
 )
 ```
 
-What it does, by default:
+By default, `anonymize` makes these changes:
 
-- Replaces the patient name with a pseudonym (`Subject-XXXXXXXX`). With a `seed`, the same
-  subject's files always share one pseudonym, so a subject's recordings stay linkable across
-  a corpus. The pseudonym is keyed on the patient name, code, and birthdate only, so
-  per-session notes in the free-text subfield do not split one subject into several
-  pseudonyms. Without a seed, every call picks a new random pseudonym and date shift.
-- Replaces the patient code, technician, admin code, and free-text subfields with `X`.
-  Sex and equipment survive unless you pass `keep_sex=False` / `keep_equipment=False`.
-- Shifts birthdate, recording date, and the header startdate by the same number of days.
-  Age and time-of-day survive, the calendar date does not. A shift that would push the
-  startdate outside the 1985-2084 range the two-digit year field can hold raises instead
-  of silently clamping.
+- It replaces the patient name with a pseudonym (`Subject-XXXXXXXX`). A pseudonym is a
+  made-up name for the patient. With a `seed`, all files of one subject get the same
+  pseudonym, so the recordings of a subject stay linkable across a corpus. Of the subject
+  fields, the pseudonym uses only the patient name, code, and birthdate. Thus notes for
+  each session in the free-text subfield do not split one subject into several
+  pseudonyms. Without a seed, every call picks a new random pseudonym and a new date
+  shift (the number of days that all dates move).
+- It replaces the patient code, technician, admin code, and free-text subfields with `X`.
+  It keeps sex and equipment by default. If you pass `keep_sex=False`, it does not keep
+  sex. `keep_equipment=False` does the same for equipment.
+- It shifts the birthdate, the recording date, and the header startdate by the same number
+  of days. Age and time of day stay the same, but the calendar date changes. The two-digit
+  year field can hold only the years 1985-2084. If a shift moves the startdate outside this
+  range, `anonymize` raises an error. It does not clamp the date silently.
 
-Add `dry_run=True` to see the changes without writing anything. A dry run makes the same
-checks on the field values as a real run. A real run can still fail if another edfarray
-handle has the file open, or on an I/O error. If you want the dry run to show the same
-pseudonym and date shift as the real run, pass a `seed`.
+To see the changes without writing anything, add `dry_run=True`. A dry run makes the same
+checks on the field values as a real run. A real run can still fail for two reasons.
+Another edfarray handle can have the file open, or an I/O error can occur. To make the dry
+run show the same pseudonym and date shift as the real run, pass a `seed`.
 
 !!! danger "The seed is a re-identification key"
-    A reused `seed` determines both the pseudonym and the date shift. Pseudonyms are HMAC-SHA256
-    keyed on the seed and stretched over 500,000 iterations, so without the seed they are not
-    reversible, and with it a dictionary sweep over candidate names costs about 20 ms per guess
-    rather than being instant. That is a speed bump, not a wall: the date shift has only 7,302
-    possible values and cannot be protected this way at all. Store the seed the way you would
-    store a linking log -- separately from the anonymized files, and never in the same release.
+    Store the seed as you store a linking log (the list that maps pseudonyms to real
+    identities). Keep it separate from the anonymized files, and never put it in the same
+    release. A reused `seed` determines both the pseudonym and the date shift.
+
+    edfarray makes each pseudonym with HMAC-SHA256, keyed on the seed and stretched over
+    500,000 iterations. Without the seed, a pseudonym is not reversible. With the seed, a
+    dictionary search over candidate names costs about 20 ms per guess, not zero time. This
+    cost slows the search but does not stop it. The date shift has only 7,302 possible
+    values, and this method cannot protect it at all.
 
 ## The audit gate
 
-Header editing cannot touch signal labels or annotation text, and labs do write channel
-names like `EEG Alice Smith` or event notes like `Alice Smith restless`. `audit()` scans
-labels, transducers, prefilters, and annotation text, and returns each hit with its
-location:
+Header edits cannot change signal labels or annotation text. But some labs put patient
+names in signal labels or event notes. Examples are the label `EEG Alice Smith` and the
+note `Alice Smith restless`. `audit()` scans labels, transducers, prefilters, and annotation text. It returns
+each hit with its location:
 
 ```python
 report = edfarray.audit("recording.edf")
@@ -89,21 +97,22 @@ if not report["clean"]:
         print(hit["location"], hit["term"], hit["excerpt"])
 ```
 
-Terms come from the patient name, patient code, technician, and admin code currently in
-the header, so run it before anonymizing. Afterward, re-check against the terms that were
-scrubbed:
+`audit()` takes its search terms from the patient name, patient code, technician, and
+admin code in the current header. Thus you must run it before you anonymize the file. To
+make sure that no removed term remains, run `audit()` again with the terms that `anonymize`
+removed:
 
 ```python
 result = edfarray.anonymize("recording.edf", seed="study-2026")
 residual = edfarray.audit("recording.edf", terms=result["scrubbed_terms"])
 ```
 
-Residual hits need a human decision. You can rename channels by rewriting the file with
-`edfarray.write_edf()` from the decoded data, but there is no in-place text rewrite inside
-annotation records.
+A person must decide what to do with each remaining hit. To rename signals, write the file
+again with `edfarray.write_edf()` from the decoded data. edfarray cannot rewrite annotation
+text in place.
 
 !!! warning "Anonymization is not a guarantee"
-    These functions remove the identifiers this library can see. They cannot know about
-    an identity embedded in arbitrary binary payloads, a filename, or an export step that
-    copies metadata somewhere else. Treat the audit report as one check in a release
-    process, not as the whole process.
+    Use the audit report as one check in a release process, not as the whole process.
+    These functions remove only the identifiers that this library can see. They cannot find
+    an identity in arbitrary binary payloads, in a filename, or in an export step that
+    copies metadata to another location.

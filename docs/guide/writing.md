@@ -1,15 +1,18 @@
 # Writing EDF/BDF files
 
-`edfarray` can write EDF, EDF+C, EDF+D, BDF, BDF+C, and BDF+D files. Two entry
-points cover the common cases:
+`edfarray` can write EDF, EDF+C, EDF+D, BDF, BDF+C, and BDF+D files. A record is
+a block of samples with a fixed duration. Two functions cover the common cases:
 
-- `edfarray.write_edf(...)`: one-shot. Pass all signal data and annotations at
-  once. Best for transcoding existing files or saving in-memory data.
-- `edfarray.EdfWriter(...)`: streaming. Open a file, push records as they
-  arrive, queue annotations between records, then `finish()` (or use a `with`
-  block). Best for live recording or files too large to hold in memory.
+- `edfarray.write_edf(...)`: Writes the file in one call. Pass all signal data and
+  annotations at the same time. Use it to transcode existing files or to save data
+  that is in memory.
+- `edfarray.EdfWriter(...)`: Writes the file as a stream. Open a file, write records
+  when they arrive, and queue annotations between records. Then call `finish()`, or
+  use a `with` block. Use it for live recording or for files too large to keep in
+  memory.
 
-The writer auto-creates the `EDF Annotations` channel for `+C`/`+D` variants. Do not include it in your signal list.
+For `+C`/`+D` variants, the writer creates the annotation channel (the `EDF Annotations`
+signal) automatically. Do not include it in your signal list.
 
 ## One-shot: `write_edf`
 
@@ -46,8 +49,8 @@ edfarray.write_edf(
 ```
 
 `data[i]` must have length `num_records * signals[i].samples_per_record`, with
-the same `num_records` across signals. Annotations are placed in the record
-whose time window contains their onset.
+the same `num_records` for all signals. The writer puts each annotation in the
+record whose time window contains the onset of the annotation.
 
 ## Streaming: `EdfWriter`
 
@@ -66,11 +69,11 @@ with edfarray.EdfWriter(
             )
 ```
 
-The header is written with `num_records = -1` initially and patched on
-`finish()` (called automatically by `__exit__`). Calling `add_annotation`
-queues an annotation; it's emitted with the next `write_record` call. To embed
-specific annotations in a specific record, pass them as the second arg of
-`write_record`:
+The writer first writes the header with `num_records = -1`. `finish()` updates
+the header later. `__exit__` calls `finish()` automatically. `add_annotation`
+puts an annotation in a queue, and the next `write_record` call writes it. To
+put specific annotations in a specific record, pass them as the second argument
+of `write_record`:
 
 ```python
 w.write_record([record], [edfarray.Annotation(onset=t, text="cue")])
@@ -78,23 +81,25 @@ w.write_record([record], [edfarray.Annotation(onset=t, text="cue")])
 
 ## Round-tripping an existing file
 
-`EdfFile.write_to(path)` re-emits the current file's signals and annotations.
-Useful for transcoding:
+`EdfFile.write_to(path)` writes the signals and annotations of the current file
+to a new path. You can use it to transcode a file (copy it to another variant):
 
 ```python
 f = edfarray.EdfFile("input.edfd")
 f.write_to("output.edf", variant="EDF+C")  # collapse a discontinuous file
 ```
 
-Only ordinary signals are copied; the annotation channel is rebuilt from the
-parsed annotations rather than copied verbatim. If `variant` is omitted the
-source variant is kept.
+`write_to` copies only the ordinary signals. An ordinary signal is a signal that
+is not the annotation channel. `write_to` builds the annotation channel again from
+the parsed annotations. It does not copy the channel byte for byte. If you omit
+`variant`, the new file keeps the source variant.
 
 ### Copying a subset of channels
 
-Pass `signals` to write only selected channels: a `SignalGroup`, a signal
-index, a label, or a sequence mixing both. The destination's channels appear
-in the given order, and annotations are copied in full either way:
+Pass `signals` to write only the selected signals. The value can be a
+`SignalGroup`, a signal index, a label, or a sequence that mixes indices and
+labels. The new file contains the signals in the given order. `write_to` always
+copies all annotations:
 
 ```python
 f.write_to("eeg_only.edf", signals=[0, 3])           # two channels, in order
@@ -102,17 +107,33 @@ f.write_to("eeg_only.edf", signals=["EEG Fp1", 3])   # indices and labels mix
 f.write_to("eeg_only.edf", signals=f.signal_group([0, 3]))
 ```
 
-The annotation channel itself cannot be selected: it is rebuilt automatically.
-Sets and dicts are rejected because they have no fixed order. An empty
-selection, a duplicated channel, or an out-of-range index is rejected before
-anything is written.
+You cannot select the annotation channel. `write_to` always builds it again.
+`write_to` rejects sets and dicts because they have no fixed order. It also
+rejects an empty selection, a duplicated signal, or an out-of-range index. It
+rejects these values before it writes any data.
+
+!!! warning "Transcoding caveats"
+    Transcoding writes the records with no gaps between them, except from EDF+D
+    to EDF+D. An EDF+D gap is a time gap between two records. Thus transcoding
+    changes more than the variant tag in the header:
+
+    - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
+      EDF+D to any non-`+D` variant makes the timing uniform. Uniform
+      `record_idx * record_duration` timing replaces the onset and gap of each
+      record.
+    - Any `+` variant to a plain (non-`+`) variant drops all annotations. Plain
+      EDF/BDF has no annotation channel.
+    - A smaller sample size (for example, BDF 24-bit to EDF 16-bit) clamps the
+      digital range. The writer encodes the data again from physical values, and
+      precision is lost.
 
 ### Writing over an open file
 
 If another edfarray handle has a path open, `write_to`, `write_edf`, and
-`EdfWriter` refuse to write to it and raise `EdfFileError`. A handle is an
-`EdfFile`, a signal or proxy taken from one, or an `EdfWriter`. The source file
-itself counts, so you cannot strip channels in place:
+`EdfWriter` reject the write and raise `EdfFileError`. A handle is an `EdfFile`,
+a signal or proxy taken from one, or an `EdfWriter`. A proxy is a `Proxy2D` or
+`Proxy3D` array view. The source file also counts as a handle. Thus you cannot
+remove signals from a file in place:
 
 ```python
 f = edfarray.EdfFile("rec.edf")
@@ -120,25 +141,18 @@ f.write_to("rec.edf", signals=[0, 3])  # raises EdfFileError
 ```
 
 A `Signal` or proxy taken from a file keeps the file open after `close()`. To
-replace a file, close every `EdfFile` on it. Then drop every signal and proxy
-taken from one. Then write to the path. Opening a file while an `EdfWriter` is
-still writing it also raises `EdfFileError`.
+replace a file, do these steps in this order:
 
-!!! warning "Transcoding caveats"
-    Except for EDF+D to EDF+D, records are re-emitted contiguously. So
-    transcoding changes more than the header tag:
+1. Close every `EdfFile` on the file.
+2. Drop every signal and proxy taken from those `EdfFile` objects.
+3. Write to the path.
 
-    - **EDF+D -> EDF+D** preserves the source record onsets, so gaps survive the
-      copy. **EDF+D -> any non-`+D` variant** flattens timing: the per-record
-      onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
-    - **Any `+` variant -> a plain (non-`+`) variant** drops all annotations,
-      because plain EDF/BDF has no annotation channel.
-    - **Downconverting sample size** (e.g. BDF 24-bit -> EDF 16-bit) clamps the
-      digital range and re-encodes from physical values, losing precision.
+If you open a file while an `EdfWriter` still writes it, edfarray also raises
+`EdfFileError`.
 
 ## Annotation channel sizing
 
-For `+C`/`+D` variants the writer reserves a fixed byte budget per record for the annotation channel. The default is 120 bytes, enough for the time-keeping TAL plus a few short annotations. If a record's annotations don't fit, the writer returns an error rather than silently dropping data. Increase the budget via `annotation_bytes_per_record`:
+For `+C`/`+D` variants, the writer reserves a fixed number of bytes per record for the annotation channel. The default is 120 bytes. This is enough for the time-keeping TAL and a few short annotations. A TAL is a time-stamped annotation list. If the annotations of a record do not fit, the writer returns an error. It does not drop data silently. To increase the budget, set `annotation_bytes_per_record`:
 
 ```python
 edfarray.write_edf(
@@ -177,33 +191,37 @@ edfarray.write_edf(
 
 ## Validation
 
-The writer rejects:
+The writer rejects these inputs:
 
 - Empty signal lists
 - `digital_min >= digital_max` or `physical_min == physical_max`
 - Digital ranges outside the format's signed-integer width
-- User signals labelled `EDF Annotations` (the writer adds the channel)
+- User signals labeled `EDF Annotations` (the writer adds the annotation channel)
 - Annotations on plain `EDF`/`BDF` (use a `+C`/`+D` variant)
-- Mismatched data lengths or `samples_per_record` not dividing the data
-- Annotation channel overflow (increase `annotation_bytes_per_record`)
-- Non-finite physical values: `NaN`, `+inf`, or `-inf` raise `InvalidArgumentError`,
-  naming the signal and sample position. Clinical data is never silently coerced.
+- Data lengths that do not match, or data that `samples_per_record` does not divide
+- Annotations that overflow the annotation channel (increase `annotation_bytes_per_record`)
+- Non-finite physical values. `NaN`, `+inf`, or `-inf` raise `InvalidArgumentError`,
+  and the error names the signal and the sample position. The writer never changes
+  clinical data silently.
 
-Finite values outside the signal's physical range are not rejected: they clamp to the
-digital extremes (`digital_min` / `digital_max`) on write, exactly as the EDF format
-requires. So out-of-range input is clamped, while `NaN`/`Inf` is refused -- the former
-is a legal saturation, the latter carries no value to saturate to.
+The writer does not reject finite values outside the physical range of the signal.
+On write, it clamps them to the digital limits (`digital_min` / `digital_max`), as the
+EDF format requires. This clamp is a legal saturation. `NaN`/`Inf` have no value to
+saturate to, so the writer rejects them.
 
 ## Editing existing files
 
-edfarray writes files; it does not edit them in place, with one narrow exception. The
-only in-place edits are the identity header fields -- patient id, recording id, and start
-datetime -- through [`edit_header`](anonymization.md) and [`anonymize`](anonymization.md).
-They rewrite only the fixed header block and never touch data records. Like the writers,
-they raise `EdfFileError` if another edfarray handle has the file open. A dry run of
-`anonymize` and the [`audit`](anonymization.md) leak checker only read the file.
+edfarray writes files. It does not edit files in place, with one exception: the
+identity header fields. These fields are the patient id, the recording id, and the
+start datetime. [`edit_header`](anonymization.md) and [`anonymize`](anonymization.md)
+edit these fields in place. They rewrite only the fixed header block and never touch
+data records. If another edfarray handle has the file open, they raise `EdfFileError`,
+as the writers do.
 
-Everything else -- annotations, channel labels, other header fields, and sample data --
-requires a full rewrite via `write_to` or `write_edf`. There is no API to mutate a
-single record or annotation in an existing file.
+A dry run is a run that writes nothing. A dry run of `anonymize` only reads the file.
+The [`audit`](anonymization.md) leak checker also only reads the file.
+
+All other changes require a full rewrite with `write_to` or `write_edf`. These changes
+include annotations, signal labels, other header fields, and sample data. No API
+changes a single record or annotation in an existing file.
 

@@ -10,12 +10,13 @@ use crate::errors::to_py_err;
 use crate::indexing::{extract_index, unsupported_index_err};
 use crate::numpy_util::numpy_dtype;
 
-/// 3D view over a `Rectangular` signal group, shape
+/// A 3D proxy for a `Rectangular` signal group, with shape
 /// `(num_records, num_channels, samples_per_record)`.
 ///
-/// Indexing semantics match NumPy 3D: `proxy[rec, ch, samp]` returns a scalar
-/// when all three are ints, a 2D ndarray when two are slices, etc. The sample
-/// axis accepts any step. The record and channel axes require step 1.
+/// A proxy is an array-like object that reads samples from the file only when you index it.
+/// Indexing works as in NumPy 3D. `proxy[rec, ch, samp]` returns a scalar when all three
+/// indices are ints, and a 2D ndarray when two are slices. The sample axis accepts any step.
+/// The record and channel axes require step 1.
 #[gen_stub_pyclass]
 #[pyclass(name = "Proxy3D", module = "edfarray._core")]
 pub struct PyProxy3D {
@@ -31,19 +32,19 @@ impl PyProxy3D {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyProxy3D {
-    /// Shape of the proxy: `(num_records, num_channels, samples_per_record)`.
+    /// The shape of the proxy: `(num_records, num_channels, samples_per_record)`.
     #[getter]
     fn shape(&self) -> (usize, usize, usize) {
         self.proxy.shape()
     }
 
-    /// Common sample rate (Hz) of the group's channels.
+    /// The common sample rate (Hz) of the signals in the group.
     #[getter]
     fn sample_rate(&self) -> f64 {
         self.proxy.sample_rate()
     }
 
-    /// `True` if the file/group support a zero-copy stride view via
+    /// `True` if the file and the group support a zero-copy stride view through
     /// `numpy.lib.stride_tricks.as_strided`.
     #[getter]
     fn supports_strided_view(&self) -> bool {
@@ -52,8 +53,8 @@ impl PyProxy3D {
 
     /// Read raw digital values for a record and channel range.
     ///
-    /// The counterpart to physical indexing, which `__getitem__` provides. Returns a 3D int32
-    /// array shaped `(records, channels, samples_per_record)`.
+    /// This method is the digital counterpart of the physical indexing that `__getitem__` gives.
+    /// It returns a 3D int32 array with shape `(records, channels, samples_per_record)`.
     fn read_digital<'py>(
         &self,
         py: Python<'py>,
@@ -83,13 +84,13 @@ impl PyProxy3D {
         3
     }
 
-    /// dtype of the physical values this proxy decodes to.
+    /// The dtype of the physical values that this proxy decodes to.
     #[getter]
     fn dtype<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         numpy_dtype(py, "float64")
     }
 
-    /// Support `numpy.asarray(proxy)` by materializing the whole block.
+    /// Support `numpy.asarray(proxy)`. This call reads the whole block into memory.
     #[pyo3(signature = (dtype=None, copy=None))]
     fn __array__<'py>(
         &self,
@@ -132,12 +133,11 @@ impl PyProxy3D {
 
     /// NumPy-style 3D indexing: `proxy[rec, channel, sample]`.
     ///
-    /// Each axis accepts an int or a slice; the sample axis additionally
-    /// accepts a step (e.g. `p[:, :, ::4]` to downsample), while the record
-    /// and channel axes require step 1. Returns a scalar (all three ints), a
-    /// 1D array (one non-int axis), a 2D array (two), or a 3D array (all).
-    /// The full enclosing record block is materialized regardless of the
-    /// sample step, so striding shrinks the result, not the work.
+    /// Each axis accepts an int or a slice. The sample axis also accepts a step, for example
+    /// `p[:, :, ::4]` to downsample. The record and channel axes require step 1. The method
+    /// returns a scalar (all three ints), a 1D array (one non-int axis), a 2D array (two), or a
+    /// 3D array (all). The method reads the full record block for any sample step. Thus a
+    /// step makes the result smaller, but not the work.
     #[gen_stub(override_return_type(type_repr = "builtins.float | numpy.typing.NDArray[numpy.float64]", imports = ("builtins", "numpy", "numpy.typing")))]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let tuple = key.cast::<PyTuple>().map_err(|_| {
@@ -231,12 +231,11 @@ impl PyProxy3D {
         }
     }
 
-    /// Zero-copy stride-view metadata as a dict, or `None` when not eligible.
+    /// The zero-copy stride-view metadata as a dict, or `None` if the proxy is not eligible.
     ///
-    /// Keys: `base_offset`, `record_stride_bytes`, `channel_stride_bytes`,
-    /// `sample_stride_bytes`, `shape`. Eligibility requires 2-byte samples,
-    /// a contiguous channel-index range, and no annotation channel inside
-    /// that span.
+    /// The keys are `base_offset`, `record_stride_bytes`, `channel_stride_bytes`,
+    /// `sample_stride_bytes`, and `shape`. A proxy is eligible only if it has 2-byte samples, a
+    /// contiguous range of signal indices, and no annotation channel in that range.
     fn stride_info<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let info = self.proxy.stride_info();
         let Some(info) = info else {
@@ -257,7 +256,7 @@ enum AxisSpec {
     Int(usize),
     Range(usize, usize),
     /// Strided slice, only produced for the sample axis. `start`/`step` follow
-    /// Python slice semantics; `count` is the number of emitted elements.
+    /// Python slice semantics. `count` is the number of emitted elements.
     Strided {
         start: isize,
         step: isize,

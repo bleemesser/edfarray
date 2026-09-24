@@ -91,7 +91,7 @@ pub(crate) fn resolve_group(
     ))
 }
 
-/// The rectangular group with the most channels; ties keep `signal_groups()` order.
+/// The rectangular group with the most signals. A tie keeps the `signal_groups()` order.
 pub(crate) fn largest_rectangular_group(f: &EdfFile) -> PyResult<SignalGroup> {
     let mut best: Option<SignalGroup> = None;
     for g in f.signal_groups() {
@@ -109,9 +109,9 @@ pub(crate) fn largest_rectangular_group(f: &EdfFile) -> PyResult<SignalGroup> {
 
 /// Plan + decode in one call. The caller releases the GIL.
 ///
-/// Returns `(onsets, valid, data, dropped, n_samples)` where `onsets` are the kept event times
-/// in caller order (filtered by the planner flags under `EpochPad::Drop`), `data` is the flat
-/// row-major block, and `n_samples` is the planner's nominal row width.
+/// Returns `(onsets, valid, data, dropped, n_samples)`. `onsets` are the kept event times in
+/// caller order, filtered by the planner flags under `EpochPad::Drop`. `data` is the flat
+/// row-major block. `n_samples` is the nominal row width from the planner.
 pub(crate) type PlanExtract = (Vec<f64>, Vec<bool>, Vec<f64>, Vec<usize>, usize);
 
 pub(crate) fn plan_and_extract(
@@ -138,10 +138,11 @@ pub(crate) fn plan_and_extract(
     Ok((onsets_out, valid, data, dropped, plan.n_samples))
 }
 
-/// Extracted epochs: a dense `(n_epochs, n_channels, n_samples)` float64 block plus metadata.
+/// Extracted epochs: a dense `(n_epochs, n_channels, n_samples)` float64 block and metadata.
 ///
 /// `np.asarray(ep)` returns `ep.data`. `valid` is False for rows that contain padded samples.
-/// Under `pad="drop"` it is all True, because padded epochs were removed (see `dropped`).
+/// With `pad="drop"`, `valid` is all True, because edfarray removed the padded epochs (see
+/// `dropped`).
 #[gen_stub_pyclass]
 #[pyclass(name = "Epochs", module = "edfarray._core")]
 pub(crate) struct PyEpochs {
@@ -157,7 +158,7 @@ pub(crate) struct PyEpochs {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyEpochs {
-    /// The decoded block, shape `(n_epochs, n_channels, n_samples)`, float64.
+    /// The decoded block, with shape `(n_epochs, n_channels, n_samples)` and dtype float64.
     #[getter]
     #[gen_stub(override_return_type(type_repr = "numpy.typing.NDArray[numpy.float64]", imports = ("numpy",)))]
     fn data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -169,7 +170,7 @@ impl PyEpochs {
         Ok(array.into_any().to_owned())
     }
 
-    /// Event onset times in caller order, float64.
+    /// The event onset times in caller order, as float64.
     #[getter]
     #[gen_stub(override_return_type(type_repr = "numpy.typing.NDArray[numpy.float64]", imports = ("numpy",)))]
     fn onsets<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
@@ -178,20 +179,20 @@ impl PyEpochs {
             .to_owned()
     }
 
-    /// Channel labels, in group order.
+    /// The labels of the signals, in group order.
     #[getter]
     fn labels(&self) -> Vec<String> {
         self.labels.clone()
     }
 
-    /// Common sample rate in Hz.
+    /// The common sample rate in Hz.
     #[getter]
     fn sample_rate(&self) -> f64 {
         self.sample_rate
     }
 
-    /// Per output epoch: false where samples were padded (fill modes) or, with `"drop"`,
-    /// always true.
+    /// One flag per output epoch. With a fill mode, the flag is false where edfarray padded
+    /// samples. With `"drop"`, the flag is always true.
     #[getter]
     #[gen_stub(override_return_type(type_repr = "numpy.typing.NDArray[numpy.bool_]", imports = ("numpy",)))]
     fn valid<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
@@ -200,7 +201,7 @@ impl PyEpochs {
             .to_owned()
     }
 
-    /// Indices into the original events argument of epochs removed by `pad="drop"`.
+    /// The indices in the original `events` argument of the epochs that `pad="drop"` removed.
     #[getter]
     fn dropped(&self) -> Vec<usize> {
         self.dropped.clone()

@@ -2,7 +2,7 @@
 
 ## Bulk reads with `read_page()`
 
-The recommended way to load multi-channel data is `read_page()`. It reads all requested signals for a time window in a single call, parallelizing the decode across CPU cores using rayon.
+To load data for many signals, use `read_page()`. It reads all requested signals for a time window in one call. It uses rayon to decode the signals in parallel on the CPU cores.
 
 ```python
 f = edfarray.EdfFile("recording.edf")
@@ -16,11 +16,11 @@ pages = f.read_page(0.0, 10.0, signal_indices=[0, 1, 5])
 
 `read_page()` returns a list of numpy float64 arrays, one per signal. Signals with different sample rates produce arrays of different lengths.
 
-There is also `read_page_digital()`, which returns int32 arrays without the gain/offset conversion.
+`read_page_digital()` returns int32 arrays without the gain/offset conversion.
 
 ### Time-aware reading for EDF+D
 
-For EDF+D files with time gaps, use `use_time=True` to resolve the time range to actual sample indices:
+In an EDF+D file, the records can have gaps between them. A record is a fixed-duration block of samples. An EDF+D gap is a time span with no records. For these files, use `use_time=True` to convert the time range to the actual sample indices:
 
 ```python
 # For EDF+D files: time-aware page read.
@@ -34,56 +34,62 @@ data = sig.read_time_range(0.0, 10.0)  # physical data within 0-10s, gaps exclud
 
 ## `ordinary_signal_indices()`
 
-EDF+ files include annotation channels alongside data channels. `ordinary_signal_indices()` gives you just the data channel indices:
+EDF+ files contain annotation channels in addition to the ordinary signals. An ordinary signal is a signal that is not the annotation channel. `ordinary_signal_indices()` returns only the indices of the ordinary signals:
 
 ```python
 indices = f.ordinary_signal_indices()
 pages = f.read_page(0.0, 10.0, signal_indices=indices)
 ```
 
-When you call `read_page()` without specifying `signal_indices`, it defaults to `ordinary_signal_indices()`.
+If you call `read_page()` without `signal_indices`, it uses `ordinary_signal_indices()`.
 
 ## Architecture
 
-edfarray reads through a memory map (`memmap2`) by default. The file is mapped into the process's address space on open, and the OS page cache brings data in and out of physical RAM. This means:
+By default, edfarray reads through a memory map (`memmap2`). When you open a file, edfarray maps the file into the address space of the process. The OS then moves pages of the file into and out of physical RAM. The page cache is the set of file pages that the OS holds in RAM. This design has these results:
 
-- Opening large files is near-instant. The header is parsed synchronously (fixed-size, fast), and the annotation scan runs in a background thread.
-- Signal reads work immediately after open, without waiting for the annotation scan.
-- Sequential reads (paging forward) benefit from OS readahead.
-- Random seeks (jumping to a timestamp) only fault in the pages you touch.
-- Multiple signals reading from the same data records share cached pages.
+- A large file opens almost immediately. edfarray parses the header synchronously, which is fast because the header has a fixed size. The annotation scan runs in a background thread.
+- Signal reads work immediately after open. They do not wait for the annotation scan.
+- Sequential reads (paging forward) get the benefit of OS readahead.
+- Random seeks (jumps to a timestamp) fault in only the pages that they touch.
+- Signals that read from the same records share the cached pages.
 
-On open, edfarray parses the header and record layout synchronously (microseconds), then spawns a background thread to build the annotation index by scanning the file's TAL data. `madvise` hints prime the page cache before bulk reads and mark the annotation scan as a sequential pass.
+When you open a file, edfarray parses the header and the record layout synchronously. This takes microseconds. Then edfarray starts a background thread that scans the TAL data of the file to build the annotation index. TAL (time-stamped annotation list) is the byte format of annotations. edfarray sends `madvise` hints to prepare the page cache before bulk reads. The hints also mark the annotation scan as a sequential pass.
 
 ### Memmap failure case
 
-EDF interleaves channels inside each data record, so reading one channel touches a small slice
-of every record. For a 64-channel, 256 Hz file each record is 32 KB and one channel's slice is
-512 B: the kernel must fault in the whole file to hand back a sixty-fourth of it. When the data
-is already cached that is nearly free, which is why warm benchmarks never show it. When it is
-not cached, it costs one major page fault per record.
+EDF interleaves the signals inside each record. Thus a read of one signal touches a small slice
+of every record. For example, a file has 64 signals at 256 Hz and 1-second records. Each record is 32 KB, and the
+slice for one signal is 512 B. The kernel must fault in the whole file to return one sixty-fourth
+of it.
 
-edfarray detects this. Before a large read it samples how much of the target range is resident
-(`mincore`); if the range is big and mostly not cached, it reads sequentially through a bounded
-buffer instead of faulting through the mapping. It also re-checks periodically during a long
-read, so a read that starts warm and loses its pages to memory pressure switches over partway
-rather than paying a fault per record for the rest of the file.
+If the data is already in the page cache, this cost is almost zero. For this reason, benchmarks
+with a warm cache never show the problem. A warm cache already holds the data, and a cold cache
+does not. If the data is not in the page cache, the cost is one major page fault per record.
 
-Measured on a 4 GiB, 64-channel file, reading one full channel:
+edfarray detects this case. Before a large read, edfarray uses `mincore` to sample how much of the
+target range is resident. Resident data is data that is in the page cache. If the range is large
+and most of it is not cached, edfarray reads sequentially through a bounded buffer. It does not
+fault through the mapping.
+
+During a long read, edfarray also repeats this test at intervals. A read can start warm and
+then lose its pages to memory pressure. If this occurs, the read changes to the buffered method
+partway. It does not pay one fault per record for the remainder of the file.
+
+These results are for a read of one full signal from a 4 GiB file with 64 signals:
 
 | Cache state | Mapping only | Automatic | pyedflib |
 | --- | --- | --- | --- |
 | Warm | 107 ms | 113 ms | 1021 ms |
 | Cold | 3959 ms | 659 ms | 5624 ms |
 
-Cold, the mapping-only path takes 131,073 major faults (one per record); the automatic path
-takes 2. You can force either mode with `f.signal(0, strategy="mmap")` or `strategy="stream"`;
-the default is `"auto"`. Streaming is slower than a warm mapping, so `"stream"` is only the
-right explicit choice when you know the data will not be cached.
+With a cold cache, the mapping-only path causes 131,073 major faults (one for each record). The
+automatic path causes 2. To force one mode, use `f.signal(0, strategy="mmap")` or
+`strategy="stream"`. The default is `"auto"`. Streaming is slower than a warm mapping. If you
+know that the data will not be in the page cache, you can set `"stream"` explicitly. In other cases, do not set it.
 
 ## Async annotation scan
 
-For large files (e.g. a 24-hour EEG at ~12 GB), the annotation scan can take noticeable time. edfarray runs it in the background so you can start reading signal data immediately:
+For large files, the annotation scan can take a noticeable time. An example is a 24-hour EEG of approximately 12 GB. edfarray runs the scan in the background, so you can read signal data immediately:
 
 ```python
 f = edfarray.EdfFile("large_recording.edf")
@@ -102,11 +108,11 @@ f.annotations         # waits, then returns the annotation list
 f.warnings            # waits, then returns warnings including annotation parse issues
 ```
 
-For plain EDF files (no annotation signals), there is no scan at all -- record onsets are computed directly from the header. For EDF+C files, signal reads never block because record onsets are uniform. Only EDF+D files need the scan results for correct time mapping via `times()` and `read_time_range()`.
+Plain EDF files have no annotation channel, so edfarray does not scan them. It calculates the record onsets directly from the header. For EDF+C files, signal reads never block, because the record onsets are uniform. Only EDF+D files need the scan results to map time correctly in `times()` and `read_time_range()`.
 
-The scan reads every data record, so on a very large file it competes with your own reads for
-page cache. Pass `scan_annotations=False` to skip it at open; the index is then built on first
-annotation access, on the calling thread:
+The scan reads every record. Thus, on a very large file, the scan competes with your reads for
+space in the page cache. To skip the scan at open, pass `scan_annotations=False`. edfarray then
+builds the index on the calling thread, at the first access to the annotations:
 
 ```python
 f = edfarray.EdfFile("large_recording.edf", scan_annotations=False)
@@ -116,32 +122,32 @@ f.annotations # builds the index now, blocking until done
 
 ## Why it's fast
 
-Three things contribute to the performance on multi-channel page reads:
+Three design decisions set the speed of page reads for many signals:
 
-1. Rayon parallelism. Each signal's decode runs on a separate thread. With 100+ channels, this scales well across cores.
+1. edfarray decodes signals in parallel on the rayon thread pool. With 100 or more signals, the work spreads across the cores.
 
-2. SIMD-friendly decode. The i16-to-f64 conversion is split into a widening pass and a multiply-add pass, which the compiler autovectorizes.
+2. For 16-bit EDF samples, the decode splits the i16-to-f64 conversion into a widening pass and a multiply-add pass. The compiler autovectorizes these passes into SIMD instructions. SIMD means one instruction that operates on many values.
 
-3. No intermediate copies. Signal bytes are decoded from the mapping straight into the output
-   buffer. (The streaming path described above copies once into its read buffer, which is the
-   price of bounded memory use.)
+3. The decode writes the signal bytes from the mapping directly into the output buffer, with
+   no intermediate copies. The streaming path above copies the data one time into its read
+   buffer. This copy is the cost of bounded memory use.
 
-Reads release the GIL, so decoding scales across Python threads as well as rayon workers.
+Reads release the GIL (the Python global interpreter lock). Thus the decode scales across Python threads and also across rayon workers.
 
 ## Single-signal access
 
-For single-signal reads, the `Signal` proxy object is already efficient. Each access resolves the global sample index to a record offset and decodes directly from the mmap:
+For reads of one signal, the `Signal` proxy is efficient. A proxy is an object that reads file data on request. Each access converts the global sample index to a record offset. Then it decodes directly from the mmap:
 
 ```python
 sig = f.signal(0)
 chunk = sig[10000:20000]  # decoded directly from mmap
 ```
 
-This path is single-threaded and doesn't benefit from rayon, but it avoids all unnecessary allocation and copying. For reading one channel at a time, there's no overhead beyond the decode itself.
+This path uses one thread and does not use rayon. But it does no unnecessary allocation and no unnecessary copies. For reads of one signal at a time, the decode is the only cost.
 
 ## Tips for EEG viewer applications
 
-If you're building an application that pages through a recording:
+This example is for an application that pages through a recording:
 
 ```python
 f = edfarray.EdfFile("recording.edf")
@@ -163,4 +169,4 @@ def prev_page():
     return pages
 ```
 
-Each `read_page()` call takes well under 1 ms for typical EEG recordings (30-100 channels). This is fast enough to call on every frame without any prefetching or caching layer on the Python side.
+For typical EEG recordings (30-100 signals), each `read_page()` call takes much less than 1 ms. Thus you can call it on every frame, without a prefetch layer or a cache layer in Python.

@@ -22,14 +22,14 @@ pub struct WriterSignal {
     pub digital_min: i32,
     pub digital_max: i32,
     pub prefiltering: String,
-    /// Number of samples for this signal in one data record. Combined with
-    /// the spec's `record_duration_secs` this implies the sample rate.
+    /// Number of samples for this signal in one data record. Together with
+    /// `record_duration_secs` in the spec, it sets the sample rate.
     pub samples_per_record: usize,
     pub reserved: String,
 }
 
 impl WriterSignal {
-    /// Convenience constructor with empty optional fields.
+    /// Constructor that leaves the optional fields empty.
     pub fn new(
         label: impl Into<String>,
         physical_dimension: impl Into<String>,
@@ -111,11 +111,11 @@ pub struct WriterSpec {
     /// Minimum bytes reserved for the annotation channel per record.
     /// Ignored for plain EDF/BDF. Defaults to 120.
     pub annotation_bytes_per_record: Option<usize>,
-    /// Per-record time-keeping onsets for a `+D` target, in seconds relative to the
-    /// recording start (subsecond excluded, matching the annotation index's table).
-    /// When set, the writer emits `record_onsets[i]` as record `i`'s time-keeping TAL
-    /// onset instead of the uniform `i * record_duration`, preserving EDF+D gaps.
-    /// Requires a `+D` variant and a non-decreasing table with one entry per record.
+    /// Timekeeping onset of each record for a `+D` target, in seconds from the recording
+    /// start. The subsecond part is excluded, as in the table of the annotation index. When
+    /// set, the writer uses `record_onsets[i]` as the timekeeping TAL onset of record `i`,
+    /// instead of the uniform `i * record_duration`. This keeps EDF+D gaps. The variant must
+    /// be `+D`, and the table must be non-decreasing with one entry for each record.
     pub record_onsets: Option<Vec<f64>>,
 }
 
@@ -147,7 +147,7 @@ pub struct EdfWriter {
 }
 
 impl EdfWriter {
-    /// Open `path` for writing. Header patched with record count on `finish()`.
+    /// Open `path` for writing. `finish()` patches the record count into the header.
     pub fn create(path: impl AsRef<Path>, spec: WriterSpec) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
@@ -211,7 +211,7 @@ impl EdfWriter {
                     reason: "record_onsets must not be empty".to_string(),
                 });
             }
-            // Checked first because NaN compares false and would pass the ordering test.
+            // Checked first because NaN compares false and passes the ordering test.
             if onsets.iter().any(|o| !o.is_finite() || *o < 0.0) {
                 return Err(EdfError::InvalidArgument {
                     name: "record_onsets",
@@ -265,7 +265,7 @@ impl EdfWriter {
         })
     }
 
-    /// Number of user-defined signals (excluding the auto-added annotation channel).
+    /// Number of user-defined signals, not counting the annotation channel that the writer adds.
     pub fn num_signals(&self) -> usize {
         self.spec.signals.len()
     }
@@ -312,7 +312,7 @@ impl EdfWriter {
         }
 
         // Validate and encode everything before emitting a single byte: a rejection after a
-        // partial write leaves a corrupt trailing record that finish() would then finalize.
+        // partial write leaves a corrupt trailing record that finish() then finalizes.
         for (i, sig) in self.spec.signals.iter().enumerate() {
             if physical[i].len() != sig.samples_per_record {
                 return Err(EdfError::InvalidArgument {
@@ -488,7 +488,7 @@ impl Drop for EdfWriter {
     }
 }
 
-/// One-shot: write a complete file from spec, physical data, and annotations.
+/// Write a complete file in one call from a spec, physical data, and annotations.
 pub fn write_edf(
     path: impl AsRef<Path>,
     spec: WriterSpec,
@@ -589,8 +589,8 @@ fn digital_bounds(sample_size_bytes: usize) -> (i64, i64) {
 
 /// Format a header field to exactly `size` bytes, space padded.
 ///
-/// EDF header fields are printable ASCII. Non-ASCII input is replaced rather than truncated
-/// mid-codepoint, which would emit an invalid byte sequence.
+/// EDF header fields are printable ASCII. The function replaces non-ASCII input. It does not
+/// cut the input in the middle of a code point, because that writes an invalid byte sequence.
 pub(crate) fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
     let mut out = vec![b' '; size];
     for (dst, ch) in out.iter_mut().zip(value.chars()) {
@@ -790,7 +790,7 @@ fn encode_annotation_channel(
         }
         tal.push(TAL_SEPARATOR);
         for &b in ann.text.as_bytes() {
-            // TAL structure is delimited by these bytes, so text containing them would produce
+            // TAL structure is delimited by these bytes, so text containing them will produce
             // a block that reads back as different annotations.
             if b == TAL_SEPARATOR || b == TAL_TERMINATOR || b == TAL_DURATION_MARKER {
                 return Err(EdfError::InvalidArgument {
@@ -869,8 +869,8 @@ fn io_err(path: &Path, op: &'static str, e: std::io::Error) -> EdfError {
 
 /// Take an exclusive advisory lock on `file`. Fails with `ResourceBusy` if another edfarray
 /// handle holds a lock on it: an `EdfFile`, a signal or proxy taken from one, an `EdfWriter`, or
-/// a header edit in progress. On filesystems without lock support the caller proceeds unlocked,
-/// because the lock is advisory.
+/// a header edit in progress. If the filesystem does not support locks, the caller continues
+/// without a lock, because the lock is advisory.
 pub(crate) fn lock_exclusive(file: &File, path: &Path, op: &'static str) -> Result<()> {
     if let Err(TryLockError::WouldBlock) = file.try_lock() {
         return Err(EdfError::Io {

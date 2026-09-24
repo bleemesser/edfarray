@@ -24,7 +24,7 @@ pub struct PyEdfFile {
 }
 
 impl PyEdfFile {
-    /// The open file, or `ClosedFileError` if `close()` has been called.
+    /// The open file, or `ClosedFileError` if `close()` ran.
     fn get(&self) -> PyResult<&EdfFile> {
         self.inner.as_ref().ok_or_else(closed_file_err)
     }
@@ -35,15 +35,15 @@ impl PyEdfFile {
 impl PyEdfFile {
     /// Open an EDF/EDF+/BDF file.
     ///
-    /// `variant` forces the file variant instead of trusting the auto-detected
-    /// one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
-    /// controls the plain/"+C"/"+D" distinction; an override that changes the
-    /// EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+    /// `variant` sets the file variant and replaces the variant that edfarray detects. Use it
+    /// for files that omit or misreport the EDF+ "+C"/"+D" marker. It controls only the
+    /// plain/"+C"/"+D" distinction. The version field sets the EDF-vs-BDF sample size. If an
+    /// override changes that sample size, the constructor raises `ValueError`.
     ///
-    /// By default the annotation index is built by a background scan started at open. That
-    /// scan reads every data record, so for very large files it competes with your own reads
-    /// for page cache. Pass `scan_annotations=False` to defer it until annotations are first
-    /// accessed, at which point it runs on the calling thread.
+    /// By default, a background scan starts at open and builds the annotation index. The scan
+    /// reads every data record. For very large files, the scan competes with your own reads for
+    /// the page cache. If you pass `scan_annotations=False`, the scan waits until the first
+    /// access to the annotations. The scan then runs on the calling thread.
     #[new]
     #[pyo3(signature = (path, variant=None, scan_annotations=true))]
     fn new(
@@ -73,12 +73,12 @@ impl PyEdfFile {
         self.inner = None;
     }
 
-    /// Release the underlying memory-mapped file. Idempotent.
+    /// Release the memory-mapped file. A second call has no effect.
     fn close(&mut self) {
         self.inner = None;
     }
 
-    /// Whether `close()` has been called.
+    /// `True` if `close()` ran on this file.
     #[getter]
     fn closed(&self) -> bool {
         self.inner.is_none()
@@ -127,19 +127,20 @@ impl PyEdfFile {
         Ok(self.get()?.variant().to_string())
     }
 
-    /// Raw 80-byte patient identification field.
+    /// The raw 80-byte patient identification field.
     #[getter]
     fn patient_id(&self) -> PyResult<&str> {
         Ok(&self.get()?.header().patient_id)
     }
 
-    /// Raw 80-byte recording identification field.
+    /// The raw 80-byte recording identification field.
     #[getter]
     fn recording_id(&self) -> PyResult<&str> {
         Ok(&self.get()?.header().recording_id)
     }
 
-    /// Recording start time as `datetime.datetime`, or raw string if anonymized.
+    /// The recording start time as a `datetime.datetime`, or the raw string if edfarray cannot
+    /// parse it.
     #[getter]
     #[gen_stub(override_return_type(type_repr = "datetime.datetime | builtins.str", imports = ("builtins", "datetime")))]
     fn start_datetime<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
@@ -165,19 +166,19 @@ impl PyEdfFile {
         }
     }
 
-    /// Patient name parsed from the identification field, or None.
+    /// The patient name from the identification field, or None.
     #[getter]
     fn patient_name(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.patient().name.as_deref())
     }
 
-    /// Hospital patient code, or None.
+    /// The hospital patient code, or None.
     #[getter]
     fn patient_code(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.patient().code.as_deref())
     }
 
-    /// "M" or "F", or None if unknown.
+    /// "M" or "F", or None if the sex is unknown.
     #[getter]
     fn patient_sex(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.patient().sex.map(|s| match s {
@@ -186,7 +187,10 @@ impl PyEdfFile {
         }))
     }
 
-    /// Returns `datetime.date` if parseable, a raw string if anonymized, or `None` if absent.
+    /// The patient birthdate.
+    ///
+    /// The value is a `datetime.date` if edfarray can parse the field. It is the raw string if
+    /// edfarray cannot parse it, and `None` if the field is absent.
     #[getter]
     fn patient_birthdate<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
         use edfarray_core::header::MaybeDate;
@@ -202,37 +206,40 @@ impl PyEdfFile {
         }
     }
 
-    /// Additional patient information, or None.
+    /// The additional patient information, or None.
     #[getter]
     fn patient_additional(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.patient().additional.as_deref())
     }
 
-    /// Hospital administration code, or None.
+    /// The hospital administration code, or None.
     #[getter]
     fn admin_code(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.recording().admin_code.as_deref())
     }
 
-    /// Technician or investigator code, or None.
+    /// The technician or investigator code, or None.
     #[getter]
     fn technician(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.recording().technician.as_deref())
     }
 
-    /// Equipment code, or None.
+    /// The equipment code, or None.
     #[getter]
     fn equipment(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.recording().equipment.as_deref())
     }
 
-    /// Additional recording information, or None.
+    /// The additional recording information, or None.
     #[getter]
     fn recording_additional(&self) -> PyResult<Option<&str>> {
         Ok(self.get()?.recording().additional.as_deref())
     }
 
-    /// All non-timekeeping annotations, sorted by onset.
+    /// All annotations, sorted by onset.
+    ///
+    /// The list does not include the timekeeping annotations that give the start time of each
+    /// data record.
     #[getter]
     fn annotations(&self) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
@@ -243,8 +250,8 @@ impl PyEdfFile {
             .collect())
     }
 
-    /// Annotations with onset strictly before `t`.
-    /// Uses binary search for efficiency.
+    /// The annotations with an onset strictly before `t`.
+    /// This method uses a binary search for speed.
     pub fn annotations_before(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
             .get()?
@@ -254,8 +261,8 @@ impl PyEdfFile {
             .collect())
     }
 
-    /// Annotations with onset >= `t`.
-    /// Uses binary search for efficiency.
+    /// The annotations with an onset >= `t`.
+    /// This method uses a binary search for speed.
     pub fn annotations_after(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
             .get()?
@@ -265,8 +272,8 @@ impl PyEdfFile {
             .collect())
     }
 
-    /// Annotations with onset in [start, end).
-    /// Uses binary search for efficiency.
+    /// The annotations with an onset in [start, end).
+    /// This method uses a binary search for speed.
     pub fn annotations_in_range(&self, start: f64, end: f64) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
             .get()?
@@ -278,13 +285,13 @@ impl PyEdfFile {
 
     /// Filter annotations by text content.
     ///
-    /// If `regex` is False, returns annotations whose text contains the query
+    /// If `regex` is False, the method returns the annotations whose text contains the query
     /// as a case-insensitive substring.
     ///
-    /// If `regex` is True, returns annotations whose text matches the query
+    /// If `regex` is True, the method returns the annotations whose text matches the query
     /// as a case-insensitive regex pattern.
     ///
-    /// Raises `ValueError` if the regex pattern is invalid.
+    /// If the regex pattern is invalid, the method raises `ValueError`.
     #[pyo3(signature = (query, regex=false))]
     fn filter_annotations(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
         let anns = self
@@ -294,17 +301,17 @@ impl PyEdfFile {
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
-    /// Annotations whose text matches `query`, as a named alias of `filter_annotations`.
+    /// The annotations whose text matches `query`. This method is an alias of `filter_annotations`.
     ///
-    /// Provided so the epoch-extraction path reads clearly: `f.events("Spindle")` feeds
-    /// straight into `f.extract_epochs(...)`. Same matching rules: case-insensitive substring,
-    /// or case-insensitive regex when `regex=True`.
+    /// The alias makes epoch-extraction code easy to read: the result of `f.events("Spindle")`
+    /// goes directly into `f.extract_epochs(...)`. The matching rules are the same: a
+    /// case-insensitive substring, or a case-insensitive regex when `regex=True`.
     #[pyo3(signature = (query, regex=false))]
     fn events(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
         self.filter_annotations(query, regex)
     }
 
-    /// Annotations whose text exactly matches `text` (case-sensitive).
+    /// The annotations whose text exactly matches `text` (case-sensitive).
     pub fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
         Ok(self
             .get()?
@@ -314,26 +321,26 @@ impl PyEdfFile {
             .collect())
     }
 
-    /// Return all signals whose label matches `label`.
+    /// Return the indices of all signals whose label matches `label`.
     ///
-    /// If `exact` is `False` (default), performs a case-insensitive substring match.
-    /// If `exact` is `True`, performs a case-sensitive exact equality match.
+    /// If `exact` is `False` (default), the method does a case-insensitive substring match.
+    /// If `exact` is `True`, the method does a case-sensitive exact match.
     ///
-    /// Searches all signals including annotation signals.
+    /// The search includes the annotation channels.
     #[pyo3(signature = (label, exact=false))]
     fn find_all_signals(&self, label: &str, exact: bool) -> PyResult<Vec<usize>> {
         Ok(self.get()?.find_all_signals(label, exact))
     }
 
-    /// Parse warnings accumulated during file open.
+    /// Warnings from the header parse and the annotation scan. Waits until the scan is complete.
     #[getter]
     fn warnings(&self) -> PyResult<Vec<String>> {
         Ok(self.get()?.warnings())
     }
 
-    /// Raw header fields as a dict.
+    /// The raw header fields as a dict.
     ///
-    /// Builds a fresh dict on each call, so it is a method rather than a property.
+    /// Each call builds a new dict, so `header` is a method and not a property.
     #[gen_stub(override_return_type(type_repr = "dict[builtins.str, typing.Any]", imports = ("builtins", "typing")))]
     fn header<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
@@ -350,24 +357,25 @@ impl PyEdfFile {
 
     /// Get a signal by index or label.
     ///
-    /// `cache_capacity` enables an LRU cache of decoded physical records for
-    /// this signal. The unit is a count of EDF data records (not samples or
-    /// bytes); one cached record holds `samples_per_record` float64 values, so
-    /// the cache costs roughly `cache_capacity * samples_per_record * 8` bytes.
-    /// 0 (the default) disables it.
+    /// `cache_capacity` turns on an LRU cache of decoded physical records for this signal.
+    /// The unit is a count of EDF data records, not samples or bytes. One cached record holds
+    /// `samples_per_record` float64 values. Thus the cache uses approximately
+    /// `cache_capacity * samples_per_record * 8` bytes. The default, 0, turns the cache off.
     ///
-    /// Leave it at 0 for one-pass or strictly forward reads -- the OS page cache
-    /// already serves the raw bytes, so a cache only pays off when you re-decode
-    /// the *same* records (overlapping windows, back-and-forth seeks, repeated
-    /// slices). A good starting capacity is a few records more than your largest
-    /// repeated window spans, i.e. `ceil(window_samples / samples_per_record) + 2`.
-    /// The cache only accelerates physical reads -- `to_digital()` always
-    /// re-decodes from the memory map. Caching is per-`Signal`: re-fetching from
-    /// `signal()` starts fresh.
+    /// For one-pass or strictly forward reads, leave `cache_capacity` at 0. The OS page cache
+    /// already holds the raw bytes. The cache helps only when you decode the same records again,
+    /// for example with overlapping windows, back-and-forth seeks, or repeated slices. A good
+    /// start value is `ceil(window_samples / samples_per_record) + 2`. That is a few records
+    /// more than your largest repeated window spans.
+    /// The cache makes only physical reads faster. `to_digital()` always decodes again from the
+    /// memory map. Each `Signal` has its own cache. A new call to `signal()` starts with an
+    /// empty cache.
     ///
-    /// `strategy` overrides how bytes are fetched: `"auto"` (default) streams large reads that
-    /// are not already cached and uses the memory map otherwise, `"mmap"` always maps, and
-    /// `"stream"` always reads sequentially through a bounded buffer.
+    /// `strategy` sets how edfarray reads the bytes:
+    /// - `"auto"` (default) streams large reads that are not already cached. It uses the memory
+    ///   map for all other reads.
+    /// - `"mmap"` always uses the memory map.
+    /// - `"stream"` always reads sequentially through a bounded buffer.
     #[pyo3(signature = (idx_or_label, cache_capacity=0, strategy=None))]
     fn signal(
         &self,
@@ -401,26 +409,29 @@ impl PyEdfFile {
         Ok(PySignal::new(proxy))
     }
 
-    /// Labels of all signals in the file.
+    /// The labels of all signals in the file.
     fn signal_labels(&self) -> PyResult<Vec<&str>> {
         Ok(self.get()?.signal_labels())
     }
 
-    /// Indices of all non-annotation (ordinary) signals.
+    /// The indices of all ordinary signals.
+    ///
+    /// An ordinary signal is a signal that is not an annotation channel.
     fn ordinary_signal_indices(&self) -> PyResult<Vec<usize>> {
         Ok(self.get()?.ordinary_signal_indices())
     }
 
     /// Read a page of physical data for multiple signals over a time range.
     ///
-    /// Returns a list of numpy arrays, one per signal. Signals with different
-    /// sample rates will produce arrays of different lengths.
+    /// The method returns a list of numpy arrays, one per signal. If the signals have different
+    /// sample rates, the arrays have different lengths.
     ///
-    /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+    /// If `signal_indices` is None, the method reads all ordinary signals. An ordinary signal is
+    /// a signal that is not an annotation channel.
     ///
-    /// When `use_time` is false (default), time parameters are converted to flat
-    /// sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
-    /// the time range using actual record onset times.
+    /// When `use_time` is false (default), the method converts the time parameters to flat
+    /// sample indices. For EDF+D files with gaps, set `use_time=True`. The method then finds
+    /// the time range from the actual record onset times.
     #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
     fn read_page<'py>(
         &self,
@@ -443,13 +454,13 @@ impl PyEdfFile {
         Ok(arrays)
     }
 
-    /// Whether the background annotation scan has completed.
+    /// `True` if the background annotation scan is complete.
     #[getter]
     fn annotations_ready(&self) -> PyResult<bool> {
         Ok(self.get()?.annotations_ready())
     }
 
-    /// Progress of the background annotation scan: (records_scanned, total_records).
+    /// The progress of the background annotation scan, as (records_scanned, total_records).
     #[getter]
     fn scan_progress(&self) -> PyResult<(usize, usize)> {
         Ok(self.get()?.scan_progress())
@@ -457,10 +468,12 @@ impl PyEdfFile {
 
     /// Build a 2D proxy from a `SignalGroup`.
     ///
-    /// `pad_mode` controls reads past a channel's valid length when the group
-    /// is `"open"` (mixed sample rates). Accepts the string `"raise"` (default),
-    /// `"nan"`, `"zero"`, `"edge"`, or a numeric scalar (interpreted as
-    /// `Value(x)`). `None` is treated as `"raise"`.
+    /// A proxy is an array-like object that reads samples from the file only when you index it.
+    ///
+    /// `pad_mode` controls reads past the valid length of a signal when the group is `"open"`
+    /// (mixed sample rates). It accepts the string `"raise"` (default), `"nan"`, `"zero"`,
+    /// `"edge"`, or a numeric scalar. edfarray reads a numeric scalar as `Value(x)`. `None` has
+    /// the same effect as `"raise"`.
     #[pyo3(signature = (group, pad_mode=None))]
     fn proxy_2d(
         &self,
@@ -477,9 +490,10 @@ impl PyEdfFile {
 
     /// Build a 3D proxy from a rectangular `SignalGroup`.
     ///
-    /// Requires `group.kind == "rectangular"` (all channels share a sample
-    /// rate). Use `signal_groups()` to discover eligible groups, or
-    /// `signal_group(...)` to construct one from specific indices.
+    /// A proxy is an array-like object that reads samples from the file only when you index it.
+    /// The group must have `group.kind == "rectangular"`, so all its signals share a sample rate.
+    /// To find eligible groups, use `signal_groups()`. To make a group from specific indices,
+    /// use `signal_group(...)`.
     fn proxy_3d(&self, group: &PySignalGroup) -> PyResult<PyProxy3D> {
         let proxy = self
             .get()?
@@ -488,9 +502,10 @@ impl PyEdfFile {
         Ok(PyProxy3D::new(proxy))
     }
 
-    /// Classify an arbitrary list of file-level signal indices into a
-    /// `SignalGroup`. Use this when you want a group that's a subset of (or
-    /// crosses) the file's natural rate-based groupings.
+    /// Classify a list of file-level signal indices into a `SignalGroup`.
+    ///
+    /// Use this method for a group that is a subset of the natural rate-based groups of the
+    /// file, or for a group that crosses them.
     fn signal_group(&self, indices: Vec<usize>) -> PyResult<PySignalGroup> {
         let g = edfarray_core::group::SignalGroup::from_indices(self.get()?.header(), &indices)
             .map_err(to_py_err)?;
@@ -499,9 +514,10 @@ impl PyEdfFile {
 
     /// Partition all ordinary signals into groups by sample rate.
     ///
-    /// Returns a list of `SignalGroup` objects, each carrying its sample rate,
-    /// structural kind, sample-count range, and whether it covers every
-    /// ordinary signal in the file. Sub-Hz precision is preserved.
+    /// An ordinary signal is a signal that is not an annotation channel. The method returns a
+    /// list of `SignalGroup` objects. Each group has its sample rate, structural kind, and
+    /// sample-count range. It also shows if it covers every ordinary signal in the file. The
+    /// sample rates keep their sub-Hz precision.
     fn signal_groups(&self) -> PyResult<Vec<PySignalGroup>> {
         Ok(self
             .get()?
@@ -511,33 +527,34 @@ impl PyEdfFile {
             .collect())
     }
 
-    /// Write this file to `path`, optionally transcoding to a different variant.
+    /// Write this file to `path`, and optionally transcode it to a different variant.
     ///
-    /// Annotations and ordinary signals are copied; the destination's annotation
-    /// channel is rebuilt from parsed annotations rather than copied verbatim.
-    /// `variant` may be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D";
-    /// if omitted, uses the source variant.
+    /// The method copies the annotations and the ordinary signals. An ordinary signal is a
+    /// signal that is not an annotation channel. The method does not copy the annotation channel
+    /// byte for byte. It builds a new annotation channel in the destination from the parsed
+    /// annotations. `variant` can be one of "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", "BDF+D".
+    /// If you omit `variant`, the method uses the source variant.
     ///
-    /// `signals` selects which ordinary channels are written: a `SignalGroup`, a
-    /// signal index, a label, or a sequence mixing both (labels match exactly, as
-    /// in `signal()`). Destination channels appear in the given order, so sets and
-    /// dicts are rejected. `None` (the default) writes every ordinary signal. The
-    /// annotation channel cannot be selected: it is always rebuilt automatically,
-    /// and annotations are copied in full regardless of the selection.
+    /// `signals` selects the ordinary signals to write. It accepts a `SignalGroup`, a signal
+    /// index, a label, or a sequence that mixes indices and labels. Labels match exactly, as in
+    /// `signal()`. The destination signals are in the given order, so the method rejects sets
+    /// and dicts. `None` (the default) writes every ordinary signal. You cannot select the
+    /// annotation channel. The method always builds it again, and copies all annotations for
+    /// any selection.
     ///
-    /// If another edfarray handle has `path` open, raises `EdfFileError`. This
-    /// includes this file itself. Close every `EdfFile` on that path, and drop every
-    /// signal and proxy taken from one, before writing to it.
+    /// If another edfarray handle has `path` open, the method raises `EdfFileError`. This
+    /// includes this file. Before you write to a path, close every `EdfFile` on that path.
+    /// Also drop every signal and proxy taken from such a file.
     ///
     /// Transcoding caveats:
-    /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
-    ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
-    ///   onsets/gaps are replaced by uniform `record_idx * record_duration` timing.
-    /// - Because the annotation channel is rebuilt from parsed annotations,
-    ///   transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
-    ///   since plain variants have no annotation channel.
-    /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
-    ///   digital range and re-encodes from physical values, losing precision.
+    /// - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
+    ///   Transcoding to any variant without `+D` removes the per-record onsets and gaps. The
+    ///   output uses uniform `record_idx * record_duration` timing.
+    /// - The method builds the annotation channel from the parsed annotations. Plain (non-"+")
+    ///   EDF/BDF variants have no annotation channel. Thus transcoding to a plain variant drops
+    ///   all annotations.
+    /// - A smaller sample size (for example, BDF 24-bit to EDF 16-bit) clamps the digital range.
+    ///   The method encodes the samples again from the physical values, and precision decreases.
     #[pyo3(signature = (path, variant=None, signals=None))]
     fn write_to(
         &self,
@@ -571,11 +588,12 @@ impl PyEdfFile {
 
     /// Read a page of digital (raw int32) data for multiple signals over a time range.
     ///
-    /// If `signal_indices` is None, reads all ordinary (non-annotation) signals.
+    /// If `signal_indices` is None, the method reads all ordinary signals. An ordinary signal is
+    /// a signal that is not an annotation channel.
     ///
-    /// When `use_time` is false (default), time parameters are converted to flat
-    /// sample indices. For EDF+D files with gaps, set `use_time=true` to resolve
-    /// the time range using actual record onset times.
+    /// When `use_time` is false (default), the method converts the time parameters to flat
+    /// sample indices. For EDF+D files with gaps, set `use_time=True`. The method then finds
+    /// the time range from the actual record onset times.
     #[pyo3(signature = (start_sec, end_sec, signal_indices=None, use_time=false))]
     fn read_page_digital<'py>(
         &self,
@@ -598,19 +616,22 @@ impl PyEdfFile {
         Ok(arrays)
     }
 
-    /// Extract fixed windows around events as a dense `(n_epochs, n_channels, n_samples)`
-    /// block, decoded in parallel and gap-aware (EDF+D onsets are honored).
+    /// Extract fixed windows around events as a dense `(n_epochs, n_channels, n_samples)` block.
+    ///
+    /// The method decodes the windows in parallel. It uses the EDF+D record onsets, so the
+    /// windows account for gaps.
     ///
     /// `events` accepts floats, `Annotation`s, a mixed sequence, a numpy float64 array, or a
-    /// single value. Pass `events=None` together with `query` to extract around annotation
-    /// text (same matching as `filter_annotations`).
+    /// single value. To extract around annotation text, pass `events=None` together with
+    /// `query`. The matching is the same as in `filter_annotations`.
     ///
-    /// `group` selects channels: a `SignalGroup` or a sequence of signal indices. The group
-    /// must be rectangular; the default is the largest rectangular group.
+    /// `group` selects the signals: a `SignalGroup` or a sequence of signal indices. The group
+    /// must be rectangular. The default is the largest rectangular group.
     ///
-    /// `pad` governs epochs whose window runs off the file or straddles an EDF+D gap: `"drop"`
-    /// (default) omits them, `"nan"`/`"zero"`/a number/`"edge"` keep and fill them (marked
-    /// `valid=False`), `"raise"` errors on the first offender.
+    /// `pad` controls epochs whose window goes past the file or crosses an EDF+D gap:
+    /// - `"drop"` (default) omits them.
+    /// - `"nan"`, `"zero"`, a number, or `"edge"` keeps and fills them, and marks them `valid=False`.
+    /// - `"raise"` raises an error at the first such epoch.
     #[pyo3(signature = (events, *, pre, post, group=None, pad=None, query=None, regex=false))]
     #[allow(clippy::too_many_arguments)]
     fn extract_epochs(
@@ -667,8 +688,8 @@ impl PyEdfFile {
 
     /// Planned epoch windows without reading data: `([(onset, s_start, s_end)], valid)`.
     ///
-    /// The window table is the same one `extract_epochs` decodes, so callers can inspect or
-    /// clip what would be extracted before paying for the reads.
+    /// `extract_epochs` decodes the same window table. Thus callers can inspect or clip the
+    /// windows before they pay for the reads.
     #[pyo3(signature = (events, *, pre, post, group=None))]
     #[gen_stub(override_return_type(type_repr = "tuple[builtins.list[builtins.tuple[builtins.float, builtins.int, builtins.int]], numpy.typing.NDArray[numpy.bool_]]", imports = ("builtins", "numpy")))]
     fn epoch_windows<'py>(
@@ -705,10 +726,10 @@ impl PyEdfFile {
 /// plus the per-window validity mask.
 type EpochWindows<'py> = (Vec<(f64, usize, usize)>, Bound<'py, numpy::PyArray1<bool>>);
 
-/// Lightweight metadata extracted from an EDF/EDF+ file header without
-/// scanning data records or building an annotation index.
+/// Read metadata from the header of an EDF/EDF+ file.
 ///
-/// Returns a dict with keys:
+/// The function does not scan data records or build an annotation index. It returns a dict
+/// with these keys:
 /// `variant`, `num_signals`, `num_records`, `record_duration`, `duration`,
 /// `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
 #[gen_stub_pyfunction]
@@ -746,7 +767,7 @@ fn parse_strategy(value: &str) -> PyResult<ReadStrategy> {
 /// `None` means "copy every ordinary signal". Otherwise the argument must be a
 /// `SignalGroup`, a signal index, a label (exact match, as in `signal()`), or an
 /// ordered iterable mixing indices and labels. Returned indices are in destination
-/// order; bounds, annotation-channel, and duplicate checks are the core's job.
+/// order. The core does the bounds, annotation-channel, and duplicate checks.
 pub(crate) fn resolve_signal_selection(
     f: &EdfFile,
     signals: Option<&Bound<'_, PyAny>>,

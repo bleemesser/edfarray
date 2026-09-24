@@ -10,7 +10,7 @@ pub struct RecordLayout {
     pub sample_size_bytes: usize,
 }
 
-/// Number of samples a decode will write: bounded by both the input bytes and the output buffer.
+/// Number of samples that a decode writes. The input bytes and the output buffer both limit it.
 fn decoded_count(raw: &[u8], width: usize, out_len: usize) -> usize {
     (raw.len() / width).min(out_len)
 }
@@ -59,9 +59,10 @@ impl RecordLayout {
             })
     }
 
-    /// Decode raw bytes into physical values, writing `min(out.len(), raw/sample_size)` samples.
+    /// Decode raw bytes into physical values and write `min(out.len(), raw/sample_size)` samples.
     ///
-    /// Two-pass for autovectorization. Extra capacity in `out` is left untouched.
+    /// The decode uses two passes so that the compiler can autovectorize the loops. Values in
+    /// `out` after the decoded samples do not change.
     pub fn decode_physical(&self, raw: &[u8], gain: f64, offset: f64, out: &mut [f64]) {
         let n = match self.sample_size_bytes {
             2 => {
@@ -87,7 +88,7 @@ impl RecordLayout {
         }
     }
 
-    /// Decode raw little-endian bytes into digital values, writing
+    /// Decode raw little-endian bytes into digital values and write
     /// `min(out.len(), raw/sample_size)` samples.
     pub fn decode_digital(&self, raw: &[u8], out: &mut [i32]) {
         match self.sample_size_bytes {

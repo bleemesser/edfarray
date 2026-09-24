@@ -76,7 +76,7 @@ impl Proxy3D {
         proxy.get_physical(record * self.samples_per_record + sample)
     }
 
-    /// Read a contiguous block of physical samples. Returns flat Vec in record-major order.
+    /// Read a contiguous block of physical samples. Returns a flat Vec in record-major order.
     pub fn read_physical_block(
         &self,
         records: Range<usize>,
@@ -167,7 +167,7 @@ impl Proxy3D {
             }
         }
 
-        // Annotation channels would corrupt the stride view.
+        // Annotation channels corrupt the stride view.
         for idx in first..first + n_ch {
             if self.file.header.signals[idx].is_annotation {
                 return None;

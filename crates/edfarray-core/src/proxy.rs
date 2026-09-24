@@ -6,15 +6,15 @@ use crate::grid::first_sample_at_or_after;
 use crate::mmap::MappedFile;
 use crate::signal::SignalHeader;
 
-/// Minimum record-span size before streaming is considered. Below this the mmap path wins on
-/// syscall overhead alone.
+/// Minimum record-span size before streaming is considered. Below this size, the mmap path is
+/// faster because of the syscall overhead alone.
 const STREAM_MIN_BYTES: usize = 32 << 20;
 
 /// Bytes read per positional read on the streaming path.
 const STREAM_CHUNK_BYTES: usize = 8 << 20;
 
-/// Sampled residency above which the data is treated as already cached, so faulting it in is
-/// nearly free and the mapping is the faster path.
+/// Sampled residency above which the data counts as already cached. Page faults on cached data
+/// cost almost nothing, so the mapping is the faster path.
 const RESIDENT_ENOUGH: f64 = 0.5;
 
 /// How often a long mmap read re-checks residency of the remaining span.
@@ -23,7 +23,7 @@ const RESIDENCY_RECHECK_RECORDS: usize = 1024;
 /// How a read gets its bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReadStrategy {
-    /// Stream large non-resident reads, use the mapping otherwise.
+    /// Stream large reads that are not resident. Use the mapping for all other reads.
     #[default]
     Auto,
     /// Always read through the memory mapping.
@@ -34,8 +34,8 @@ pub enum ReadStrategy {
 
 /// LRU cache of decoded physical records, keyed by record index.
 ///
-/// Recency is tracked by a monotonic counter rather than a queue, so lookups and insertions do
-/// not scan. Eviction scans once per insertion, which only happens on a miss at capacity.
+/// A monotonic counter, not a queue, tracks recency, so lookups and insertions do not scan.
+/// Eviction scans once for each insertion, and eviction occurs only on a miss at capacity.
 #[derive(Debug)]
 struct LruCache {
     capacity: usize,
@@ -104,8 +104,9 @@ impl LruCache {
 
 /// Array-like view of one signal.
 ///
-/// Decodes samples on access. Bytes come from the memory map or a streaming read depending on
-/// [`ReadStrategy`]; an optional LRU cache holds decoded records for repeated physical reads.
+/// Decodes samples on access. Bytes come from the memory map or a streaming read, as
+/// [`ReadStrategy`] selects. An optional LRU cache holds decoded records for repeated physical
+/// reads.
 #[derive(Debug)]
 pub struct SignalProxy {
     signal_idx: usize,
@@ -159,7 +160,7 @@ impl SignalProxy {
             .sample_rate(self.file.header.record_duration_secs)
     }
 
-    /// Force how reads fetch bytes, overriding the automatic choice.
+    /// Force how reads fetch bytes. This overrides the automatic choice.
     pub fn with_strategy(mut self, strategy: ReadStrategy) -> Self {
         self.strategy = strategy;
         self
@@ -312,7 +313,8 @@ impl SignalProxy {
         )
     }
 
-    /// Physical time in seconds for sample at `idx`. Blocks for EDF+D to resolve onsets.
+    /// Physical time in seconds for the sample at `idx`. For EDF+D, blocks until the onsets are
+    /// known.
     pub fn sample_time(&self, idx: usize) -> f64 {
         let (rec_idx, offset) = self.resolve_index(idx);
         let record_onset = self.file.record_onset(rec_idx);
@@ -334,8 +336,9 @@ impl SignalProxy {
 
     /// Sample range covering `[start_sec, end_sec)` for a uniformly timed recording.
     ///
-    /// Half-open, with both ends resolved by `first_sample_at_or_after`, matching the EDF+D
-    /// path in `MappedFile::sample_range_for_time` so both variants return the same count.
+    /// The range is half-open, and `first_sample_at_or_after` resolves both ends. This matches
+    /// the EDF+D path in `MappedFile::sample_range_for_time`, so both variants return the same
+    /// count.
     pub fn uniform_sample_range(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
         let sr = self.sample_rate();
         if sr <= 0.0 || !sr.is_finite() {
@@ -348,7 +351,7 @@ impl SignalProxy {
         (to_index(start_sec), to_index(end_sec))
     }
 
-    /// Sample range covering `[start_sec, end_sec)`, accounting for EDF+D gaps.
+    /// Sample range covering `[start_sec, end_sec)`. Accounts for EDF+D gaps.
     pub fn sample_range_for_time(&self, start_sec: f64, end_sec: f64) -> (usize, usize) {
         if self.file.header.variant.is_plus_d() {
             self.file.sample_range_for_time(self, start_sec, end_sec)
@@ -370,7 +373,7 @@ impl SignalProxy {
     }
 
     fn resolve_index(&self, idx: usize) -> (usize, usize) {
-        // A header may declare zero samples per record; that signal has no samples to resolve.
+        // A header can declare zero samples per record. That signal has no samples to resolve.
         if self.samples_per_record == 0 {
             return (0, 0);
         }
@@ -455,12 +458,12 @@ impl SignalProxy {
         Ok(())
     }
 
-    /// Whether a read should stream through a bounded buffer instead of the mapping.
+    /// Whether to stream a read through a bounded buffer instead of the mapping.
     ///
-    /// EDF interleaves channels within a record, so reading one channel touches a slice of
-    /// every record: the kernel must fault in the whole span to hand back a fraction of it.
-    /// When that span is large and not already resident, one page fault per record costs far
-    /// more than reading the same bytes sequentially.
+    /// EDF interleaves channels in a record, so a read of one channel touches a slice of every
+    /// record. The kernel must fault in the whole span to return a fraction of it. If that span
+    /// is large and not already resident, one page fault for each record costs far more than a
+    /// sequential read of the same bytes.
     fn should_stream(&self, start: usize, end: usize) -> bool {
         match self.strategy {
             ReadStrategy::Mmap => return false,
@@ -831,7 +834,7 @@ mod tests {
         sig_warm.read_physical(2, 8, &mut warm).unwrap();
         assert_eq!(cold, warm);
 
-        // Second read on the warm proxy should hit cache and still match.
+        // Second read on the warm proxy must hit cache and still match.
         let mut warm2 = vec![0.0; 6];
         sig_warm.read_physical(2, 8, &mut warm2).unwrap();
         assert_eq!(cold, warm2);

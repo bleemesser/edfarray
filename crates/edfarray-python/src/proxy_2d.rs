@@ -11,11 +11,12 @@ use crate::errors::{invalid_argument_err, to_py_err};
 use crate::indexing::{extract_index, normalize_index, unsupported_index_err};
 use crate::numpy_util::numpy_dtype;
 
-/// 2D array proxy for numpy-style multi-channel signal access.
+/// A 2D array proxy for numpy-style access to many signals.
 ///
-/// Supports indexing with `proxy[signal, sample]` where each axis accepts
-/// int, slice, or list (signal axis only). Accepts any group. For an open
-/// (mixed-rate) group, `pad_mode` sets the value of reads past a short channel.
+/// A proxy is an array-like object that reads samples from the file only when you index it.
+/// It supports `proxy[signal, sample]` indexing. Each axis accepts an int or a slice. Only
+/// the signal axis also accepts a list. A 2D proxy accepts any group. For an open
+/// (mixed-rate) group, `pad_mode` sets the value of reads past the end of a short signal.
 #[gen_stub_pyclass]
 #[pyclass(name = "Proxy2D", module = "edfarray._core")]
 pub struct PyProxy2D {
@@ -31,25 +32,25 @@ impl PyProxy2D {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyProxy2D {
-    /// Shape of the proxy: (num_signals, total_samples).
+    /// The shape of the proxy: (num_signals, total_samples).
     #[getter]
     fn shape(&self) -> (usize, usize) {
         self.proxy.shape()
     }
 
-    /// Common sample rate (Hz), or `None` if the underlying group has mixed rates.
+    /// The common sample rate (Hz), or `None` if the group has mixed rates.
     #[getter]
     fn sample_rate(&self) -> Option<f64> {
         self.proxy.sample_rate()
     }
 
-    /// Per-channel valid sample counts, in proxy-coordinate order.
+    /// The valid sample count of each signal, in proxy-coordinate order.
     #[getter]
     fn valid_lengths(&self) -> Vec<usize> {
         self.proxy.valid_lengths().to_vec()
     }
 
-    /// Pad-mode policy as a string: "raise", "nan", "zero", "value", or "edge".
+    /// The pad mode as a string: "raise", "nan", "zero", "value", or "edge".
     #[getter]
     fn pad_mode(&self) -> &'static str {
         pad_mode_name(self.proxy.pad_mode())
@@ -57,8 +58,9 @@ impl PyProxy2D {
 
     /// Read raw digital values for `signals` over samples `[start, stop)`.
     ///
-    /// The counterpart to physical indexing, which `__getitem__` provides. Returns a 2D int32
-    /// array. `pad_mode="nan"` has no int32 representation and raises here.
+    /// This method is the digital counterpart of the physical indexing that `__getitem__` gives.
+    /// It returns a 2D int32 array. `pad_mode="nan"` has no int32 representation, so this
+    /// method raises an error for it.
     fn read_digital<'py>(
         &self,
         py: Python<'py>,
@@ -86,13 +88,13 @@ impl PyProxy2D {
         2
     }
 
-    /// dtype of the physical values this proxy decodes to.
+    /// The dtype of the physical values that this proxy decodes to.
     #[getter]
     fn dtype<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         numpy_dtype(py, "float64")
     }
 
-    /// Support `numpy.asarray(proxy)` by materializing every channel.
+    /// Support `numpy.asarray(proxy)`. This call reads every signal into memory.
     #[pyo3(signature = (dtype=None, copy=None))]
     fn __array__<'py>(
         &self,
@@ -140,10 +142,10 @@ impl PyProxy2D {
     /// | slice/list | int | 1D ndarray |
     /// | slice/list | slice | 2D ndarray |
     ///
-    /// The sample (time) axis accepts a step (e.g. `p[:, ::4]` to downsample);
-    /// the signal axis does not. A strided sample read still reads the full
-    /// enclosing span and then subsamples, so it costs about the same as the
-    /// unstrided read of that span. It shrinks the result, not the I/O.
+    /// The sample (time) axis accepts a step, for example `p[:, ::4]` to downsample.
+    /// The signal axis does not accept a step. A strided sample read still reads the full
+    /// span and then subsamples. Thus it costs about the same as the unstrided read of that
+    /// span. The step makes the result smaller, but not the I/O.
     #[gen_stub(override_return_type(type_repr = "builtins.float | numpy.typing.NDArray[numpy.float64]", imports = ("builtins", "numpy", "numpy.typing")))]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let tuple = match key.cast::<PyTuple>() {
@@ -231,8 +233,8 @@ impl PyProxy2D {
     }
 }
 
-/// A parsed sample-axis slice that may carry a step. `count` is the number of
-/// emitted elements; `window()` gives the contiguous span to read.
+/// A parsed sample-axis slice that can carry a step. `count` is the number of
+/// emitted elements. `window()` gives the contiguous span to read.
 struct SampleSlice {
     start: isize,
     step: isize,

@@ -7,9 +7,9 @@ use pyo3::types::{PyDict, PyTuple, PyType};
 
 /// Exception classes exported by the extension module.
 ///
-/// Every one derives from `EdfError` *and* from the builtin a caller would reach for, so both
-/// `except edfarray.SignalNotFoundError` and `except KeyError` catch the same failure. Adding
-/// a common base later would be a breaking change, so the hierarchy is fixed at 1.0.
+/// Each class derives from `EdfError` and from the builtin exception that a caller expects. Thus
+/// both `except edfarray.SignalNotFoundError` and `except KeyError` catch the same failure. A
+/// common base added later will break callers, so we fixed the hierarchy at 1.0.
 struct ErrorClasses {
     file: Py<PyType>,
     invalid_file: Py<PyType>,
@@ -43,11 +43,15 @@ fn new_exception<'py>(
 /// Exception classes as `(name, builtin base, docstring)`. Every class except the first also
 /// derives from `EdfError`. `register` and the stub generator both read this table.
 pub const EXCEPTIONS: [(&str, &str, &str); 7] = [
-    ("EdfError", "Exception", "Base class for edfarray errors."),
+    (
+        "EdfError",
+        "Exception",
+        "The base class for all edfarray errors.",
+    ),
     (
         "EdfFileError",
         "OSError",
-        "The file could not be opened, mapped, locked, or written.",
+        "edfarray cannot open, map, lock, or write the file.",
     ),
     (
         "InvalidFileError",
@@ -57,22 +61,22 @@ pub const EXCEPTIONS: [(&str, &str, &str); 7] = [
     (
         "InvalidArgumentError",
         "ValueError",
-        "An argument was outside the range the format or API allows.",
+        "An argument is outside the range that the format or the API allows.",
     ),
     (
         "OutOfRangeError",
         "IndexError",
-        "A record, signal, or sample index was out of range.",
+        "A record, signal, or sample index is out of range.",
     ),
     (
         "SignalNotFoundError",
         "KeyError",
-        "No signal matched the requested label.",
+        "No signal matches the requested label.",
     ),
     (
         "ClosedFileError",
         "ValueError",
-        "The file was used after close().",
+        "The code used the file after it called close().",
     ),
 ];
 

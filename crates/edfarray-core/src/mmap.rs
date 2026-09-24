@@ -14,18 +14,18 @@ use crate::header::{EdfHeader, EdfVariant};
 use crate::proxy::SignalProxy;
 use crate::record::RecordLayout;
 
-/// Upper bound on a single `WillNeed` hint. Advising more than the kernel can retain evicts
-/// pages the caller is still using.
+/// Upper bound on a single `WillNeed` hint. If a hint covers more than the kernel can keep,
+/// the kernel evicts pages that the caller still uses.
 #[cfg(unix)]
 const MAX_WILLNEED_BYTES: usize = 64 << 20;
 
 /// Access-pattern hint for a range of records.
 ///
-/// Advisory only. `memmap2` exposes advice on unix alone, so every variant is a no-op on
-/// other platforms rather than being absent from the type.
+/// The hint is advisory only. `memmap2` gives advice only on unix. On other platforms, every
+/// variant is a no-op, but the variants stay in the type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Advice {
-    /// No special treatment; undoes an earlier hint.
+    /// No special treatment. This undoes an earlier hint.
     Normal,
     /// The range will be read front to back once.
     Sequential,
@@ -85,8 +85,8 @@ fn read_exact_at(file: &std::fs::File, buf: &mut [u8], offset: u64) -> std::io::
     }
 }
 
-/// Lock accessors that tolerate poisoning. A panicking scan thread must not make every later
-/// annotation access panic in turn.
+/// Lock accessors that tolerate poisoning. A scan thread that panics must not make every later
+/// annotation access panic too.
 fn write_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(|e| e.into_inner())
 }
@@ -95,7 +95,7 @@ fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Marks the annotation scan finished on drop, including during a panic unwind.
+/// Marks the annotation scan as finished when dropped, also during a panic unwind.
 struct ScanCompletion {
     file: Arc<MappedData>,
 }
@@ -121,15 +121,15 @@ impl Drop for ScanCompletion {
 /// Memory-mapped EDF file with parsed header, record layout, and deferred annotation index.
 ///
 /// While any `MappedFile` for a path is alive, the file holds a shared advisory lock, and
-/// [`EdfWriter`](crate::writer::EdfWriter) refuses to overwrite it. Dropping the last handle
+/// [`EdfWriter`](crate::writer::EdfWriter) rejects an overwrite of it. Dropping the last handle
 /// stops the background annotation scan before the mapping and the lock are released.
 pub struct MappedFile {
     data: Arc<MappedData>,
     scan: Mutex<Option<JoinHandle<()>>>,
 }
 
-/// Shared state behind a [`MappedFile`]. The background annotation scan holds this rather than
-/// the `MappedFile`, so dropping the last user handle is what ends the mapping's lifetime.
+/// Shared state behind a [`MappedFile`]. The background annotation scan holds this, not the
+/// `MappedFile`. Thus the mapping ends when the last user handle is dropped.
 pub struct MappedData {
     mmap: Mmap,
     /// Kept open alongside the mapping for positional reads on the streaming path.
@@ -193,24 +193,25 @@ impl std::fmt::Debug for MappedData {
 }
 
 impl MappedFile {
-    /// Open EDF file. Spawns background annotation scan for files with annotation signals.
+    /// Open an EDF file. For a file with an annotation channel, starts a background annotation
+    /// scan.
     pub fn open(path: &Path) -> Result<Arc<Self>> {
         Self::open_with_variant(path, None)
     }
 
-    /// Open a file, optionally forcing the EDF/BDF variant instead of trusting
-    /// the header's auto-detected one. The override only controls the
-    /// plain/`+C`/`+D` distinction; the EDF-vs-BDF sample size is always taken
-    /// from the version field, so an override whose sample-size family disagrees
-    /// is rejected.
+    /// Open a file, and optionally force the EDF/BDF variant instead of the variant that the
+    /// header gives. The override controls only the plain/`+C`/`+D` distinction. The EDF-vs-BDF
+    /// sample size always comes from the version field, so the function rejects an override
+    /// with a different sample-size family.
     pub fn open_with_variant(path: &Path, variant: Option<EdfVariant>) -> Result<Arc<Self>> {
         Self::open_with_options(path, variant, ScanMode::default())
     }
 
     /// Open a file, choosing when the annotation index is built.
     ///
-    /// [`ScanMode::Lazy`] avoids touching every record at open time, which matters for large
-    /// files where the scan would otherwise compete with the caller's reads for page cache.
+    /// [`ScanMode::Lazy`] does not read every record when the file opens. This is important for
+    /// large files, where the scan otherwise competes with the reads of the caller for page
+    /// cache.
     pub fn open_with_options(
         path: &Path,
         variant: Option<EdfVariant>,
@@ -320,7 +321,7 @@ impl MappedData {
         let file = Arc::clone(self);
         thread::spawn(move || {
             // Signals completion even if the scan panics. Otherwise every later annotation
-            // access would block forever on scan_done.
+            // access will block forever on scan_done.
             let guard = ScanCompletion {
                 file: Arc::clone(&file),
             };
@@ -334,8 +335,8 @@ impl MappedData {
 
     /// Scan every record's annotation channel and build the index.
     ///
-    /// The scan walks the whole file once, so it tells the kernel to read ahead aggressively
-    /// and drop pages behind the cursor rather than growing the page cache by the file size.
+    /// The scan reads the whole file once. Thus it tells the kernel to read far ahead and drop
+    /// pages behind the cursor, so the page cache does not grow by the file size.
     fn build_annotation_index(&self, progress: &AtomicUsize) -> AnnotationIndex {
         let num_records = self.header.num_records.max(0) as usize;
         self.advise_records(0, num_records, Advice::Sequential);
@@ -399,7 +400,7 @@ impl MappedData {
         }
     }
 
-    /// Check whether the annotation scan has completed without blocking.
+    /// Whether the annotation scan is complete. Does not block.
     pub fn annotations_ready(&self) -> bool {
         *self.scan_done.0.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -431,7 +432,7 @@ impl MappedData {
         }
     }
 
-    /// Record onset time in seconds. Blocks for EDF+D to resolve non-uniform onsets.
+    /// Record onset time in seconds. For EDF+D, blocks until the non-uniform onsets are known.
     pub fn record_onset(&self, rec_idx: usize) -> f64 {
         if !self.header.variant.is_plus_d() {
             return rec_idx as f64 * self.header.record_duration_secs;
@@ -444,7 +445,7 @@ impl MappedData {
         })
     }
 
-    /// Resolve time range to sample indices using record onsets (accounts for EDF+D gaps).
+    /// Resolve a time range to sample indices with the record onsets, which include EDF+D gaps.
     pub fn sample_range_for_time(
         &self,
         proxy: &SignalProxy,
@@ -542,8 +543,8 @@ impl MappedData {
     /// Read `count` records starting at `start_record` into `buf` with a positional read.
     ///
     /// This is the streaming alternative to faulting the records in through the mapping. It
-    /// costs one syscall per chunk instead of one page fault per record, and its resident set
-    /// is just `buf`.
+    /// costs one syscall for each chunk instead of one page fault for each record. Its resident
+    /// set is only `buf`.
     pub fn read_records_into(
         &self,
         start_record: usize,
@@ -562,10 +563,10 @@ impl MappedData {
         })
     }
 
-    /// Fraction of the pages backing a record range that are already resident, sampled.
+    /// Sampled fraction of the pages for a record range that are already resident.
     ///
-    /// Returns 1.0 when residency cannot be determined, so callers keep the mmap path by
-    /// default rather than streaming on a guess.
+    /// Returns 1.0 if the residency is unknown. Thus callers keep the mmap path by default and
+    /// do not stream on a guess.
     pub fn residency(&self, start_record: usize, end_record: usize) -> f64 {
         #[cfg(unix)]
         {
@@ -628,10 +629,10 @@ impl MappedData {
 
     /// Apply an access-pattern hint to the records in `[start_record, end_record)`.
     ///
-    /// Advisory only: failures are ignored, and the call is a no-op on non-Unix platforms.
-    /// `Advice::WillNeed` is capped at 64 MiB because advising a huge span
-    /// asks the kernel to fault in more than it can keep, which is counterproductive under
-    /// memory pressure.
+    /// The hint is advisory only. The function ignores failures, and the call is a no-op on
+    /// platforms other than Unix. `Advice::WillNeed` is capped at 64 MiB. A larger span asks
+    /// the kernel to fault in more than it can keep, which makes reads slower under memory
+    /// pressure.
     pub fn advise_records(&self, start_record: usize, end_record: usize, advice: Advice) {
         #[cfg(unix)]
         {
@@ -852,7 +853,7 @@ mod tests {
             assert!(has_gap, "fixture should have non-uniform onsets");
         });
 
-        // Range spanning the gap: should skip the gap
+        // Range spanning the gap: must skip the gap
         let (s_start, s_end) = mapped.sample_range_for_time(&proxy, 0.0, 10.0);
         assert_eq!(s_start, 0);
         let total_uniform = mapped.header.num_records as usize * proxy.header().num_samples;

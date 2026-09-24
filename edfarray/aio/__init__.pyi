@@ -1,4 +1,4 @@
-"""Async API for edfarray. Hand-authored stubs (not auto-generated)."""
+"""Async API for edfarray. These stubs are hand-written, not generated."""
 
 from __future__ import annotations
 
@@ -99,9 +99,9 @@ class EdfFile:
         regex: bool = False,
     ) -> Awaitable[Epochs]:
         r"""
-        Extract a rectangular epoch array, offloaded to a blocking task.
+        Extract a rectangular epoch array in a blocking task.
 
-        Same semantics as the synchronous `EdfFile.extract_epochs`.
+        The behavior is the same as in the synchronous `EdfFile.extract_epochs`.
         """
         ...
     def epoch_windows(
@@ -120,20 +120,19 @@ class EdfFile:
         r"""
         Get a signal by index or label.
 
-        ``cache_capacity`` enables an LRU cache of decoded physical records for
-        this signal. The unit is a count of EDF data records (not samples or
-        bytes); one cached record holds ``samples_per_record`` float64 values, so
-        the cache costs roughly ``cache_capacity * samples_per_record * 8`` bytes.
-        0 (the default) disables it.
+        ``cache_capacity`` turns on an LRU cache of decoded physical records for this signal.
+        The unit is a count of EDF data records, not samples or bytes. One cached record holds
+        ``samples_per_record`` float64 values. Thus the cache uses approximately
+        ``cache_capacity * samples_per_record * 8`` bytes. The default, 0, turns the cache off.
 
-        Leave it at 0 for one-pass or strictly forward reads -- the OS page cache
-        already serves the raw bytes, so a cache only pays off when you re-decode
-        the *same* records (overlapping windows, back-and-forth seeks, repeated
-        slices). A good starting capacity is a few records more than your largest
-        repeated window spans, i.e. ``ceil(window_samples / samples_per_record) + 2``.
-        The cache only accelerates physical reads -- ``read_range_digital()`` always
-        re-decodes from the memory map. Caching is per-``Signal``: re-fetching
-        from ``signal()`` starts fresh.
+        For one-pass or strictly forward reads, leave ``cache_capacity`` at 0. The OS page cache
+        already holds the raw bytes. The cache helps only when you decode the same records again,
+        for example with overlapping windows, back-and-forth seeks, or repeated slices. A good
+        start value is ``ceil(window_samples / samples_per_record) + 2``. That is a few records
+        more than your largest repeated window spans.
+        The cache makes only physical reads faster. ``read_range_digital()`` always decodes again
+        from the memory map. Each ``Signal`` has its own cache. A new call to ``signal()`` starts
+        with an empty cache.
         """
         ...
     def signal_group(self, indices: list[int]) -> SignalGroup: ...
@@ -144,29 +143,28 @@ class EdfFile:
         signals: SignalGroup | int | str | Sequence[int | str] | None = None,
     ) -> Awaitable[None]:
         r"""
-        Write to `path`, optionally transcoding to a different variant.
+        Write to `path`, and optionally transcode the file to a different variant.
 
-        `signals` selects which ordinary channels are written: a `SignalGroup`, a
-        signal index, a label, or a sequence mixing both (labels match exactly, as
-        in `signal()`). Destination channels appear in the given order, so sets and
-        dicts are rejected. `None` (the default) writes every ordinary signal. The
-        annotation channel cannot be selected: it is always rebuilt automatically,
-        and annotations are copied in full regardless of the selection.
+        `signals` selects the ordinary signals to write. An ordinary signal is a signal that is
+        not an annotation channel. `signals` accepts a `SignalGroup`, a signal index, a label, or
+        a sequence that mixes indices and labels. Labels match exactly, as in `signal()`. The
+        destination signals are in the given order, so the method rejects sets and dicts. `None`
+        (the default) writes every ordinary signal. You cannot select the annotation channel.
+        The method always builds it again, and copies all annotations for any selection.
 
-        If another edfarray handle has `path` open, raises `EdfFileError`. This
-        includes this file itself. Close every `EdfFile` on that path, and drop every
-        signal and proxy taken from one, before writing to it.
+        If another edfarray handle has `path` open, the method raises `EdfFileError`. This
+        includes this file. Before you write to a path, close every `EdfFile` on that path.
+        Also drop every signal and proxy taken from such a file.
 
         Transcoding caveats:
-        - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
-          copy. Transcoding to any non-`+D` variant flattens timing: the
-          per-record onsets/gaps are replaced by uniform `record_idx *
-          record_duration` timing.
-        - Because the annotation channel is rebuilt from parsed annotations,
-          transcoding to a plain (non-"+") EDF/BDF variant drops all annotations,
-          since plain variants have no annotation channel.
-        - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
-          digital range and re-encodes from physical values, losing precision.
+        - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
+          Transcoding to any variant without `+D` removes the per-record onsets and gaps. The
+          output uses uniform `record_idx * record_duration` timing.
+        - The method builds the annotation channel from the parsed annotations. Plain (non-"+")
+          EDF/BDF variants have no annotation channel. Thus transcoding to a plain variant drops
+          all annotations.
+        - A smaller sample size (for example, BDF 24-bit to EDF 16-bit) clamps the digital range.
+          The method encodes the samples again from the physical values, and precision decreases.
         """
         ...
 
@@ -214,10 +212,10 @@ def open(path: str, variant: str | None = None) -> Awaitable[EdfFile]:
     r"""
     Open an EDF/EDF+/BDF file.
 
-    `variant` forces the file variant instead of trusting the auto-detected
-    one, for files that omit or misreport the EDF+ "+C"/"+D" marker. It only
-    controls the plain/"+C"/"+D" distinction; an override that changes the
-    EDF-vs-BDF sample size (set by the version field) raises `ValueError`.
+    `variant` sets the file variant and replaces the variant that edfarray detects. Use it
+    for files that omit or misreport the EDF+ "+C"/"+D" marker. It controls only the
+    plain/"+C"/"+D" distinction. The version field sets the EDF-vs-BDF sample size. If an
+    override changes that sample size, the function raises `ValueError`.
     """
     ...
 def inspect(path: str) -> Awaitable[dict[str, Any]]: ...

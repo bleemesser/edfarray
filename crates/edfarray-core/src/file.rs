@@ -17,7 +17,7 @@ use crate::proxy_2d::Proxy2D;
 use crate::proxy_3d::Proxy3D;
 use crate::signal::SignalHeader;
 
-/// Open EDF/EDF+ file with memory-mapped access to header, signals, and annotations.
+/// An open EDF or EDF+ file, with memory-mapped access to the header, signals, and annotations.
 pub struct EdfFile {
     file: Arc<MappedFile>,
 }
@@ -29,11 +29,10 @@ impl EdfFile {
         Ok(EdfFile { file })
     }
 
-    /// Open a file, forcing the variant rather than trusting the header's
-    /// auto-detected one. Useful for files that omit or misreport the EDF+
-    /// `+C`/`+D` marker. The override only controls the plain/`+C`/`+D`
-    /// distinction; an override that changes the EDF-vs-BDF sample size (set by
-    /// the version field) is rejected.
+    /// Open a file with a forced variant, instead of the variant that the header gives.
+    /// Use this for files that omit or misreport the EDF+ `+C`/`+D` marker. The override
+    /// controls only the plain/`+C`/`+D` distinction. The function rejects an override that
+    /// changes the EDF-vs-BDF sample size, which the version field sets.
     pub fn open_with_variant(path: impl AsRef<Path>, variant: EdfVariant) -> Result<Self> {
         let file = MappedFile::open_with_variant(path.as_ref(), Some(variant))?;
         Ok(EdfFile { file })
@@ -95,12 +94,12 @@ impl EdfFile {
         &self.file.header.recording
     }
 
-    /// All non-timekeeping annotations, sorted by onset. Blocks until scan completes.
+    /// All non-timekeeping annotations, sorted by onset. Blocks until the scan completes.
     pub fn annotations(&self) -> Vec<Annotation> {
         self.file.with_annotations(|idx| idx.annotations.clone())
     }
 
-    /// Annotations with onset strictly before `t`. Blocks until scan completes.
+    /// Annotations with onset strictly before `t`. Blocks until the scan completes.
     pub fn annotations_before(&self, t: f64) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             let split = idx.annotations.partition_point(|a| a.onset < t);
@@ -108,7 +107,7 @@ impl EdfFile {
         })
     }
 
-    /// Annotations with onset >= `t`. Blocks until scan completes.
+    /// Annotations with onset >= `t`. Blocks until the scan completes.
     pub fn annotations_after(&self, t: f64) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             let split = idx.annotations.partition_point(|a| a.onset < t);
@@ -116,7 +115,7 @@ impl EdfFile {
         })
     }
 
-    /// Annotations with onset in `[start, end)`. Blocks until scan completes.
+    /// Annotations with onset in `[start, end)`. Blocks until the scan completes.
     pub fn annotations_in_range(&self, start: f64, end: f64) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             let lo = idx.annotations.partition_point(|a| a.onset < start);
@@ -125,8 +124,8 @@ impl EdfFile {
         })
     }
 
-    /// Filter annotations by text. If `regex` is true, use case-insensitive regex; otherwise case-insensitive substring.
-    /// Blocks until scan completes.
+    /// Filter annotations by text. If `regex` is true, the query is a case-insensitive regex.
+    /// If not, it is a case-insensitive substring. Blocks until the scan completes.
     pub fn filter_annotations(&self, query: &str, regex: bool) -> Result<Vec<Annotation>> {
         self.file.with_annotations(|idx| {
             let annotations = &idx.annotations;
@@ -154,7 +153,7 @@ impl EdfFile {
         })
     }
 
-    /// Annotations whose text exactly matches `text`. Blocks until scan completes.
+    /// Annotations whose text exactly matches `text`. Blocks until the scan completes.
     pub fn annotations_by_text(&self, text: &str) -> Vec<Annotation> {
         self.file.with_annotations(|idx| {
             idx.annotations
@@ -165,7 +164,7 @@ impl EdfFile {
         })
     }
 
-    /// Warnings from header parse and TAL scan. Blocks until scan completes.
+    /// Warnings from header parse and TAL scan. Blocks until the scan completes.
     pub fn warnings(&self) -> Vec<String> {
         let mut w = self.file.header.warnings.clone();
         self.file.with_annotations(|idx| {
@@ -179,12 +178,12 @@ impl EdfFile {
         self.file.scan_progress()
     }
 
-    /// Whether annotation scan has completed.
+    /// Whether the annotation scan is complete.
     pub fn annotations_ready(&self) -> bool {
         self.file.annotations_ready()
     }
 
-    /// Block until annotation scan completes, if not already done.
+    /// Block until the annotation scan completes. Returns at once if it is already complete.
     pub fn wait_for_annotations(&self) {
         self.file.wait_for_annotations();
     }
@@ -216,8 +215,9 @@ impl EdfFile {
             .collect()
     }
 
-    /// Read physical data for signals over `[start_sec, end_sec)`. Parallel via rayon.
-    /// For EDF+D, set `use_time=true` to resolve times via record onsets instead of flat indices.
+    /// Read physical data for signals over `[start_sec, end_sec)`. Rayon runs the reads in
+    /// parallel. For EDF+D, set `use_time=true` to resolve times with the record onsets
+    /// instead of flat indices.
     pub fn read_page(
         &self,
         signal_indices: &[usize],
@@ -234,7 +234,8 @@ impl EdfFile {
         )
     }
 
-    /// Read digital data for signals over `[start_sec, end_sec)`. Parallel via rayon.
+    /// Read digital data for signals over `[start_sec, end_sec)`. Rayon runs the reads in
+    /// parallel.
     pub fn read_page_digital(
         &self,
         signal_indices: &[usize],
@@ -280,7 +281,7 @@ impl EdfFile {
             .collect()
     }
 
-    /// OS read-ahead hint for the records covering a time range.
+    /// Give the OS a read-ahead hint for the records that cover a time range.
     fn advise_time_range(&self, start_sec: f64, end_sec: f64) {
         let (first, last) = crate::epoch::record_range_for_time(self, start_sec, end_sec);
         if first < last {
@@ -293,7 +294,8 @@ impl EdfFile {
         Proxy3D::new(Arc::clone(&self.file), group)
     }
 
-    /// Build a 2D proxy. For `Open` groups (mixed sample rates), `PadMode` controls overflow reads.
+    /// Build a 2D proxy. For `Open` groups (mixed sample rates), `PadMode` controls reads past the
+    /// end of a channel.
     pub fn proxy_2d(&self, group: SignalGroup, pad_mode: PadMode) -> Result<Proxy2D> {
         Proxy2D::new(Arc::clone(&self.file), group, pad_mode)
     }
@@ -344,7 +346,8 @@ impl EdfFile {
         self.signal(idx)
     }
 
-    /// Signal indices matching `label`. Default is case-insensitive substring; `exact=true` uses case-sensitive equality.
+    /// Signal indices that match `label`. By default, the match is a case-insensitive substring.
+    /// With `exact=true`, the match is case-sensitive equality.
     pub fn find_all_signals(&self, label: &str, exact: bool) -> Vec<usize> {
         let query = label.to_lowercase();
         self.file
@@ -363,18 +366,18 @@ impl EdfFile {
             .collect()
     }
 
-    /// Copy this file to `path`. Override `variant` (`None` = keep current) to transcode. Rebuilds annotation channel from parsed annotations.
+    /// Copy this file to `path`. To transcode, set `variant` (`None` keeps the current variant).
+    /// The copy rebuilds the annotation channel from the parsed annotations.
     ///
     /// Transcoding caveats:
-    /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
-    ///   copy. Transcoding to any non-`+D` variant flattens timing: per-record
-    ///   onsets/gaps are replaced by uniform `record_idx * record_duration`
-    ///   timing.
-    /// - The destination annotation channel is rebuilt from parsed annotations,
-    ///   so transcoding to a plain (non-`+`) EDF/BDF variant drops all
-    ///   annotations, since plain variants have no annotation channel.
-    /// - Downconverting sample size (e.g. BDF 24-bit to EDF 16-bit) clamps the
-    ///   digital range and re-encodes from physical values, losing precision.
+    /// - EDF+D to EDF+D keeps the source record onsets, so gaps stay in the copy. Transcoding
+    ///   to a variant that is not `+D` flattens the timing: uniform
+    ///   `record_idx * record_duration` timing replaces the record onsets and gaps.
+    /// - The copy rebuilds the destination annotation channel from the parsed annotations.
+    ///   Plain (not `+`) EDF/BDF variants have no annotation channel, so transcoding to one
+    ///   drops all annotations.
+    /// - A smaller sample size (for example, BDF 24-bit to EDF 16-bit) clamps the digital
+    ///   range, and the copy encodes again from physical values. This loses precision.
     ///
     /// Fails with an [`EdfError::Io`] of kind `ResourceBusy` when `path` is memory-mapped by any
     /// open `EdfFile`, including `self`, or by a signal or proxy taken from one.
@@ -382,10 +385,11 @@ impl EdfFile {
         self.write_selected_to(path.as_ref(), variant, None)
     }
 
-    /// Like [`Self::write_to`], but copies only the ordinary signals in `signals`, given as
-    /// file-level indices in destination order. The selection must be non-empty, contain each
-    /// signal at most once, and never name the annotation channel, which is rebuilt
-    /// automatically. Annotations are copied in full regardless of the selection.
+    /// Same as [`Self::write_to`], but copies only the ordinary signals in `signals`. `signals`
+    /// holds file-level indices in destination order. The selection must not be empty, must
+    /// contain each signal at most once, and must not name the annotation channel. The copy
+    /// rebuilds the annotation channel automatically. All annotations are copied, whatever the
+    /// selection.
     pub fn write_subset_to(
         &self,
         path: impl AsRef<Path>,
@@ -548,8 +552,8 @@ impl EdfFile {
     }
 }
 
-/// Check a `write_to` signal selection: non-empty, in range, no annotation
-/// channel, no duplicates.
+/// Make sure that a `write_to` signal selection is not empty, is in range, has no annotation
+/// channel, and has no duplicates.
 fn validate_signal_selection(header: &EdfHeader, selected: &[usize]) -> Result<()> {
     if selected.is_empty() {
         return Err(EdfError::InvalidArgument {
@@ -585,7 +589,7 @@ fn validate_signal_selection(header: &EdfHeader, selected: &[usize]) -> Result<(
     Ok(())
 }
 
-/// Header metadata without annotation scan or persistent mmap.
+/// Header metadata, read without an annotation scan or a persistent mmap.
 #[derive(Debug, Clone)]
 pub struct EdfMetadata {
     pub variant: EdfVariant,
@@ -828,7 +832,7 @@ mod tests {
         build_synthetic_file(2, false, 0)
     }
 
-    /// Build 1-signal EDF file. `edf_l` sets num_records=-1; `trailing_bytes` appends garbage.
+    /// Build a 1-signal EDF file. `edf_l` sets num_records=-1. `trailing_bytes` appends garbage.
     fn build_synthetic_file(
         actual_records: usize,
         edf_l: bool,
@@ -886,7 +890,7 @@ mod tests {
         data[start..start + bytes.len().min(fs)].copy_from_slice(&bytes[..bytes.len().min(fs)]);
     }
 
-    /// Build 1-signal BDF file. `plus_c` writes "BDF+C" in reserved field.
+    /// Build a 1-signal BDF file. `plus_c` writes "BDF+C" in the reserved field.
     fn build_synthetic_bdf_file(actual_records: usize, plus_c: bool) -> NamedTempFile {
         let num_signals = 1;
         let header_bytes = 256 + 256 * num_signals;
@@ -1228,7 +1232,7 @@ mod fixture_tests {
     #[test]
     fn find_all_signals_exact_match() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        // Exact match for "F4" should return exactly index 0
+        // Exact match for "F4" must return exactly index 0
         let indices = edf.find_all_signals("F4", true);
         assert_eq!(indices, vec![0]);
     }
@@ -1236,7 +1240,7 @@ mod fixture_tests {
     #[test]
     fn find_all_signals_exact_case_sensitive() {
         let edf = EdfFile::open(fixture_path("test_generator.edf")).unwrap();
-        // "f4" (lowercase) should NOT match "F4" with exact=true
+        // "f4" (lowercase) must not match "F4" with exact=true
         let indices = edf.find_all_signals("f4", true);
         assert!(indices.is_empty(), "exact match should be case-sensitive");
     }

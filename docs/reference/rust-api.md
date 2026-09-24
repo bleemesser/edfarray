@@ -1,6 +1,6 @@
 # Rust Crate
 
-`edfarray-core` is the pure Rust implementation. The Python bindings are a thin layer on top of it, and the crate can also be used directly from Rust.
+`edfarray-core` is the Rust crate that contains the implementation. The Python bindings wrap this crate. You can also use the crate directly from Rust.
 
 ## Dependency
 
@@ -11,21 +11,25 @@ edfarray-core = { git = "https://github.com/bleemesser/edfarray.git" }
 
 ## Modules
 
-- `file` -- `EdfFile`, the top-level handle for opening, reading, and copying files. `EdfMetadata` and `EdfFile::inspect(path)` read the header without the annotation scan.
-- `header` -- `EdfHeader`, `EdfVariant`, `PatientInfo`, `RecordingInfo`, `MaybeDateTime`, `MaybeDate`, `Sex`.
-- `signal` -- `SignalHeader`, per-signal metadata and gain/offset conversion.
-- `proxy` -- `SignalProxy`, array-like view for reading samples from a single signal.
-- `group` -- `SignalGroup`, `GroupKind`, `PadMode`. Channel grouping by sample rate.
-- `proxy_2d` -- `Proxy2D`, 2D view over a `SignalGroup`. `PadMode` sets the result of reads past the end of a shorter channel.
-- `proxy_3d` -- `Proxy3D`, `StrideInfo`. 3D view `(n_records, n_channels, spr)` for rectangular groups.
-- `epoch` -- `EpochWindow`, `EpochRun`, `EpochPlan`, `EpochPad`, `plan_epochs`, `extract_epochs`. Event-locked windows decoded in parallel and gap-aware for EDF+D. `plan_epochs(file, group, events, pre, post)` returns an `EpochPlan` (windows, validity mask, and the nominal row width `n_samples`) without reading data; `extract_epochs(file, group, plan, pad)` returns `(flat_row_data, valid, dropped)` and reuses `PadMode` for fill behavior.
-- `annotation` -- `Annotation`, `AnnotationIndex`, TAL parsing.
-- `record` -- `RecordLayout`, data record byte layout and sample decoding.
-- `mmap` -- `MappedFile`, `MappedData`, `ScanMode`, `Advice`. `MappedFile` is the handle that `EdfFile` and the proxies share. `MappedData` holds the mapping, the parsed header, and the annotation index. The background annotation scan holds only the `MappedData`. When the last `MappedFile` drops, it stops the scan and waits for it. Then the mapping and the shared file lock are released. `ScanMode` selects an eager or a lazy annotation scan.
-- `writer` -- `EdfWriter`, `WriterSpec`, `WriterSignal`, `write_edf`. Streaming and one-shot writers for all six variants.
-- `edit` -- `edit_header`, `anonymize`, `audit`, `audit_terms`. In-place edits of the identity header fields, and a check for identity strings that remain.
-- `grid` -- `first_sample_at_or_after`, `GRID_EPS`. The one rule that converts a time to a sample index.
-- `error` -- `EdfError`, the error type used throughout the crate.
+- `file`: `EdfFile`, the top-level handle to open, read, and copy files. `EdfMetadata` and `EdfFile::inspect(path)` read the header and do not scan the annotations.
+- `header`: `EdfHeader`, `EdfVariant`, `PatientInfo`, `RecordingInfo`, `MaybeDateTime`, `MaybeDate`, `Sex`.
+- `signal`: `SignalHeader`, the metadata of one signal, and the conversion with gain and offset.
+- `proxy`: `SignalProxy`, an array-like view that reads samples from one signal. A proxy is a view that reads samples on demand.
+- `group`: `SignalGroup`, `GroupKind`, `PadMode`. These types group signals by sample rate.
+- `proxy_2d`: `Proxy2D`, a 2D view over a `SignalGroup`. `PadMode` sets the result of a read past the end of a shorter signal.
+- `proxy_3d`: `Proxy3D`, `StrideInfo`. A 3D view `(n_records, n_channels, spr)` for rectangular groups. A record is one fixed-duration block of data in the file.
+- `epoch`: `EpochWindow`, `EpochRun`, `EpochPlan`, `EpochPad`, `plan_epochs`, `extract_epochs`. This module decodes event-locked windows in parallel. It takes EDF+D gaps into account. An EDF+D gap is a time span with no recorded data.
+
+    `plan_epochs(file, group, events, pre, post)` returns an `EpochPlan` and reads no data. The plan contains the windows, a validity mask, and the nominal row width `n_samples`. `extract_epochs(file, group, plan, pad)` returns `(flat_row_data, valid, dropped)`. It uses `PadMode` to select the fill behavior.
+- `annotation`: `Annotation`, `AnnotationIndex`, and TAL parsing. A TAL is a time-stamped annotation list.
+- `record`: `RecordLayout`, the byte layout of a data record, and sample decoding.
+- `mmap`: `MappedFile`, `MappedData`, `ScanMode`, `Advice`. A memory map (mmap) makes the bytes of a file readable as memory. `MappedFile` is the handle that `EdfFile` and the proxies share. `MappedData` holds the mapping, the parsed header, and the annotation index. `ScanMode` selects an eager or a lazy annotation scan.
+
+    The background annotation scan holds only the `MappedData`. When the last `MappedFile` drops, it stops the scan and waits for it. Then it releases the mapping and the shared advisory lock. An advisory lock is a file lock that only cooperating programs obey.
+- `writer`: `EdfWriter`, `WriterSpec`, `WriterSignal`, `write_edf`. Streaming writers and one-shot writers for all six variants.
+- `edit`: `edit_header`, `anonymize`, `audit`, `audit_terms`. These functions edit the identity fields of the header in place. They also search the file for identity strings that remain.
+- `grid`: `first_sample_at_or_after`, `GRID_EPS`. This module contains the one rule that converts a time to a sample index.
+- `error`: `EdfError`, the error type for all of the crate.
 
 ## Usage
 
@@ -84,7 +88,7 @@ fn main() -> edfarray_core::error::Result<()> {
 
 ## Error handling
 
-All fallible operations return `Result<T, EdfError>`. Error variants carry context about what went wrong:
+All operations that can fail return `Result<T, EdfError>`. Each error variant contains data about the failure. For example:
 
 ```rust
 use edfarray_core::error::EdfError;
@@ -98,24 +102,28 @@ match edf.signal(999) {
 }
 ```
 
-See the `error` module for the full list of variants.
+The `error` module contains the full list of variants.
 
 ## Key types
 
-`EdfFile` -- Main entry point. Owns an `Arc<MappedFile>` and provides all public API methods. Opened with `EdfFile::open(path)`. Some files omit or misreport the `+C`/`+D` marker. For these files, use `EdfFile::open_with_variant(path, variant)` to force the variant. The override controls only the plain, `+C`, and `+D` distinction. An override that changes the EDF-vs-BDF sample size fails. `write_to(path, variant)` writes a copy of the file. If `variant` is `Some`, the copy uses that variant. `write_subset_to(path, variant, signals)` writes only the selected signal indices, in the given order. If another edfarray handle has the destination open, both fail with an `EdfError::Io` of kind `ResourceBusy`. The source file itself counts as open.
+`EdfFile`: The main entry point. It owns an `Arc<MappedFile>` and provides all public API methods. You open a file with `EdfFile::open(path)`.
 
-`SignalProxy` -- Lightweight view of one signal. Holds an `Arc` reference to the underlying `MappedFile`. Created by `EdfFile::signal()`. Translates global sample indices to record byte offsets and decodes on the fly.
+Some files omit or misreport the `+C`/`+D` marker. For these files, use `EdfFile::open_with_variant(path, variant)` to force the variant. The override controls only the plain, `+C`, and `+D` distinction. If the override changes the EDF-vs-BDF sample size, it fails.
 
-`SignalGroup` -- A set of channels classified by sample rate. `GroupKind::Rectangular` (shared rate) or `GroupKind::Open` (mixed). Built by `EdfFile::signal_groups()` or `SignalGroup::from_indices(header, indices)`; its fields are private because the invariants tie them together, so read them through `indices()`, `kind()`, `sample_rate()`, `samples_per_record()`, `min_samples()`, `max_samples()`, `covers_all_ordinary()`, and `is_singleton()`. Required input to all proxy constructors.
+`write_to(path, variant)` writes a copy of the file. If `variant` is `Some`, the copy uses that variant. `write_subset_to(path, variant, signals)` writes only the selected signal indices, in the given order. If another edfarray handle has the destination open, both methods fail with an `EdfError::Io` of kind `ResourceBusy`. The source file itself counts as open.
 
-`PadMode` -- Fill policy for reads past a channel's valid length on `Proxy2D`. Variants: `Raise` (default), `Nan`, `Zero`, `Value(f64)`, `Edge`. Interpreted in the read domain (physical f64 / digital i32). `Nan` is physical-only.
+`SignalProxy`: A view of one signal that holds no sample data. It holds an `Arc` reference to the underlying `MappedFile`. `EdfFile::signal()` creates it. It translates global sample indices to byte offsets in the records. It decodes the samples at read time.
 
-`Proxy2D` -- 2D view over a `SignalGroup`. Created by `EdfFile::proxy_2d(group, pad_mode)`. Accepts any `GroupKind`. Reads are parallelized with rayon. Key methods: `shape()`, `sample_rate() -> Option<f64>`, `valid_lengths()`, `get()`, `read_physical()`, `read_slice()`, `read_digital()`.
+`SignalGroup`: A set of signals classified by sample rate. The kind is `GroupKind::Rectangular` (shared rate) or `GroupKind::Open` (mixed). `EdfFile::signal_groups()` or `SignalGroup::from_indices(header, indices)` builds a group. The invariants tie the fields together, so the fields are private. Read them through `indices()`, `kind()`, `sample_rate()`, `samples_per_record()`, `min_samples()`, `max_samples()`, `covers_all_ordinary()`, and `is_singleton()`. `Proxy2D::new` and `Proxy3D::new` take a `SignalGroup`. `SignalProxy::new` takes a signal index.
 
-`Proxy3D` -- 3D view `(num_records, num_channels, samples_per_record)`. Created by `EdfFile::proxy_3d(group)`. Requires `GroupKind::Rectangular`. Key methods: `shape()`, `sample_rate()`, `get()`, `read_physical_block()`, `read_digital_block()`, `stride_info() -> Option<StrideInfo>` for zero-copy view metadata.
+`PadMode`: The fill policy for a `Proxy2D` read past the valid length of a signal. The variants are `Raise` (default), `Nan`, `Zero`, `Value(f64)`, and `Edge`. The fill applies in the domain of the read (physical f64 / digital i32). `Nan` is valid only for physical reads.
 
-`EdfHeader` -- The complete parsed header, including signal headers, patient info, and recording info. Accessible via `EdfFile::header()`.
+`Proxy2D`: A 2D view over a `SignalGroup`. `EdfFile::proxy_2d(group, pad_mode)` creates it. It accepts any `GroupKind`. It runs reads in parallel on the rayon thread pool. The main methods are `shape()`, `sample_rate() -> Option<f64>`, `valid_lengths()`, `get()`, `read_physical()`, `read_slice()`, and `read_digital()`.
 
-`MaybeDateTime` -- Either a parsed `NaiveDateTime` or a raw date/time string pair. Used for `EdfHeader::start_datetime` to handle anonymized files.
+`Proxy3D`: A 3D view `(num_records, num_channels, samples_per_record)`. `EdfFile::proxy_3d(group)` creates it. It requires `GroupKind::Rectangular`. The main methods are `shape()`, `sample_rate()`, `get()`, `read_physical_block()`, `read_digital_block()`, and `stride_info() -> Option<StrideInfo>`. `stride_info()` gives the metadata for a zero-copy view, that is, a view that does not copy samples.
 
-`RecordLayout` -- Byte-level layout of signals within a data record. Used internally by `SignalProxy`.
+`EdfHeader`: The complete parsed header, with the signal headers, patient info, and recording info. Get it with `EdfFile::header()`.
+
+`MaybeDateTime`: Either a parsed `NaiveDateTime` or a raw date/time string pair. `EdfHeader::start_datetime` uses this type to handle anonymized files.
+
+`RecordLayout`: The byte layout of the signals in a data record. `SignalProxy` uses it internally.

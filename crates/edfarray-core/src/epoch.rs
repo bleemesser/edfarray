@@ -6,11 +6,11 @@ use crate::grid::first_sample_at_or_after;
 use crate::group::{GroupKind, PadMode, SignalGroup};
 use crate::proxy::SignalProxy;
 
-/// One contiguous piece of an epoch: flat samples `s_start..s_end` land at row column `dest`.
+/// One contiguous piece of an epoch: flat samples `s_start..s_end` go to row column `dest`.
 ///
-/// A window that crosses an EDF+D gap yields one run per side. Each run sits at its true time
-/// offset within the row, so the columns that fall in the gap stay empty for the pad policy to
-/// fill instead of being closed up.
+/// A window that crosses an EDF+D gap gives one run for each side. Each run sits at its true
+/// time offset in the row. Thus the columns in the gap stay empty, and the pad policy fills
+/// them. The runs do not close up over the gap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EpochRun {
     pub s_start: usize,
@@ -32,9 +32,9 @@ impl EpochRun {
 ///
 /// `s_start..s_end` is the outer decoded span, the range reported by `epoch_windows`. It is
 /// shorter than the nominal window when the window clips a file boundary. For a window that
-/// crosses an EDF+D gap it covers both sides, and `runs` says where each side actually belongs.
-/// A window with no samples at all has `s_start == s_end`, the index of the first sample after
-/// it, or the sample count when the window is past the end of the file.
+/// crosses an EDF+D gap, it covers both sides, and `runs` gives the correct position of each
+/// side. If a window has no samples, `s_start == s_end`. This value is the index of the first
+/// sample after the window, or the sample count if the window is past the end of the file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EpochWindow {
     pub onset: f64,
@@ -50,13 +50,13 @@ impl EpochWindow {
     }
 }
 
-/// A planned set of epochs: one window per event, the per-window validity mask, and the
-/// row width every epoch decodes into.
+/// A planned set of epochs: one window for each event, a validity mask for the windows, and
+/// the row width that every epoch decodes into.
 ///
-/// `n_samples` is the nominal window width `ceil((pre + post) * rate)`, where a product within
-/// 1e-6 of an integer counts as that integer. It depends only on the
-/// request, never on where the events fall, so rows stay time-aligned with each other and the
-/// output shape is stable across files.
+/// `n_samples` is the nominal window width `ceil((pre + post) * rate)`. A product within 1e-6
+/// of an integer counts as that integer. The width depends only on the request, not on the
+/// event times. Thus the rows stay aligned in time with each other, and the output shape does
+/// not change between files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EpochPlan {
     pub windows: Vec<EpochWindow>,
@@ -64,17 +64,17 @@ pub struct EpochPlan {
     pub n_samples: usize,
 }
 
-/// Edge/gap policy for [`extract_epochs`]. `Drop` is epoch-only; the fill variants reuse the
-/// proxy [`PadMode`] so padding semantics cannot drift between the two features.
+/// Edge and gap policy for [`extract_epochs`]. Only epochs use `Drop`. The fill variants use
+/// the proxy [`PadMode`], so the two features always pad in the same way.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EpochPad {
-    /// Omit edge/gap-affected epochs from the output; record their indices as dropped.
+    /// Omit epochs that touch an edge or a gap from the output. Record their indices as dropped.
     Drop,
-    /// Keep every epoch; fill missing samples per `PadMode` and mark the row `valid = false`.
+    /// Keep every epoch. Fill missing samples with `PadMode` and mark that row `valid = false`.
     Fill(PadMode),
 }
 
-/// Raise on writer- or spec-level argument problems (`ValueError` on the Python side).
+/// Error for an invalid epoch request argument. Python raises it as `ValueError`.
 fn epoch_argument(name: &'static str, reason: String) -> EdfError {
     EdfError::InvalidArgument { name, reason }
 }
@@ -91,8 +91,8 @@ fn validate_pre_post(pre: f64, post: f64) -> Result<()> {
     Ok(())
 }
 
-/// Append flat samples `s0..s1` at column `dest`, merging with the previous run when both the
-/// samples and the columns continue it.
+/// Append flat samples `s0..s1` at column `dest`. If both the samples and the columns continue
+/// the previous run, merge them into that run.
 fn push_run(runs: &mut Vec<EpochRun>, s0: usize, s1: usize, dest: usize) {
     if let Some(last) = runs.last_mut()
         && last.s_end == s0
@@ -108,12 +108,12 @@ fn push_run(runs: &mut Vec<EpochRun>, s0: usize, s1: usize, dest: usize) {
     });
 }
 
-/// Plan event times into fixed-length sample windows. No data is read.
+/// Plan event times into fixed-length sample windows. This function reads no data.
 ///
 /// Window `i` starts at the first sample at or after `events[i] - pre` and is `n_samples`
-/// wide. `valid[i]` is true only when every one of those samples exists, so it is false when
-/// the window runs off either end of the file or touches an EDF+D gap, independent of the pad
-/// policy chosen later.
+/// wide. `valid[i]` is true only when all of those samples exist. Thus it is false when the
+/// window goes past either end of the file or touches an EDF+D gap. The pad policy that the
+/// caller selects later does not change it.
 pub fn plan_epochs(
     file: &EdfFile,
     group: &SignalGroup,
@@ -244,17 +244,17 @@ pub fn plan_epochs(
 
 /// Decode planned windows into one flat `(n_epochs, n_channels, n_samples)` row-major buffer.
 ///
-/// Returns `(data, valid, dropped)`. Under [`EpochPad::Drop`], invalid windows are omitted,
-/// `valid` is all-true for the kept rows, and `dropped` lists the planner indices removed.
-/// Under a fill policy every window is kept; the row stays `valid = false` and every column
-/// with no sample behind it is filled per [`PadMode`]. Those are the columns that fall off a
-/// file boundary and, for a window crossing an EDF+D gap, the columns inside the gap. Each
-/// contiguous run lands at its own time offset, so samples from opposite sides of a gap are
-/// never closed up against each other. A valid row is decoded in full.
+/// Returns `(data, valid, dropped)`. With [`EpochPad::Drop`], the function omits invalid
+/// windows. `valid` is all true for the kept rows, and `dropped` lists the planner indices that
+/// it removed. With a fill policy, the function keeps every window. An invalid row stays
+/// `valid = false`, and [`PadMode`] fills every column that has no sample. These are the
+/// columns past a file boundary and, for a window that crosses an EDF+D gap, the columns in the
+/// gap. Each contiguous run goes to its own time offset. Thus samples from opposite sides of a
+/// gap never close up against each other. A valid row is decoded in full.
 ///
-/// The row width is `plan.n_samples`, the nominal window width, so every row covers the same
-/// time offsets relative to its event and the shape does not depend on where the events fall.
-/// Bindings must not re-derive the width from `data.len()`.
+/// The row width is `plan.n_samples`, the nominal window width. Thus every row covers the same
+/// time offsets relative to its event, and the shape does not depend on the event times.
+/// Bindings must not calculate the width again from `data.len()`.
 pub fn extract_epochs(
     file: &EdfFile,
     group: &SignalGroup,
@@ -369,8 +369,8 @@ pub fn extract_epochs(
 
 /// Record range covering `[start_sec, end_sec)`.
 ///
-/// EDF+D record onsets are non-uniform, so they must be looked up rather than derived from
-/// the record duration.
+/// EDF+D record onsets are not uniform. Thus the function must look them up and cannot
+/// calculate them from the record duration.
 pub(crate) fn record_range_for_time(
     file: &EdfFile,
     start_sec: f64,
@@ -430,7 +430,7 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    /// EDF+C, `num_signals` channels at `rate` Hz, record duration 1s, n = 10 * num_records
+    /// EDF+C, `num_signals` channels at `rate` Hz, record duration 1s, n = round(rate) * num_records
     /// samples. Signal i holds value (i + 1) * g for global flat sample g. Physical range
     /// [-32768, 32767] over digital [-32768, 32767] gives gain exactly 1.
     pub(super) fn write_contig(path: &str, num_records: usize, rate: f64, num_signals: usize) {
@@ -505,13 +505,14 @@ mod tests {
         assert_eq!(flags, &vec![true, true, true]);
     }
 
-    /// EDF+D, 2 ordinary signals at 10 Hz plus one annotation channel carrying only
-    /// time-keeping TALs at exactly `onsets` (which must start at 0.0).
+    /// Write an EDF+D file with 2 ordinary signals at 10 Hz and one annotation channel. The
+    /// annotation channel holds only timekeeping TALs at exactly `onsets`, which must start at
+    /// 0.0.
     fn write_plus_d(path: &str, onsets: &[f64]) {
         write_gapped(path, onsets, 10);
     }
 
-    /// As `write_plus_d` with `spr` samples per 1 s record. Signal i holds
+    /// Same as `write_plus_d`, with `spr` samples in each 1 s record. Signal i holds
     /// `(i + 1) * r * spr + s` at sample `s` of record `r`, so signal 0 is the flat index.
     pub(super) fn write_gapped(path: &str, onsets: &[f64], spr: usize) {
         let num_signals = 3usize;
@@ -601,8 +602,8 @@ mod tests {
     }
 
     /// A window covering real data on both sides of a gap must keep each side at its own time
-    /// offset, with the gap columns padded. Closing the two runs up against each other would
-    /// present samples 3 s apart as neighbours.
+    /// offset, with the gap columns padded. If the two runs close up against each other,
+    /// samples 3 s apart appear as neighbors.
     #[test]
     fn gap_spanning_window_keeps_both_sides_in_place() {
         let f = NamedTempFile::new().unwrap();
@@ -667,9 +668,9 @@ mod tests {
         assert_eq!(data.len(), 2 * 40); // one kept epoch, 2 channels, window = 4 s * 10 Hz
     }
 
-    /// Row width and pad placement must come from `pre`/`post` alone. When every epoch is
-    /// edge-clipped there is no full-width row to infer the width from, and a width taken from
-    /// the decoded spans would drop the leading pad and misalign the rows against each other.
+    /// Row width and pad placement must come from `pre`/`post` alone. If every epoch is clipped
+    /// at an edge, no full-width row gives the width. A width taken from the decoded spans
+    /// drops the leading pad and misaligns the rows against each other.
     #[test]
     fn all_clipped_rows_keep_nominal_width_and_alignment() {
         let f = NamedTempFile::new().unwrap();
@@ -692,7 +693,7 @@ mod tests {
         assert!(row1[30..].iter().all(|v| v.is_nan()));
     }
 
-    /// With everything dropped the block is empty but still nominally shaped.
+    /// If all epochs are dropped, the block is empty but still has the nominal shape.
     #[test]
     fn drop_everything_keeps_nominal_width() {
         let f = NamedTempFile::new().unwrap();
@@ -815,8 +816,8 @@ mod proptest_model {
     use proptest::prelude::*;
     use tempfile::NamedTempFile;
 
-    /// Smallest integer at or above `x`, within the grid tolerance. Deliberately a slow
-    /// search rather than a copy of `first_sample_at_or_after`.
+    /// Smallest integer at or above `x`, within the grid tolerance. This is a slow search on
+    /// purpose, not a copy of `first_sample_at_or_after`.
     fn first_at_or_after(x: f64) -> i64 {
         let mut k = x.floor() as i64 - 2;
         while (k as f64) < x - GRID_EPS {
@@ -825,7 +826,7 @@ mod proptest_model {
         k
     }
 
-    /// Flat sample behind grid index `k`, if any. `starts[r]` is record r's first grid index.
+    /// Flat sample behind grid index `k`, if any. `starts[r]` is the first grid index of record r.
     fn sample_at(starts: &[i64], spr: i64, k: i64) -> Option<usize> {
         starts
             .iter()
@@ -939,7 +940,8 @@ mod proptest_model {
         Ok(())
     }
 
-    /// Times on a fine lattice around the file, plus float-noise neighbours of grid points.
+    /// Times on a fine lattice around the file, plus points near the grid that differ only by
+    /// floating-point error.
     fn event_strategy(span: f64) -> impl Strategy<Value = f64> {
         prop_oneof![
             (-3.0..span + 3.0),

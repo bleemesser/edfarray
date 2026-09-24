@@ -8,7 +8,7 @@ use crate::group::{PadMode, SignalGroup};
 use crate::mmap::MappedFile;
 use crate::proxy::SignalProxy;
 
-/// 2D view over signal channels. Decodes on demand from mmap; holds no sample data.
+/// 2D view over signal channels. It decodes on demand from the mmap and holds no sample data.
 #[derive(Debug)]
 pub struct Proxy2D {
     file: Arc<MappedFile>,
@@ -107,7 +107,7 @@ impl Proxy2D {
         proxy.get_physical(sample)
     }
 
-    /// Read physical samples for signal indices and sample range. Parallel across signals.
+    /// Read physical samples for the signal indices and sample range. Reads signals in parallel.
     pub fn read_physical(
         &self,
         signal_indices: &[usize],
@@ -128,7 +128,7 @@ impl Proxy2D {
             .collect()
     }
 
-    /// Read a rectangular block of physical samples. Parallelized across signals.
+    /// Read a rectangular block of physical samples. Reads signals in parallel.
     pub fn read_slice(
         &self,
         signals: Range<usize>,
@@ -159,7 +159,7 @@ impl Proxy2D {
             .collect()
     }
 
-    /// Read a rectangular block of raw digital (i32) samples. Parallelized across signals.
+    /// Read a rectangular block of raw digital (i32) samples. Reads signals in parallel.
     pub fn read_slice_digital(
         &self,
         signals: Range<usize>,
@@ -261,10 +261,10 @@ fn read_digital_with_pad(
     )
 }
 
-/// Read `[s_start, s_end)` from one channel, padding anything past `valid` per `pad`.
+/// Read `[s_start, s_end)` from one channel, and pad anything past `valid` as `pad` specifies.
 ///
-/// `fill_for` supplies the pad value for the constant modes; `Raise` and `Edge` are handled
-/// here because their behavior does not depend on the element type.
+/// `fill_for` supplies the pad value for the constant modes. This function handles `Raise` and
+/// `Edge`, because their behavior does not depend on the element type.
 #[allow(clippy::too_many_arguments)]
 fn read_with_pad<T, R, F>(
     file: &Arc<MappedFile>,

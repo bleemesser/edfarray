@@ -6,7 +6,7 @@
 pip install edfarray
 ```
 
-From source:
+To install from source:
 
 ```bash
 git clone https://github.com/bleemesser/edfarray.git
@@ -23,7 +23,7 @@ import edfarray
 f = edfarray.EdfFile("recording.edf")
 ```
 
-Or with a context manager:
+You can also use a context manager:
 
 ```python
 with edfarray.EdfFile("recording.edf") as f:
@@ -32,20 +32,20 @@ with edfarray.EdfFile("recording.edf") as f:
 
 ### Forcing the variant
 
-The variant (`EDF` vs `EDF+C` vs `EDF+D`, and the BDF equivalents) is detected
-from the header. Some writers omit or misreport the `+C`/`+D` marker; pass
-`variant` to override the detected value:
+edfarray detects the variant (`EDF`, `EDF+C`, or `EDF+D`, and the BDF equivalents)
+from the header. Some writers omit or misreport the `+C`/`+D` marker. If the marker
+is wrong, pass `variant` to override the detected value:
 
 ```python
 # This file is really discontinuous but its header doesn't say so.
 f = edfarray.EdfFile("recording.edf", variant="EDF+D")
 ```
 
-The override only controls the plain/`+C`/`+D` distinction. The EDF-vs-BDF
-sample size is fixed by the version field and cannot be changed, so an override
-that crosses that boundary (e.g. forcing `BDF` on an EDF file) raises
-`ValueError`. When an override disagrees with the detected variant, a note is
-added to `f.warnings`.
+The override controls only the plain/`+C`/`+D` distinction. The version field
+sets the EDF-vs-BDF sample size, and you cannot change it. If an override crosses
+that boundary, edfarray raises `ValueError`. An example is `BDF` on an EDF file.
+If an override disagrees with the detected variant, edfarray adds a note to
+`f.warnings`.
 
 ## File metadata
 
@@ -62,7 +62,7 @@ f.start_datetime  # datetime.datetime, or string if anonymized
 
 ## Patient and recording info
 
-EDF+ files encode structured patient and recording information in the header. edfarray parses these automatically, including plain EDF files that happen to use the EDF+ subfield format.
+EDF+ files encode structured patient and recording information in the header. edfarray parses this information automatically. It also parses it in plain EDF files that use the EDF+ subfield format.
 
 ```python
 # Patient fields. None if not present or "X" in the header.
@@ -89,7 +89,7 @@ for i in range(f.num_signals):
     print(f"[{i}] {sig.label}: {sig.sample_rate} Hz, {len(sig)} samples")
 ```
 
-Signals can also be accessed by label:
+You can also access a signal by its label:
 
 ```python
 eeg = f.signal("EEG Fpz-Cz")
@@ -113,7 +113,7 @@ print(data.shape, data.dtype)  # (30000,) float64
 
 ## Anonymized dates
 
-Some EDF files have anonymized date fields like `"04.04.yy"` instead of `"04.04.11"`. edfarray handles this gracefully. `start_datetime` will be a string instead of a `datetime.datetime`:
+Some EDF files contain anonymized date fields, for example `"04.04.yy"` instead of `"04.04.11"`. For these files, `start_datetime` is a string, not a `datetime.datetime`:
 
 ```python
 dt = f.start_datetime
@@ -123,11 +123,11 @@ else:
     print(f"Recorded on: {dt.date()}")
 ```
 
-`patient_birthdate` works the same way: it may be a `datetime.date`, a raw string, or `None`.
+`patient_birthdate` works the same way. It can be a `datetime.date`, a raw string, or `None`.
 
 ## Parse warnings
 
-Non-fatal issues (malformed annotations, unexpected field values) are collected in `warnings` rather than raising exceptions:
+edfarray collects non-fatal issues in `warnings` and does not raise exceptions for them. Examples are malformed annotations and unexpected field values:
 
 ```python
 if f.warnings:
