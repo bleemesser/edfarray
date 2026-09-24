@@ -43,6 +43,16 @@ impl Proxy2D {
         })
     }
 
+    /// Build a 2D proxy from file-level signal indices.
+    pub fn from_indices(
+        file: Arc<MappedFile>,
+        indices: &[usize],
+        pad_mode: PadMode,
+    ) -> Result<Self> {
+        let group = SignalGroup::from_indices(&file.header, indices)?;
+        Self::new(file, group, pad_mode)
+    }
+
     /// Shape of the 2D view: `(num_signals, max_samples)`.
     pub fn shape(&self) -> (usize, usize) {
         (self.group.len(), self.group.max_samples)
@@ -328,18 +338,6 @@ where
     }
 
     Ok(buf)
-}
-
-impl Proxy2D {
-    /// Build a 2D proxy from file-level signal indices.
-    pub fn from_indices(
-        file: Arc<MappedFile>,
-        indices: &[usize],
-        pad_mode: PadMode,
-    ) -> Result<Self> {
-        let group = SignalGroup::from_indices(&file.header, indices)?;
-        Self::new(file, group, pad_mode)
-    }
 }
 
 #[cfg(test)]

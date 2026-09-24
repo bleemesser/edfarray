@@ -2,7 +2,7 @@ mod aio;
 mod annotations;
 mod edit;
 mod epoch;
-mod errors;
+pub mod errors;
 mod file;
 mod group;
 mod indexing;

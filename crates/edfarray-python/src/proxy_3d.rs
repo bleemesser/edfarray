@@ -14,8 +14,8 @@ use crate::numpy_util::numpy_dtype;
 /// `(num_records, num_channels, samples_per_record)`.
 ///
 /// Indexing semantics match NumPy 3D: `proxy[rec, ch, samp]` returns a scalar
-/// when all three are ints, a 2D ndarray when two are slices, etc. Step != 1
-/// is not supported.
+/// when all three are ints, a 2D ndarray when two are slices, etc. The sample
+/// axis accepts any step. The record and channel axes require step 1.
 #[gen_stub_pyclass]
 #[pyclass(name = "Proxy3D", module = "edfarray._core")]
 pub struct PyProxy3D {
@@ -44,7 +44,7 @@ impl PyProxy3D {
     }
 
     /// `True` if the file/group support a zero-copy stride view via
-    /// [`as_strided`].
+    /// `numpy.lib.stride_tricks.as_strided`.
     #[getter]
     fn supports_strided_view(&self) -> bool {
         self.proxy.stride_info().is_some()

@@ -44,7 +44,7 @@ impl SignalHeader {
 
         let is_annotation = label.starts_with(EDF_ANNOTATIONS_LABEL);
 
-        // If a degenerate range is present, pass digital values through instead
+        // A degenerate range has no usable scale, so digital values pass through unscaled.
         let phys_scale = physical_min.abs().max(physical_max.abs());
         let phys_degenerate = (physical_min - physical_max).abs() <= phys_scale * f64::EPSILON;
         let digital_degenerate = digital_min == digital_max;

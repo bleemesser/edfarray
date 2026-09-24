@@ -15,6 +15,8 @@ Opens an EDF/EDF+ file at the given path. Parses the header synchronously and st
 
 `variant` forces the file variant instead of trusting the auto-detected one, for files that omit or misreport the EDF+ `"+C"`/`"+D"` marker. It only controls the plain/`"+C"`/`"+D"` distinction; an override that changes the EDF-vs-BDF sample size (set by the version field) raises `ValueError`. A mismatch with the detected variant is recorded in `warnings`.
 
+If an `EdfWriter` or `write_edf` call is still writing `path`, the constructor raises `EdfFileError`. The open file holds a shared lock on `path` until the `EdfFile` and every signal and proxy taken from it are dropped. While the lock is held, edfarray refuses to write to `path`. See [Memory mapping](contracts.md#memory-mapping).
+
 Supports the context manager protocol (`with` statement).
 
 ### Properties
@@ -77,9 +79,11 @@ The annotation accessors below block until the background annotation scan comple
 
 `scan_progress: tuple[int, int]` -- `(records_scanned, total_records)` for the background annotation scan. Non-blocking. Can be polled to show progress for large files.
 
+`closed: bool` -- Whether `close()` has been called.
+
 ### Methods
 
-`signal(idx_or_label: int | str, cache_capacity: int = 0, strategy: str | None = None) -> Signal` -- Get a signal by index or label. Raises `OutOfRangeError` (an `IndexError`) for out-of-range indices, `SignalNotFoundError` (a `KeyError`) for unknown labels. `strategy` is `"auto"` (default), `"mmap"`, or `"stream"`; see [Performance](../guide/performance.md). `cache_capacity` enables a per-`Signal` LRU cache of decoded physical records -- see [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
+`signal(idx_or_label: int | str, cache_capacity: int = 0, strategy: str | None = None) -> Signal` -- Get a signal by index or label. Raises `OutOfRangeError` (an `IndexError`) for out-of-range indices, `SignalNotFoundError` (a `KeyError`) for unknown labels. Negative indices are not supported and raise `OutOfRangeError`. `strategy` is `"auto"` (default), `"mmap"`, or `"stream"`; see [Performance](../guide/performance.md). `cache_capacity` enables a per-`Signal` LRU cache of decoded physical records -- see [Caching repeated reads](../guide/signals.md#caching-repeated-reads).
 
 `find_all_signals(label: str, exact: bool = False) -> list[int]` -- Return the indices of all signals whose label matches `label`. If `exact` is `False` (default), performs a case-insensitive substring match. If `exact` is `True`, performs a case-sensitive exact equality match. Searches all signals including annotation signals. Pass an index to `signal()` to read one.
 
@@ -91,9 +95,9 @@ The annotation accessors below block until the background annotation scan comple
 
 `read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -> list[numpy.ndarray]` -- Same as `read_page()` but returns raw int32 digital values without gain/offset conversion. When `use_time` is `True`, resolves the time range using record onset times for EDF+D files.
 
-`extract_epochs(events, *, pre: float, post: float, group=None, pad=None, query=None, regex=False) -> Epochs` -- Decode fixed `[onset - pre, onset + post)` windows around each event in parallel into a dense `(n_epochs, n_channels, n_samples)` float64 block, where `n_samples` is always `ceil((pre + post) * sample_rate)` and does not depend on where the events fall. `events` accepts a float, a sequence of floats, `Annotation` objects (or a mix), or a numpy float64 array. Pass `events=None` with `query` to lock onto annotation text (mutually exclusive with a non-`None` `events`). `group` is a `SignalGroup` or list of signal indices; it must be rectangular and defaults to the largest rectangular group. `pad` governs epochs that run off the file or straddle an EDF+D gap: `"drop"` (default) omits them, `"nan"`/`"zero"`/a number/`"edge"` keep and fill them (marked `valid=False`), `"raise"` errors on the first offender. Gap-aware: samples are never spliced across a gap. See [Epoch Extraction](../guide/epochs.md).
+`extract_epochs(events, *, pre: float, post: float, group=None, pad=None, query=None, regex=False) -> Epochs` -- Decode fixed `[onset - pre, onset + post)` windows around each event in parallel into a dense `(n_epochs, n_channels, n_samples)` float64 block, where `n_samples` is always `ceil((pre + post) * sample_rate)` and does not depend on where the events fall. A product within 1e-6 of an integer counts as that integer, so `pre=0.1, post=0.2` at 200 Hz gives 60 samples, not 61. `events` accepts a float, a sequence of floats, `Annotation` objects (or a mix), or a numpy float64 array. Pass `events=None` with `query` to lock onto annotation text (mutually exclusive with a non-`None` `events`). `group` is a `SignalGroup` or list of signal indices; it must be rectangular and defaults to the largest rectangular group. `pad` governs epochs that run off the file or straddle an EDF+D gap: `"drop"` (default) omits them, `"nan"`/`"zero"`/a number/`"edge"` keep and fill them (marked `valid=False`), `"raise"` errors on the first offender. Gap-aware: samples are never spliced across a gap. See [Epoch Extraction](../guide/epochs.md).
 
-`epoch_windows(events, *, pre: float, post: float, group=None) -> tuple[list[tuple[float, int, int]], numpy.ndarray]` -- Plan epochs without reading data. Returns `([(onset, s_start, s_end)], valid)` where the sample indices are flat offsets into the group and `valid` is a boolean array flagging windows that clip at a file edge or straddle a gap. This is the same table `extract_epochs` decodes, so callers can inspect or filter events before paying for the decode.
+`epoch_windows(events, *, pre: float, post: float, group=None) -> tuple[list[tuple[float, int, int]], numpy.ndarray]` -- Plan epochs without reading data. Returns `([(onset, s_start, s_end)], valid)` where the sample indices are flat offsets into the group and `valid` is a boolean array. An entry is `False` if its window runs past a file edge or crosses a gap. This is the same table `extract_epochs` decodes, so callers can inspect or filter events before paying for the decode.
 
 `signal_groups() -> list[SignalGroup]` -- Partition all ordinary signals into groups by sample rate. Each group records its classification, sample rate, sample-count range, and whether it covers every ordinary signal. Sub-Hz precision is preserved.
 
@@ -103,23 +107,19 @@ The annotation accessors below block until the background annotation scan comple
 
 `proxy_3d(group: SignalGroup) -> Proxy3D` -- Build a 3D proxy `(num_records, num_channels, samples_per_record)`. Requires `group.kind == "rectangular"`. Errors otherwise.
 
-`write_to(path: str, variant: str | None = None, signals: SignalGroup | int | str | Sequence[int | str] | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations. `signals` selects which ordinary channels are written: a `SignalGroup`, a signal index, a label, or a sequence mixing both (labels match exactly, as in `signal()`); the destination's channels appear in the given order, so sets and dicts are rejected. `None` (the default) writes every ordinary signal. Raises `EdfFileError` if `path` is open for reading, including when `path` is this file; close every `EdfFile` on that path and drop every signal and proxy taken from one first. The annotation channel cannot be selected: it is always rebuilt automatically, and annotations are copied in full regardless of the selection. Transcoding caveats: **EDF+D -> EDF+D** preserves the source record onsets (gaps survive), but **EDF+D -> any non-`+D` variant** flattens timing (onsets become uniform `record_idx * record_duration`); **any `+` variant -> a plain variant** drops all annotations (plain EDF/BDF has no annotation channel); and **downconverting sample size** (BDF 24-bit -> EDF 16-bit) clamps the digital range and re-encodes from physical values, losing precision.
+`write_to(path: str, variant: str | None = None, signals: SignalGroup | int | str | Sequence[int | str] | None = None) -> None` -- Re-emit this file to `path`. By default uses the source variant; pass `variant` (one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`) to transcode. Only ordinary signals are copied; the destination's annotation channel is rebuilt from the parsed annotations. `signals` selects which ordinary channels are written: a `SignalGroup`, a signal index, a label, or a sequence mixing both (labels match exactly, as in `signal()`); the destination's channels appear in the given order, so sets and dicts are rejected. `None` (the default) writes every ordinary signal. The annotation channel cannot be selected: it is always rebuilt automatically, and annotations are copied in full regardless of the selection. If another edfarray handle has `path` open, `write_to` raises `EdfFileError`. This includes the case where `path` is this file. Before you write to `path`, close every `EdfFile` on it, drop every signal and proxy taken from one, and finish any `EdfWriter` on it. Transcoding caveats: **EDF+D -> EDF+D** preserves the source record onsets (gaps survive), but **EDF+D -> any non-`+D` variant** flattens timing (onsets become uniform `record_idx * record_duration`); **any `+` variant -> a plain variant** drops all annotations (plain EDF/BDF has no annotation channel); and **downconverting sample size** (BDF 24-bit -> EDF 16-bit) clamps the digital range and re-encodes from physical values, losing precision.
 
 `close() -> None` -- Explicitly release the underlying memory-mapped file. After calling `close()`, any further method or property access on the `EdfFile` raises. Existing `Signal`, `Proxy2D`, and `Proxy3D` objects keep their own references to the mapping and remain usable; the mapping is released once the file and every object derived from it are dropped. Idempotent. The context manager (`with` statement) calls `close()` on exit.
-
-`Proxy2D.read_digital(signals: list[int], start: int, stop: int) -> numpy.ndarray` -- Raw digital values for the given signals over samples `[start, stop)`, as a 2D int32 array. The counterpart to physical indexing via `[]`. `pad_mode="nan"` raises here, since NaN has no int32 representation.
-
-`Proxy3D.read_digital(record_start: int, record_stop: int, channel_start: int, channel_stop: int) -> numpy.ndarray` -- Raw digital values as a 3D int32 array shaped `(records, channels, samples_per_record)`.
-
-`closed: bool` -- Whether `close()` has been called.
 
 ---
 
 ## inspect
 
 ```python
-edfarray.inspect(path: str | os.PathLike) -> dict
+edfarray.inspect(path: str) -> dict
 ```
+
+`path` must be a `str`. A `pathlib.Path` raises `TypeError`, so pass `str(path)`. This is the same for every function that takes a path.
 
 Lightweight metadata extracted from an EDF/EDF+ file header without scanning data records or building an annotation index. Does not memory-map the file, does not spawn background threads, and does not read any data records.
 
@@ -172,6 +172,12 @@ Returned by `EdfFile.signal()`. Proxy view of a single signal that decodes sampl
 `digital_max: int` -- Digital maximum value.
 
 `num_samples: int` -- Total number of samples. Same as `len(sig)`.
+
+`shape: tuple[int]` -- `(num_samples,)`.
+
+`ndim: int` -- Always `1`.
+
+`dtype: numpy.dtype` -- `float64`, the dtype of physical reads.
 
 ### Indexing
 
@@ -243,6 +249,14 @@ Returned by `EdfFile.proxy_2d(group, pad_mode=...)`. A 2D view over a `SignalGro
 
 `pad_mode: str` -- `"raise"`, `"nan"`, `"zero"`, `"value"`, or `"edge"`.
 
+`ndim: int` -- Always `2`.
+
+`dtype: numpy.dtype` -- `float64`, the dtype of physical reads.
+
+### Methods
+
+`read_digital(signals: list[int], start: int, stop: int) -> numpy.ndarray` -- Raw digital values for the given signals over samples `[start, stop)`, as a 2D int32 array. The counterpart to physical indexing via `[]`. `pad_mode="nan"` raises here, since NaN has no int32 representation.
+
 ### Indexing
 
 `proxy[int, int]` -- Returns a single physical value as a `float`. Supports negative indexing.
@@ -267,7 +281,13 @@ Returned by `EdfFile.proxy_3d(group)`. A 3D view over a `Rectangular` `SignalGro
 
 `supports_strided_view: bool` -- `True` when the file/group support a zero-copy `as_strided` view. See `stride_info()`.
 
+`ndim: int` -- Always `3`.
+
+`dtype: numpy.dtype` -- `float64`, the dtype of physical reads.
+
 ### Methods
+
+`read_digital(record_start: int, record_stop: int, channel_start: int, channel_stop: int) -> numpy.ndarray` -- Raw digital values as a 3D int32 array shaped `(records, channels, samples_per_record)`.
 
 `stride_info() -> dict | None` -- Byte-level metadata for a zero-copy strided view of the underlying int16 mmap, or `None` if ineligible. Keys: `base_offset`, `record_stride_bytes`, `channel_stride_bytes`, `sample_stride_bytes`, `shape`. Eligibility requires 2-byte samples, a contiguous channel-index range in the file, and no annotation channel interleaved within that span.
 
@@ -321,7 +341,7 @@ edfarray.write_edf(
 ) -> None
 ```
 
-One-shot writer. `data[i]` must have length `num_records * signals[i].samples_per_record`. `variant` is one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`. The annotation channel is added automatically for `+` variants; do not include it in `signals`.
+One-shot writer. `start_datetime` is a `datetime.datetime` or a `datetime.date`. edfarray writes its wall-clock fields as they are and ignores any `tzinfo`. `data[i]` must have length `num_records * signals[i].samples_per_record`. `variant` is one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`. The annotation channel is added automatically for `+` variants; do not include it in `signals`. If another edfarray handle has `path` open, `write_edf` raises `EdfFileError`.
 
 ### `edfarray.EdfWriter`
 
@@ -339,7 +359,7 @@ edfarray.EdfWriter(
 )
 ```
 
-Streaming writer. Supports the context manager protocol (`with` block calls `finish()` on exit).
+Streaming writer. Supports the context manager protocol (`with` block calls `finish()` on exit). `start_datetime` follows the same rules as in `write_edf`. If another edfarray handle has `path` open, the constructor raises `EdfFileError`. The writer holds an exclusive lock on `path` until `finish()`, so opening `path` with `EdfFile` before then raises `EdfFileError`.
 
 `write_record(physical: list[numpy.ndarray], annotations: list[Annotation] | None = None) -> None` -- Encode and append one record. `physical[i]` must be a 1D float64 array of length `signals[i].samples_per_record`. Optional `annotations` are embedded in this record's annotation channel along with any pending ones queued via `add_annotation`.
 
@@ -364,13 +384,19 @@ edfarray.WriterSignal(
 )
 ```
 
-Per-signal description. `samples_per_record` combined with the writer's `record_duration` gives the sample rate. For BDF/BDF+ files, `digital_min`/`digital_max` may use the full 24-bit signed range (±2²³).
+Per-signal description. `samples_per_record` combined with the writer's `record_duration` gives the sample rate. For BDF/BDF+ files, `digital_min`/`digital_max` can use the full 24-bit signed range, from -8388608 to 8388607.
+
+Every constructor argument is also a read-only property with the same name. A `WriterSignal` compares by value and can be pickled, but it is not hashable.
 
 ---
 
 ## Annotation
 
-Returned in `EdfFile.annotations`. Immutable.
+```python
+edfarray.Annotation(onset: float, text: str, duration: float | None = None)
+```
+
+Returned in `EdfFile.annotations`. Construct one to pass to `write_edf`, `EdfWriter`, or `extract_epochs`. Immutable. Annotations compare by value, sort by onset, are hashable, and can be pickled.
 
 ### Properties
 
@@ -379,3 +405,57 @@ Returned in `EdfFile.annotations`. Immutable.
 `duration: float | None` -- Duration in seconds, or `None` if not specified.
 
 `text: str` -- The annotation text.
+
+---
+
+## Header editing
+
+See [Anonymization](../guide/anonymization.md) for a full guide. These functions change the file in place. They rewrite only the fixed-width identity fields of the header and never touch data records.
+
+### `edfarray.edit_header`
+
+```python
+edfarray.edit_header(
+    path: str,
+    patient_id: str | None = None,
+    recording_id: str | None = None,
+    start_datetime: datetime.datetime | datetime.date | None = None,
+) -> dict
+```
+
+Replaces the given header fields. `None` leaves a field unchanged. edfarray checks every value before it writes anything, so a rejected edit leaves the file unchanged. `start_datetime` follows the same rules as in `write_edf`, and the header stores only whole seconds. Returns a dict that maps each changed field name to `{"before": str, "after": str}`. If another edfarray handle has `path` open, raises `EdfFileError`.
+
+### `edfarray.anonymize`
+
+```python
+edfarray.anonymize(
+    path: str,
+    *,
+    seed: str | None = None,
+    pseudonym: str | None = None,
+    date_shift_days: int | None = None,
+    keep_sex: bool = True,
+    keep_code: bool = False,
+    keep_technician: bool = False,
+    keep_equipment: bool = True,
+    keep_additional: bool = False,
+    dry_run: bool = False,
+) -> dict
+```
+
+Replaces the patient name with a pseudonym, clears the other identity subfields unless you keep them, and shifts every date by the same number of days. With a `seed`, the pseudonym and the date shift are the same on every call. Without a seed, every call draws a new random seed. `dry_run=True` makes the same checks and returns the same report, but writes nothing. A dry run takes no lock, so it works on an open file. Returns a dict with `pseudonym`, `date_shift_days`, `patient_id_before`, `patient_id_after`, `recording_id_before`, `recording_id_after`, `start_datetime_before`, `start_datetime_after`, `scrubbed_terms`, and `dry_run`. Unless `dry_run=True`, raises `EdfFileError` if another edfarray handle has `path` open.
+
+### `edfarray.audit`
+
+```python
+edfarray.audit(path: str, terms: Sequence[str] | None = None) -> dict
+```
+
+Searches signal labels, transducers, prefiltering text, and annotation text for identity strings. If `terms` is `None`, the terms come from the current header. After `anonymize`, pass its `scrubbed_terms`. Returns a dict with `terms`, `clean`, and `hits`. Each hit has `location`, `signal_index` (`None` for annotation text), `term`, and `excerpt`. `audit` only reads the file, so it works on an open file.
+
+---
+
+## edfarray.aio
+
+An async API with the same classes and methods, in which each read returns an awaitable. `edfarray.aio.open(path, variant=None)` returns an `edfarray.aio.EdfFile`. See [Async API](../guide/async.md) for the differences from the sync API.
+

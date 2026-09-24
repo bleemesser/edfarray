@@ -1,6 +1,6 @@
 # edfarray
 
-An EDF/EDF+ file parsing library with numpy-like Python bindings. Handles EDF, EDF+C (contiguous), and EDF+D (discontinuous) recordings.
+An EDF/EDF+ and BDF/BDF+ file parsing library with numpy-like Python bindings. Handles EDF, EDF+C (contiguous), and EDF+D (discontinuous) recordings, and the matching 24-bit BDF variants.
 
 **Read the [documentation](https://bleemesser.github.io/edfarray/)**
 
@@ -16,7 +16,7 @@ pip install edfarray
 import edfarray
 
 with edfarray.EdfFile("recording.edf") as f:
-    print(f.variant) # "EDF", "EDF+C", or "EDF+D"
+    print(f.variant) # "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", or "BDF+D"
     print(f.num_signals) # number of signals (including annotation channels)
     print(f.duration) # total duration in seconds
 

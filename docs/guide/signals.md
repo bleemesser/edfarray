@@ -60,21 +60,21 @@ By default, all access returns physical values in the signal's physical units. T
 
 ```python
 physical = sig.to_physical() # float64, in physical units (e.g. microvolts)
-digital = sig.to_digital()   # int16, raw digital values from the file
+digital = sig.to_digital()   # int32, raw digital values from the file
 ```
 
 `to_digital()` skips the gain/offset conversion, which is slightly faster for applications that do their own scaling.
 
 ## Caching repeated reads
 
-By default a `Signal` decodes samples from the memory map on every access; the OS page cache keeps the raw bytes hot, but the gain/offset decode runs each time. If you re-read the *same* regions repeatedly — overlapping windows, back-and-forth seeks, or the same slice in a loop — you can cache the decoded physical records:
+By default a `Signal` decodes samples from the memory map on every access. The OS page cache keeps the raw bytes in memory, but the gain/offset decode runs each time. If you read the same regions again and again, you can cache the decoded physical records. Examples are overlapping windows, back-and-forth seeks, and the same slice in a loop:
 
 ```python
 sig = f.signal("EEG Fpz-Cz", cache_capacity=8)  # cache 8 decoded records
 ```
 
 - **Unit.** `cache_capacity` counts EDF *data records*, not samples or bytes. One cached record holds `samples_per_record` float64 values, so memory is roughly `cache_capacity * samples_per_record * 8` bytes. `0` (the default) disables the cache.
-- **When to set it.** Leave it at `0` for one-pass or strictly forward reads — there's nothing to re-decode, so the cache only adds overhead. It pays off only when reads revisit records.
+- **When to set it.** Leave it at `0` for one-pass or strictly forward reads. These reads decode each record once, so the cache only adds overhead. It pays off only when reads revisit records.
 - **Recommended capacity.** A few records beyond your largest repeated window: `ceil(window_samples / samples_per_record) + 2`. For example, repeatedly reading 5-second windows from a 256 Hz signal with 256 samples/record needs `ceil(5*256 / 256) + 2 = 7`.
 - **Physical only.** The cache accelerates physical reads (`to_physical()`, slicing). `to_digital()` always re-decodes from the memory map and ignores the cache.
 - **Per-signal.** The cache lives on the `Signal` instance; re-fetching with `f.signal(...)` starts fresh.
@@ -144,20 +144,20 @@ proxy.valid_lengths                     # per-channel valid sample counts
 
 proxy[3, 1000]                          # single float
 proxy[3, 1000:2000]                     # 1D ndarray
-proxy[:, 1000:2000]                     # 2D ndarray (all signals × 1000 samples)
+proxy[:, 1000:2000]                     # 2D ndarray (all signals x 1000 samples)
 proxy[[0, 3, 7], 0:500]                 # fancy indexing on the signal axis
 proxy[:, 0:2000:4]                      # strided sample axis (downsample by 4)
 proxy[:, ::-1]                          # negative step also works
 ```
 
 The **sample (time) axis** accepts a step, so `proxy[:, ::4]` downsamples in
-time. The **signal axis** does not — use a list for arbitrary signal selection.
+time. The **signal axis** does not accept a step. To select arbitrary signals, use a list.
 
 !!! note "Striding does not reduce I/O"
     A strided sample read still reads the full enclosing span from the
     memory-mapped file and then subsamples it, because EDF stores samples
     contiguously per record. So `proxy[:, ::4]` costs about the same as
-    `proxy[:, :]` — it shrinks the returned array, not the work. Step `1`
+    `proxy[:, :]`. The step makes the returned array smaller, but not the work. Step `1`
     (contiguous) reads take an unchanged fast path with no overhead.
 
 For `Open` groups, supply a `pad_mode`:
@@ -189,8 +189,8 @@ proxy[0:30, :, ::4]                     # strided sample axis (downsample by 4)
 
 As with `Proxy2D`, the **sample axis** accepts a step while the **record** and
 **channel** axes require step `1`. The enclosing record block is materialized
-regardless, so sample striding is a cheap in-memory gather — it never reads
-more than the unstrided slice would.
+regardless, so sample striding is an in-memory gather. It never reads more
+than the unstrided slice.
 
 `Proxy3D` is rejected for `Open` groups. Use `Proxy2D` with a pad mode instead,
 or pick a single-rate group from `signal_groups()`.

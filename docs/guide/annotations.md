@@ -27,10 +27,11 @@ The `variant` property tells you which format the file uses:
 
 - `"EDF"` -- plain EDF. No annotations, no subsecond precision.
 - `"EDF+C"` -- EDF+ contiguous. Data records follow each other without gaps.
-- `"EDF+D"` -- EDF+ discontinuous. Data records may have time gaps between them.
+- `"EDF+D"` -- EDF+ discontinuous. Data records can have time gaps between them.
+- `"BDF"`, `"BDF+C"`, `"BDF+D"` -- the same three layouts with 24-bit samples.
 
 ```python
-f.variant  # "EDF", "EDF+C", or "EDF+D"
+f.variant  # "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", or "BDF+D"
 ```
 
 ## Subsecond start time
@@ -61,7 +62,7 @@ for idx in gaps:
 
 ### `read_page` and `Proxy2D` use flat sample indices
 
-`read_page()`, `Signal` indexing, and `Proxy2D` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, the time parameter in `read_page(start_sec, end_sec)` is converted to a sample offset as `int(start_sec * sample_rate)` and does not account for gaps.
+`read_page()`, `Signal` indexing, and `Proxy2D` all address samples by flat index, not physical time. For EDF and EDF+C this distinction doesn't matter because records are contiguous. For EDF+D, the time parameter in `read_page(start_sec, end_sec)` is converted to the first flat sample at or after `start_sec * sample_rate`, and does not account for gaps.
 
 `Proxy3D` indexes by `(record, channel, sample)` rather than a flat sample index. For EDF+D this can be a more natural fit. Each record corresponds to exactly one onset entry in the annotations index, and the sample axis only addresses within-record samples.
 

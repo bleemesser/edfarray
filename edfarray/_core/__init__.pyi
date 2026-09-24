@@ -7,6 +7,13 @@ import numpy
 import numpy.typing
 import typing
 __all__ = [
+    "EdfError",
+    "EdfFileError",
+    "InvalidFileError",
+    "InvalidArgumentError",
+    "OutOfRangeError",
+    "SignalNotFoundError",
+    "ClosedFileError",
     "Annotation",
     "EdfFile",
     "EdfWriter",
@@ -83,7 +90,7 @@ class EdfFile:
     @property
     def variant(self) -> builtins.str:
         r"""
-        File variant: "EDF", "EDF+C", or "EDF+D".
+        File variant: "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", or "BDF+D".
         """
     @property
     def patient_id(self) -> builtins.str:
@@ -331,9 +338,9 @@ class EdfFile:
         annotation channel cannot be selected: it is always rebuilt automatically,
         and annotations are copied in full regardless of the selection.
         
-        Raises `EdfFileError` if `path` is open for reading, including when `path`
-        is this file. Close every `EdfFile` on that path, and drop every signal and
-        proxy taken from one, before writing to it.
+        If another edfarray handle has `path` open, raises `EdfFileError`. This
+        includes this file itself. Close every `EdfFile` on that path, and drop every
+        signal and proxy taken from one, before writing to it.
         
         Transcoding caveats:
         - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
@@ -415,8 +422,8 @@ class Epochs:
     r"""
     Extracted epochs: a dense `(n_epochs, n_channels, n_samples)` float64 block plus metadata.
     
-    `np.asarray(ep)` returns `ep.data`. `valid` marks rows that contain padded samples or, under
-    `pad="drop"`, is all True because padded epochs were removed (see `dropped`).
+    `np.asarray(ep)` returns `ep.data`. `valid` is False for rows that contain padded samples.
+    Under `pad="drop"` it is all True, because padded epochs were removed (see `dropped`).
     """
     @property
     def data(self) -> numpy.typing.NDArray[numpy.float64]:
@@ -462,8 +469,8 @@ class Proxy2D:
     2D array proxy for numpy-style multi-channel signal access.
     
     Supports indexing with `proxy[signal, sample]` where each axis accepts
-    int, slice, or list (signal axis only). All signals must share the same
-    sample rate.
+    int, slice, or list (signal axis only). Accepts any group. For an open
+    (mixed-rate) group, `pad_mode` sets the value of reads past a short channel.
     """
     @property
     def shape(self) -> tuple[builtins.int, builtins.int]:
@@ -521,7 +528,7 @@ class Proxy2D:
         The sample (time) axis accepts a step (e.g. `p[:, ::4]` to downsample);
         the signal axis does not. A strided sample read still reads the full
         enclosing span and then subsamples, so it costs about the same as the
-        unstrided read of that span — it shrinks the result, not the I/O.
+        unstrided read of that span. It shrinks the result, not the I/O.
         """
 
 @typing.final
@@ -531,8 +538,8 @@ class Proxy3D:
     `(num_records, num_channels, samples_per_record)`.
     
     Indexing semantics match NumPy 3D: `proxy[rec, ch, samp]` returns a scalar
-    when all three are ints, a 2D ndarray when two are slices, etc. Step != 1
-    is not supported.
+    when all three are ints, a 2D ndarray when two are slices, etc. The sample
+    axis accepts any step. The record and channel axes require step 1.
     """
     @property
     def shape(self) -> tuple[builtins.int, builtins.int, builtins.int]:
@@ -548,7 +555,7 @@ class Proxy3D:
     def supports_strided_view(self) -> builtins.bool:
         r"""
         `True` if the file/group support a zero-copy stride view via
-        [`as_strided`].
+        `numpy.lib.stride_tricks.as_strided`.
         """
     @property
     def ndim(self) -> builtins.int:
@@ -726,7 +733,7 @@ class SignalGroup:
     needed to decide whether a 2D or 3D proxy is supported.
     
     Created by `EdfFile.signal_groups()`. Within a single EDF file, every group
-    returned by that method is "rectangular" — all channels share a sample rate
+    returned by that method is "rectangular": all channels share a sample rate
     and total sample count.
     """
     @property
@@ -791,7 +798,7 @@ class SignalGroup:
 @typing.final
 class WriterSignal:
     r"""
-    Per-signal description used by [`EdfWriter`] and [`write_edf`].
+    Per-signal description used by `EdfWriter` and `write_edf`.
     
     `physical_min`/`physical_max` define the unit range. `digital_min`/`digital_max`
     define the integer range used in the binary file (16-bit for EDF, 24-bit for BDF).
@@ -848,7 +855,7 @@ def anonymize(path: builtins.str, *, seed: typing.Optional[builtins.str] = None,
     - `seed`: makes the pseudonym and date shift reproducible, so one subject's recordings
       stay linkable across a corpus. The pseudonym is keyed on the patient name, code, and
       birthdate, so per-session notes in the free-text subfield do not split a subject into
-      several pseudonyms. Without a seed, a random per-process one is used.
+      several pseudonyms. Without a seed, each call uses a new random seed.
     
       A reused seed is the re-identification key: anyone holding it can recompute the
       pseudonym for a guessed name and recover the date shift. Keep it secret, and never
@@ -867,6 +874,9 @@ def anonymize(path: builtins.str, *, seed: typing.Optional[builtins.str] = None,
     Signal labels and annotation text are never rewritten and may repeat the original
     identity. Run `audit()` after anonymizing with the returned `scrubbed_terms` before
     shipping a file.
+    
+    Unless `dry_run` is set, raises `EdfFileError` if an `EdfFile`, or a signal or proxy
+    taken from one, has `path` open.
     """
 
 def audit(path: builtins.str, terms: typing.Optional[typing.Sequence[builtins.str]] = None) -> dict:
@@ -895,9 +905,11 @@ def edit_header(path: builtins.str, patient_id: typing.Optional[builtins.str] = 
     `"start_datetime"`) to `{"before": str, "after": str}`. Fields whose value did not
     change are omitted.
     
-    `start_datetime` must be a naive `datetime.datetime`; only whole seconds are stored.
+    `start_datetime` is a `datetime.datetime` or `datetime.date` (midnight). Its wall-clock
+    fields are written as given and any `tzinfo` is ignored. Only whole seconds are stored.
     
-    An `EdfFile` handle opened before this call keeps its stale parsed header; reopen it.
+    If an `EdfFile`, or a signal or proxy taken from one, has `path` open, raises
+    `EdfFileError`. Close the file and drop those objects before editing.
     """
 
 def inspect(path: builtins.str) -> dict:
@@ -919,3 +931,24 @@ def write_edf(path: builtins.str, *, variant: builtins.str, record_duration: bui
     across signals.
     """
 
+
+class EdfError(builtins.Exception):
+    r"""Base class for edfarray errors."""
+
+class EdfFileError(EdfError, builtins.OSError):
+    r"""The file could not be opened, mapped, locked, or written."""
+
+class InvalidFileError(EdfError, builtins.ValueError):
+    r"""The file is not valid EDF/BDF, or its header is inconsistent."""
+
+class InvalidArgumentError(EdfError, builtins.ValueError):
+    r"""An argument was outside the range the format or API allows."""
+
+class OutOfRangeError(EdfError, builtins.IndexError):
+    r"""A record, signal, or sample index was out of range."""
+
+class SignalNotFoundError(EdfError, builtins.KeyError):
+    r"""No signal matched the requested label."""
+
+class ClosedFileError(EdfError, builtins.ValueError):
+    r"""The file was used after close()."""

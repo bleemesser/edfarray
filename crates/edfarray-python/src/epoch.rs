@@ -140,8 +140,8 @@ pub(crate) fn plan_and_extract(
 
 /// Extracted epochs: a dense `(n_epochs, n_channels, n_samples)` float64 block plus metadata.
 ///
-/// `np.asarray(ep)` returns `ep.data`. `valid` marks rows that contain padded samples or, under
-/// `pad="drop"`, is all True because padded epochs were removed (see `dropped`).
+/// `np.asarray(ep)` returns `ep.data`. `valid` is False for rows that contain padded samples.
+/// Under `pad="drop"` it is all True, because padded epochs were removed (see `dropped`).
 #[gen_stub_pyclass]
 #[pyclass(name = "Epochs", module = "edfarray._core")]
 pub(crate) struct PyEpochs {

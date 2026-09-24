@@ -508,9 +508,9 @@ impl PyAsyncEdfFile {
     /// annotation channel cannot be selected: it is always rebuilt automatically,
     /// and annotations are copied in full regardless of the selection.
     ///
-    /// Raises `EdfFileError` if `path` is open for reading, including when `path`
-    /// is this file. Close every `EdfFile` on that path, and drop every signal and
-    /// proxy taken from one, before writing to it.
+    /// If another edfarray handle has `path` open, raises `EdfFileError`. This
+    /// includes this file itself. Close every `EdfFile` on that path, and drop every
+    /// signal and proxy taken from one, before writing to it.
     ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
@@ -560,7 +560,7 @@ impl PyAsyncEdfFile {
     /// the *same* records (overlapping windows, back-and-forth seeks, repeated
     /// slices). A good starting capacity is a few records more than your largest
     /// repeated window spans, i.e. `ceil(window_samples / samples_per_record) + 2`.
-    /// The cache only accelerates physical reads -- `read_digital()` always
+    /// The cache only accelerates physical reads -- `read_range_digital()` always
     /// re-decodes from the memory map. Caching is per-`Signal`: re-fetching from
     /// `signal()` starts fresh.
     #[pyo3(signature = (idx_or_label, cache_capacity=0))]
@@ -572,6 +572,8 @@ impl PyAsyncEdfFile {
         let inner = self.get()?;
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
             inner.signal(idx).map_err(to_py_err)?
+        } else if let Ok(idx) = idx_or_label.extract::<i64>() {
+            return Err(crate::file::negative_index_err(idx, inner.num_signals()));
         } else if let Ok(label) = idx_or_label.extract::<String>() {
             inner.signal_by_label(&label).map_err(to_py_err)?
         } else {

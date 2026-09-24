@@ -319,8 +319,8 @@ impl MappedData {
 
         let file = Arc::clone(self);
         thread::spawn(move || {
-            // Signals completion even if the scan panics, future annotation access
-            // access would otherwise block forever on scan_done.
+            // Signals completion even if the scan panics. Otherwise every later annotation
+            // access would block forever on scan_done.
             let guard = ScanCompletion {
                 file: Arc::clone(&file),
             };
@@ -629,7 +629,7 @@ impl MappedData {
     /// Apply an access-pattern hint to the records in `[start_record, end_record)`.
     ///
     /// Advisory only: failures are ignored, and the call is a no-op on non-Unix platforms.
-    /// `Advice::WillNeed` is capped at [`MAX_WILLNEED_BYTES`] because advising a huge span
+    /// `Advice::WillNeed` is capped at 64 MiB because advising a huge span
     /// asks the kernel to fault in more than it can keep, which is counterproductive under
     /// memory pressure.
     pub fn advise_records(&self, start_record: usize, end_record: usize, advice: Advice) {

@@ -320,7 +320,7 @@ def test_write_over_own_path_is_rejected_and_source_survives(tmp_path: Path):
     src = _multi(tmp_path / "src.edf")
     before = Path(src).read_bytes()
     f = edfarray.EdfFile(src)
-    with pytest.raises(edfarray.EdfFileError, match="open for reading"):
+    with pytest.raises(edfarray.EdfFileError, match="another edfarray handle"):
         f.write_to(src, signals=[0])
     with pytest.raises(OSError):
         f.write_to(src)
@@ -361,3 +361,18 @@ async def test_write_to_async_own_path_rejected(tmp_path: Path):
     finally:
         f.close()
     assert Path(src).read_bytes() == before
+
+
+def test_negative_signal_index_is_out_of_range(tmp_path: Path):
+    f = edfarray.EdfFile(_multi(tmp_path / "src.edf"))
+    with pytest.raises(edfarray.OutOfRangeError):
+        f.signal(-1)
+
+
+async def test_negative_signal_index_is_out_of_range_async(tmp_path: Path):
+    f = await aio.open(_multi(tmp_path / "src.edf"))
+    try:
+        with pytest.raises(edfarray.OutOfRangeError):
+            f.signal(-1)
+    finally:
+        f.close()

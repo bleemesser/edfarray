@@ -169,7 +169,7 @@ async def test_read_page_releases_gil():
 
         assert ticks > 10_000, (
             f"python thread only advanced {ticks} ticks during 8 concurrent "
-            f"reads — GIL likely held throughout decode"
+            f"reads; GIL likely held throughout decode"
         )
     finally:
         f.close()

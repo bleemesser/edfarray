@@ -1,16 +1,10 @@
 # EDF Format
 
-A brief overview of the EDF and EDF+ file formats, enough to understand how edfarray works internally. The full specifications are at [edfplus.info](https://www.edfplus.info/specs/).
+A brief overview of the EDF, EDF+, BDF, and BDF+ file formats, enough to understand how edfarray works internally. The full specifications are at [edfplus.info](https://www.edfplus.info/specs/).
 
 ## Structure
 
-An EDF file consists of a fixed-size header followed by a sequence of data records.
-
-```text
-[ Header: 256 + 256*ns bytes ][ Record 0 ][ Record 1 ] ... [ Record N-1 ]
-```
-
-`ns` is the number of signals.
+An EDF file consists of a fixed-size header followed by a sequence of data records. The header comes first and is `256 + 256 * ns` bytes long, where `ns` is the number of signals. Records 0 to N-1 follow the header in order, with no space between them.
 
 ## Header
 
@@ -18,13 +12,13 @@ The first 256 bytes contain the main header fields, all stored as ASCII text, le
 
 ```text
 Offset  Size  Field
-0       8     Version (always "0")
+0       8     Version ("0" for EDF, byte 0xFF then "BIOSEMI" for BDF)
 8       80    Patient identification
 88      80    Recording identification
 168     8     Start date (dd.mm.yy)
 176     8     Start time (hh.mm.ss)
 184     8     Header size in bytes
-192     44    Reserved (EDF+ puts "EDF+C" or "EDF+D" here)
+192     44    Reserved ("EDF+C", "EDF+D", "BDF+C", "BDF+D", or "24BIT" for plain BDF)
 236     8     Number of data records (-1 if unknown)
 244     8     Data record duration in seconds
 252     4     Number of signals
@@ -36,11 +30,7 @@ Per-signal fields: label (16), transducer type (80), physical dimension (8), phy
 
 ## Data records
 
-Each data record contains all signals sequentially. For each signal, there are `samples_per_record` samples stored as 16-bit signed integers in little-endian byte order.
-
-```text
-[ Signal 0 samples ][ Signal 1 samples ] ... [ Signal ns-1 samples ]
-```
+Each data record contains all signals sequentially. For each signal, there are `samples_per_record` samples stored as signed little-endian integers. EDF uses 16-bit samples and BDF uses 24-bit samples. The samples of signal 0 come first, then the samples of signal 1, and so on to signal `ns - 1`.
 
 The physical value of a sample is: `physical = gain * digital + offset`, where `gain = (physical_max - physical_min) / (digital_max - digital_min)` and `offset = physical_min - gain * digital_min`.
 

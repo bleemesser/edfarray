@@ -22,7 +22,7 @@ except edfarray.EdfError:              # anything from edfarray
 | Exception | Also inherits | Raised for |
 | --- | --- | --- |
 | `EdfError` | `Exception` | base class, never raised directly |
-| `EdfFileError` | `OSError` | the file cannot be opened, mapped, or written |
+| `EdfFileError` | `OSError` | the file cannot be opened, mapped, locked, or written |
 | `InvalidFileError` | `ValueError` | not valid EDF/BDF, or an inconsistent header |
 | `InvalidArgumentError` | `ValueError` | an argument the format or API does not allow |
 | `OutOfRangeError` | `IndexError` | a record, signal, or sample index out of range |
@@ -124,10 +124,13 @@ constructor cannot be awaited.
 
 By default the file is read through a memory map.
 
-- An open file holds a shared advisory lock until the last `EdfFile`, `Signal`, and proxy on
-  it are dropped. edfarray's writers take an exclusive lock before they truncate, so writing
-  to an open file raises `EdfFileError` instead of corrupting the mapping. Opening a file
-  that an edfarray writer is still writing raises `EdfFileError` too.
+- An open file holds a shared advisory lock (a lock that other programs can ignore). The
+  lock stays until the last `EdfFile`, `Signal`, and proxy on the file are dropped.
+  edfarray's writers take an exclusive lock before they truncate, so writing to an open
+  file raises `EdfFileError` instead of corrupting the mapping. Unless `dry_run=True`,
+  `edit_header` and `anonymize` take the same lock, so they cannot leave an open file with
+  a stale header. If an edfarray writer is still writing a file, opening it raises
+  `EdfFileError` too.
 - The lock is advisory. Other programs that ignore it can still truncate the file, and on
   NFS a process does not conflict with its own locks. If the file is truncated while open,
   touching the vanished pages raises `SIGBUS`, which terminates the process and cannot be
@@ -138,6 +141,9 @@ By default the file is read through a memory map.
 
 ## Pickling
 
-`Annotation`, `WriterSignal`, and `SignalGroup` are picklable and compare by value, so they
-work with `multiprocessing` and as dict keys. `EdfFile`, `Signal`, and the proxies are not
-picklable: they hold an open mapping. Send the path and reopen instead.
+`Annotation` can be pickled, is hashable, and compares by value, so it works with
+`multiprocessing` and as a dict key. `WriterSignal` can be pickled and compares by value,
+but it is not hashable. `SignalGroup` is hashable and compares by value, but it cannot be
+pickled. To send a group to another process, send its `indices` and call
+`EdfFile.signal_group(indices)` there. `EdfFile`, `Signal`, and the proxies cannot be
+pickled, because they hold an open mapping. Send the path and open the file again.

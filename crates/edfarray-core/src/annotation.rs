@@ -4,9 +4,9 @@ use crate::error::Result;
 use crate::header::{EdfHeader, EdfVariant};
 use crate::record::RecordLayout;
 
-const TAL_SEPARATOR: u8 = 0x14;
-const TAL_DURATION_MARKER: u8 = 0x15;
-const TAL_TERMINATOR: u8 = 0x00;
+pub(crate) const TAL_SEPARATOR: u8 = 0x14;
+pub(crate) const TAL_DURATION_MARKER: u8 = 0x15;
+pub(crate) const TAL_TERMINATOR: u8 = 0x00;
 
 /// Single annotation from a TAL (Time-stamped Annotation List).
 #[derive(Debug, Clone)]

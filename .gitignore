@@ -13,7 +13,7 @@ dist/
 .pytest_cache/
 site/
 
-# edfarray Python package — ignore generated build artifacts, keep source and stubs
+# edfarray Python package: ignore generated build artifacts, keep source and stubs
 edfarray/*
 !edfarray/__init__.py
 !edfarray/py.typed

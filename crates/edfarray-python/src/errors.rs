@@ -11,7 +11,6 @@ use pyo3::types::{PyDict, PyTuple, PyType};
 /// `except edfarray.SignalNotFoundError` and `except KeyError` catch the same failure. Adding
 /// a common base later would be a breaking change, so the hierarchy is fixed at 1.0.
 struct ErrorClasses {
-    base: Py<PyType>,
     file: Py<PyType>,
     invalid_file: Py<PyType>,
     invalid_argument: Py<PyType>,
@@ -41,76 +40,90 @@ fn new_exception<'py>(
     Ok(cls.unbind())
 }
 
+/// Exception classes as `(name, builtin base, docstring)`. Every class except the first also
+/// derives from `EdfError`. `register` and the stub generator both read this table.
+pub const EXCEPTIONS: [(&str, &str, &str); 7] = [
+    ("EdfError", "Exception", "Base class for edfarray errors."),
+    (
+        "EdfFileError",
+        "OSError",
+        "The file could not be opened, mapped, locked, or written.",
+    ),
+    (
+        "InvalidFileError",
+        "ValueError",
+        "The file is not valid EDF/BDF, or its header is inconsistent.",
+    ),
+    (
+        "InvalidArgumentError",
+        "ValueError",
+        "An argument was outside the range the format or API allows.",
+    ),
+    (
+        "OutOfRangeError",
+        "IndexError",
+        "A record, signal, or sample index was out of range.",
+    ),
+    (
+        "SignalNotFoundError",
+        "KeyError",
+        "No signal matched the requested label.",
+    ),
+    (
+        "ClosedFileError",
+        "ValueError",
+        "The file was used after close().",
+    ),
+];
+
 /// Create the exception hierarchy and add it to the module.
 pub fn register(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
-    let exception = py.get_type::<pyo3::exceptions::PyException>();
-    let os_error = py.get_type::<pyo3::exceptions::PyOSError>();
-    let value_error = py.get_type::<pyo3::exceptions::PyValueError>();
-    let index_error = py.get_type::<pyo3::exceptions::PyIndexError>();
-    let key_error = py.get_type::<pyo3::exceptions::PyKeyError>();
-
-    let base = new_exception(
-        py,
-        "EdfError",
-        &[&exception],
-        "Base class for edfarray errors.",
-    )?;
-    let base_bound = base.bind(py).clone();
-
-    let classes = ErrorClasses {
-        file: new_exception(
-            py,
-            "EdfFileError",
-            &[&base_bound, &os_error],
-            "The file could not be opened or mapped.",
-        )?,
-        invalid_file: new_exception(
-            py,
-            "InvalidFileError",
-            &[&base_bound, &value_error],
-            "The file is not valid EDF/BDF, or its header is inconsistent.",
-        )?,
-        invalid_argument: new_exception(
-            py,
-            "InvalidArgumentError",
-            &[&base_bound, &value_error],
-            "An argument was outside the range the format or API allows.",
-        )?,
-        out_of_range: new_exception(
-            py,
-            "OutOfRangeError",
-            &[&base_bound, &index_error],
-            "A record, signal, or sample index was out of range.",
-        )?,
-        signal_not_found: new_exception(
-            py,
-            "SignalNotFoundError",
-            &[&base_bound, &key_error],
-            "No signal matched the requested label.",
-        )?,
-        closed: new_exception(
-            py,
-            "ClosedFileError",
-            &[&base_bound, &value_error],
-            "The file was used after close().",
-        )?,
-        base,
-    };
-
-    for (name, cls) in [
-        ("EdfError", &classes.base),
-        ("EdfFileError", &classes.file),
-        ("InvalidFileError", &classes.invalid_file),
-        ("InvalidArgumentError", &classes.invalid_argument),
-        ("OutOfRangeError", &classes.out_of_range),
-        ("SignalNotFoundError", &classes.signal_not_found),
-        ("ClosedFileError", &classes.closed),
-    ] {
+    let builtins = py.import("builtins")?;
+    let mut created: Vec<Py<PyType>> = Vec::with_capacity(EXCEPTIONS.len());
+    for (name, builtin, doc) in EXCEPTIONS {
+        let builtin = builtins.getattr(builtin)?.cast_into::<PyType>()?;
+        let cls = match created.first() {
+            None => new_exception(py, name, &[&builtin], doc)?,
+            Some(base) => new_exception(py, name, &[base.bind(py), &builtin], doc)?,
+        };
         module.add(name, cls.bind(py))?;
+        created.push(cls);
     }
 
-    let _ = CLASSES.set(classes);
+    let [
+        _base,
+        file,
+        invalid_file,
+        invalid_argument,
+        out_of_range,
+        signal_not_found,
+        closed,
+    ] = <[Py<PyType>; 7]>::try_from(created).expect("one class per EXCEPTIONS entry");
+    let _ = CLASSES.set(ErrorClasses {
+        file,
+        invalid_file,
+        invalid_argument,
+        out_of_range,
+        signal_not_found,
+        closed,
+    });
     Ok(())
+}
+
+/// Stub declarations for the exception classes, for appending to the generated `.pyi`.
+pub fn stub_declarations() -> String {
+    let mut out = String::new();
+    for (i, (name, builtin, doc)) in EXCEPTIONS.iter().enumerate() {
+        let bases = if i == 0 {
+            format!("builtins.{builtin}")
+        } else {
+            format!("{}, builtins.{builtin}", EXCEPTIONS[0].0)
+        };
+        out.push_str(&format!(
+            "\nclass {name}({bases}):\n    r\"\"\"{doc}\"\"\"\n"
+        ));
+    }
+    out
 }
 
 fn classes() -> &'static ErrorClasses {

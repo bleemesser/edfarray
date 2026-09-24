@@ -14,8 +14,8 @@ use crate::numpy_util::numpy_dtype;
 /// 2D array proxy for numpy-style multi-channel signal access.
 ///
 /// Supports indexing with `proxy[signal, sample]` where each axis accepts
-/// int, slice, or list (signal axis only). All signals must share the same
-/// sample rate.
+/// int, slice, or list (signal axis only). Accepts any group. For an open
+/// (mixed-rate) group, `pad_mode` sets the value of reads past a short channel.
 #[gen_stub_pyclass]
 #[pyclass(name = "Proxy2D", module = "edfarray._core")]
 pub struct PyProxy2D {
@@ -143,7 +143,7 @@ impl PyProxy2D {
     /// The sample (time) axis accepts a step (e.g. `p[:, ::4]` to downsample);
     /// the signal axis does not. A strided sample read still reads the full
     /// enclosing span and then subsamples, so it costs about the same as the
-    /// unstrided read of that span — it shrinks the result, not the I/O.
+    /// unstrided read of that span. It shrinks the result, not the I/O.
     #[gen_stub(override_return_type(type_repr = "builtins.float | numpy.typing.NDArray[numpy.float64]", imports = ("builtins", "numpy", "numpy.typing")))]
     fn __getitem__<'py>(&self, py: Python<'py>, key: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
         let tuple = match key.cast::<PyTuple>() {

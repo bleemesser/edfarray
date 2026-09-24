@@ -6,6 +6,9 @@ use crate::signal::SignalHeader;
 /// Fixed size of the main header block in bytes.
 const MAIN_HEADER_SIZE: usize = 256;
 
+/// Size of the per-signal header block for one signal.
+const SIGNAL_HEADER_SIZE: usize = 256;
+
 /// Parsed datetime or raw string when date fields are non-standard.
 #[derive(Debug, Clone)]
 pub enum MaybeDateTime {
@@ -53,9 +56,6 @@ impl MaybeDate {
         }
     }
 }
-
-/// Size of the per-signal header block for one signal.
-const SIGNAL_HEADER_SIZE: usize = 256;
 
 /// File variant: EDF, EDF+C, EDF+D, BDF, BDF+C, BDF+D.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

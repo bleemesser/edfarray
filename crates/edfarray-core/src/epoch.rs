@@ -53,7 +53,8 @@ impl EpochWindow {
 /// A planned set of epochs: one window per event, the per-window validity mask, and the
 /// row width every epoch decodes into.
 ///
-/// `n_samples` is the nominal window width `ceil((pre + post) * rate)`. It depends only on the
+/// `n_samples` is the nominal window width `ceil((pre + post) * rate)`, where a product within
+/// 1e-6 of an integer counts as that integer. It depends only on the
 /// request, never on where the events fall, so rows stay time-aligned with each other and the
 /// output shape is stable across files.
 #[derive(Debug, Clone, PartialEq)]

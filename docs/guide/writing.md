@@ -3,9 +3,9 @@
 `edfarray` can write EDF, EDF+C, EDF+D, BDF, BDF+C, and BDF+D files. Two entry
 points cover the common cases:
 
-- `edfarray.write_edf(...)` — one-shot. Pass all signal data and annotations at
+- `edfarray.write_edf(...)`: one-shot. Pass all signal data and annotations at
   once. Best for transcoding existing files or saving in-memory data.
-- `edfarray.EdfWriter(...)` — streaming. Open a file, push records as they
+- `edfarray.EdfWriter(...)`: streaming. Open a file, push records as they
   arrive, queue annotations between records, then `finish()` (or use a `with`
   block). Best for live recording or files too large to hold in memory.
 
@@ -109,23 +109,24 @@ anything is written.
 
 ### Writing over an open file
 
-`write_to`, `write_edf`, and `EdfWriter` refuse to write to a path that an
-`EdfFile` has open, and raise `EdfFileError`. This includes the source file
-itself, so you cannot strip channels in place:
+If another edfarray handle has a path open, `write_to`, `write_edf`, and
+`EdfWriter` refuse to write to it and raise `EdfFileError`. A handle is an
+`EdfFile`, a signal or proxy taken from one, or an `EdfWriter`. The source file
+itself counts, so you cannot strip channels in place:
 
 ```python
 f = edfarray.EdfFile("rec.edf")
 f.write_to("rec.edf", signals=[0, 3])  # raises EdfFileError
 ```
 
-A `Signal` or proxy taken from a file keeps the file open after `close()`. If
-you want to replace a file, close every `EdfFile` on it and drop every object
+A `Signal` or proxy taken from a file keeps the file open after `close()`. To
+replace a file, close every `EdfFile` on it. Then drop every signal and proxy
 taken from one. Then write to the path. Opening a file while an `EdfWriter` is
 still writing it also raises `EdfFileError`.
 
 !!! warning "Transcoding caveats"
-    Records are re-emitted contiguously, so transcoding changes more than the
-    header tag:
+    Except for EDF+D to EDF+D, records are re-emitted contiguously. So
+    transcoding changes more than the header tag:
 
     - **EDF+D -> EDF+D** preserves the source record onsets, so gaps survive the
       copy. **EDF+D -> any non-`+D` variant** flattens timing: the per-record
@@ -153,7 +154,7 @@ edfarray.write_edf(
 
 ## BDF (24-bit) writing
 
-BDF and BDF+ use 24-bit signed samples. Set the digital range up to ±2²³:
+BDF and BDF+ use 24-bit signed samples. The digital range can go from -8388608 to 8388607:
 
 ```python
 ecg = edfarray.WriterSignal(
@@ -197,9 +198,10 @@ is a legal saturation, the latter carries no value to saturate to.
 
 edfarray writes files; it does not edit them in place, with one narrow exception. The
 only in-place edits are the identity header fields -- patient id, recording id, and start
-datetime -- through [`edit_header`](anonymization.md) and [`anonymize`](anonymization.md),
-plus the [`audit`](anonymization.md) leak checker. These rewrite only the fixed header
-block and never touch data records.
+datetime -- through [`edit_header`](anonymization.md) and [`anonymize`](anonymization.md).
+They rewrite only the fixed header block and never touch data records. Like the writers,
+they raise `EdfFileError` if another edfarray handle has the file open. A dry run of
+`anonymize` and the [`audit`](anonymization.md) leak checker only read the file.
 
 Everything else -- annotations, channel labels, other header fields, and sample data --
 requires a full rewrite via `write_to` or `write_edf`. There is no API to mutate a

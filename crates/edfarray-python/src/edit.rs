@@ -18,9 +18,11 @@ use crate::errors::{invalid_argument_err, to_py_err};
 /// `"start_datetime"`) to `{"before": str, "after": str}`. Fields whose value did not
 /// change are omitted.
 ///
-/// `start_datetime` must be a naive `datetime.datetime`; only whole seconds are stored.
+/// `start_datetime` is a `datetime.datetime` or `datetime.date` (midnight). Its wall-clock
+/// fields are written as given and any `tzinfo` is ignored. Only whole seconds are stored.
 ///
-/// An `EdfFile` handle opened before this call keeps its stale parsed header; reopen it.
+/// If an `EdfFile`, or a signal or proxy taken from one, has `path` open, raises
+/// `EdfFileError`. Close the file and drop those objects before editing.
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(signature = (path, patient_id=None, recording_id=None, start_datetime=None))]
@@ -66,7 +68,7 @@ pub fn edit_header<'py>(
 /// - `seed`: makes the pseudonym and date shift reproducible, so one subject's recordings
 ///   stay linkable across a corpus. The pseudonym is keyed on the patient name, code, and
 ///   birthdate, so per-session notes in the free-text subfield do not split a subject into
-///   several pseudonyms. Without a seed, a random per-process one is used.
+///   several pseudonyms. Without a seed, each call uses a new random seed.
 ///
 ///   A reused seed is the re-identification key: anyone holding it can recompute the
 ///   pseudonym for a guessed name and recover the date shift. Keep it secret, and never
@@ -85,6 +87,9 @@ pub fn edit_header<'py>(
 /// Signal labels and annotation text are never rewritten and may repeat the original
 /// identity. Run `audit()` after anonymizing with the returned `scrubbed_terms` before
 /// shipping a file.
+///
+/// Unless `dry_run` is set, raises `EdfFileError` if an `EdfFile`, or a signal or proxy
+/// taken from one, has `path` open.
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(signature = (

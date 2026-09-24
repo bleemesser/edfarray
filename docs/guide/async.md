@@ -1,6 +1,6 @@
 # Async API
 
-The async API lives in `edfarray.aio` and mirrors the sync API. It is intended for applications that run an event loop and cannot afford to block on mmap decode. Typical cases are a desktop reader serving a browser UI, a local server feeding multiple clients, or any pipeline where Python work must interleave with signal decoding.
+The async API lives in `edfarray.aio` and has the same classes and methods as the sync API, with two exceptions. `aio.open(path, variant=None)` has no `scan_annotations` argument, and `aio.EdfFile.signal(idx_or_label, cache_capacity=0)` has no `strategy` argument. It is intended for applications that run an event loop and cannot afford to block on mmap decode. Typical cases are a desktop reader serving a browser UI, a local server feeding multiple clients, or any pipeline where Python work must interleave with signal decoding.
 
 Every async method releases the GIL during decode via `tokio::task::spawn_blocking` on a multi-threaded tokio runtime. Multiple concurrent reads on the same file run in parallel.
 
@@ -48,11 +48,11 @@ Get a `Signal` proxy with `f.signal()` (sync), then read data asynchronously:
 ```python
 f = await aio.open("recording.edf")
 
-sig = f.signal(0) # sync — returns a Signal proxy
-chunk = await sig.read_range(0, 1000) # async — decodes and returns numpy array
-full  = await sig.to_physical() # async — entire signal as float64 array
-raw   = await sig.to_digital() # async — entire signal as int32 array
-times = await sig.times() # async — timestamp for each sample
+sig = f.signal(0) # sync: returns a Signal proxy
+chunk = await sig.read_range(0, 1000) # async: decodes and returns numpy array
+full  = await sig.to_physical() # async: entire signal as float64 array
+raw   = await sig.to_digital() # async: entire signal as int32 array
+times = await sig.times() # async: timestamp for each sample
 ```
 
 Time-based reads map seconds to sample indices internally:
@@ -180,6 +180,8 @@ async with await aio.EdfWriter.create(
 `add_annotation` is sync and queues an annotation for the next record:
 
 ```python
+import edfarray
+
 w.add_annotation(edfarray.Annotation(onset=5.0, text="event"))
 ```
 
@@ -238,12 +240,12 @@ serially (concurrency = 1):
 
 | Operation             | sync     | async    | overhead |
 | --------------------- | -------- | -------- | -------- |
-| `open`                | 158 µs   | 237 µs   | +50%     |
-| full read (physical)  | 6.34 ms  | 6.07 ms  | ≈ 0      |
+| `open`                | 158 us   | 237 us   | +50%     |
+| full read (physical)  | 6.34 ms  | 6.07 ms  | ~0       |
 | full read (digital)   | 4.46 ms  | 4.53 ms  | +1.5%    |
-| 1-second slice        | 11 µs    | 107 µs   | +880%    |
+| 1-second slice        | 11 us    | 107 us   | +880%    |
 
-The fixed ~100 µs cost of a tokio dispatch plus event-loop hop is negligible against a multi-millisecond decode but dominates a microsecond-scale slice.
+The fixed ~100 us cost of a tokio dispatch plus event-loop hop is negligible against a multi-millisecond decode but dominates a microsecond-scale slice.
 
 ### Recommendations
 
@@ -258,9 +260,9 @@ Use **async** (`edfarray.aio`) when:
 Use **sync** (`edfarray.EdfFile`) when:
 
 - you are doing a serial pipeline of small reads (sub-millisecond) where the
-  ~100 µs per-call overhead matters;
+  ~100 us per-call overhead matters;
 - the program is not otherwise async and you don't need concurrency;
-- you are writing a one-off script — the sync API is simpler.
+- you are writing a one-off script. The sync API is simpler for that.
 
 Both APIs share the same Rust decode path, so for a single bulk read they
 finish in essentially the same wall time.

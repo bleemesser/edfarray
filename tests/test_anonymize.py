@@ -65,7 +65,7 @@ def test_edit_header_rejects_bad_values(tmp_path):
     with pytest.raises(edfarray.InvalidArgumentError):
         edfarray.edit_header(path, patient_id="x" * 81)
     with pytest.raises(edfarray.InvalidArgumentError):
-        edfarray.edit_header(path, patient_id="naïve name")
+        edfarray.edit_header(path, patient_id="na\u00efve name")
     with pytest.raises(edfarray.InvalidArgumentError):
         edfarray.edit_header(path, start_datetime=datetime.datetime(1900, 1, 1))
     with edfarray.EdfFile(path) as f:
@@ -226,3 +226,24 @@ def test_audit_location_has_no_sign_prefix(tmp_path):
     hits = edfarray.audit(path)["hits"]
     ann = [h for h in hits if h["signal_index"] is None]
     assert ann and all(not h["location"].startswith("annotation +") for h in ann)
+
+
+def test_edits_refuse_an_open_file(tmp_path):
+    path = _build(tmp_path)
+    before = open(path, "rb").read()
+
+    f = edfarray.EdfFile(path)
+    sig = f.signal(0)
+    f.close()
+    with pytest.raises(edfarray.EdfFileError, match="another edfarray handle"):
+        edfarray.edit_header(path, patient_id="X X X Subject-001")
+    with pytest.raises(edfarray.EdfFileError):
+        edfarray.anonymize(path, seed="s")
+    edfarray.anonymize(path, seed="s", dry_run=True)
+    edfarray.audit(path)
+    assert open(path, "rb").read() == before
+
+    del sig
+    edfarray.edit_header(path, patient_id="X X X Subject-001")
+    with edfarray.EdfFile(path) as g:
+        assert g.patient_id == "X X X Subject-001"

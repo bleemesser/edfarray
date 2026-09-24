@@ -11,7 +11,7 @@ use crate::error::{EdfError, Result};
 use crate::file::EdfFile;
 use crate::header::{EdfHeader, MaybeDate, Sex, read_usize};
 use crate::mmap::ScanMode;
-use crate::writer::format_ascii_field;
+use crate::writer::{format_ascii_field, lock_exclusive};
 
 /// Header field offsets and widths (from the EDF specification).
 const PATIENT_ID_OFFSET: u64 = 8;
@@ -67,7 +67,8 @@ impl HeaderDiff {
 /// Replace header identification fields in place.
 ///
 /// Only the header block is written; record data is never touched. Returns the fields that
-/// actually changed. An `EdfFile` handle opened before this call keeps its stale parsed header.
+/// actually changed. Fails with an [`EdfError::Io`] of kind `ResourceBusy` while an `EdfFile`,
+/// or a signal or proxy taken from one, has `path` open.
 ///
 /// Every field is validated before the first byte is written, so a rejected edit leaves the
 /// file exactly as it was.
@@ -166,8 +167,8 @@ fn plan_edit(buf: &[u8], header: &EdfHeader, edit: &HeaderEdit) -> Result<Planne
 pub struct AnonymizeOptions {
     /// Seed for the pseudonym and date shift. The same `(seed, subject)` always yields the
     /// same pseudonym, keyed on the patient name, code, and birthdate, so every recording of
-    /// one subject links across a corpus even when their per-session notes differ. `None` uses
-    /// a per-process random seed: repeatable within one run, unlinkable across runs.
+    /// one subject links across a corpus even when their per-session notes differ. `None` draws
+    /// a new random seed on every call, so two calls never share a pseudonym or date shift.
     ///
     /// Treat a reused seed as a secret. It is the re-identification key: anyone holding it can
     /// recompute the pseudonym for a guessed name and recover the date shift. Do not publish it
@@ -176,7 +177,7 @@ pub struct AnonymizeOptions {
     /// Explicit patient pseudonym. Defaults to a hash-derived `Subject-XXXXXXXX`.
     pub pseudonym: Option<String>,
     /// Explicit calendar shift applied to all dates. Defaults to a seed-derived shift in
-    /// ±10 years. Both birthdate and recording dates move by the same amount, preserving age.
+    /// +/-10 years. Both birthdate and recording dates move by the same amount, preserving age.
     pub date_shift_days: Option<i32>,
     /// Keep the sex subfield. Recommended: sex is rarely identifying and widely useful.
     pub keep_sex: bool,
@@ -222,7 +223,7 @@ pub struct AnonymizeResult {
     pub start_datetime_before: String,
     pub start_datetime_after: String,
     /// Identity tokens (`audit`-style terms) that were replaced. Pass them to
-    /// [`audit_with_terms`] to confirm no copy survives in signal labels or annotation text,
+    /// [`audit_terms`] to confirm no copy survives in signal labels or annotation text,
     /// which header-only anonymization cannot rewrite.
     pub scrubbed_terms: Vec<String>,
     /// The header diff that was written. Empty on dry runs.
@@ -236,8 +237,11 @@ pub struct AnonymizeResult {
 /// number of days, so age and within-file time-of-day survive while calendar dates do not.
 ///
 /// Does not touch signal labels or annotation text, which may repeat identifying strings.
-/// Use the returned [`AnonymizeResult::scrubbed_terms`] with [`audit_with_terms`] as the
+/// Use the returned [`AnonymizeResult::scrubbed_terms`] with [`audit_terms`] as the
 /// final gate before shipping.
+///
+/// Unless `dry_run` is set, fails with an [`EdfError::Io`] of kind `ResourceBusy` while an
+/// `EdfFile`, or a signal or proxy taken from one, has `path` open.
 pub fn anonymize(path: impl AsRef<Path>, opts: &AnonymizeOptions) -> Result<AnonymizeResult> {
     let path = path.as_ref();
     let (mut file, buf, header) = open_header(path, !opts.dry_run)?;
@@ -426,7 +430,7 @@ fn identity_terms(header: &EdfHeader) -> Vec<String> {
 /// the patient identity currently stored in the header fields. Read-only.
 ///
 /// Run this *before* anonymizing: once the header is scrubbed it no longer knows what the
-/// original identity was. After anonymizing, re-check with [`audit_with_terms`] and the
+/// original identity was. After anonymizing, re-check with [`audit_terms`] and the
 /// [`AnonymizeResult::scrubbed_terms`] captured at anonymization time.
 pub fn audit(path: impl AsRef<Path>) -> Result<AuditReport> {
     let file = EdfFile::open_with_options(path, None, ScanMode::Lazy)?;
@@ -494,6 +498,11 @@ fn open_header(path: &Path, write: bool) -> Result<(File, Vec<u8>, EdfHeader)> {
         path: path.to_path_buf(),
         source: e,
     })?;
+    // An open EdfFile keeps the header it parsed at open time, so editing under it would leave
+    // that handle reporting the old identity.
+    if write {
+        lock_exclusive(&file, path, "editing")?;
+    }
 
     let mut buf = vec![b' '; 256];
     file.read_exact(&mut buf)
@@ -876,7 +885,7 @@ mod tests {
         let err = edit_header(
             &path,
             &HeaderEdit {
-                patient_id: Some("badé name".into()),
+                patient_id: Some("bad\u{e9} name".into()),
                 recording_id: None,
                 start_datetime: None,
             },
@@ -987,7 +996,7 @@ mod tests {
                 .num_days_from_ce()
                 - 400
         );
-        // Age (birthdate→recording interval) preserved exactly.
+        // Age (birthdate to recording interval) preserved exactly.
         assert_eq!(
             rec_start.num_days_from_ce() - birth.num_days_from_ce(),
             NaiveDate::from_ymd_opt(2026, 1, 1)
@@ -1200,5 +1209,38 @@ mod tests {
         // File untouched.
         let f = EdfFile::open(&path).unwrap();
         assert!(f.header().patient_id.starts_with("MCH-0234567"));
+    }
+
+    #[test]
+    fn edits_refuse_a_file_that_is_open_and_leave_it_unchanged() {
+        let dir = tempdir().unwrap();
+        let path = build_file(&dir, "open.edf");
+        let before = std::fs::read(&path).unwrap();
+        let edit = HeaderEdit {
+            patient_id: Some("X X X Subject-001".into()),
+            recording_id: None,
+            start_datetime: None,
+        };
+        let is_busy = |e: &EdfError| matches!(e, EdfError::Io { source, .. } if source.kind() == std::io::ErrorKind::ResourceBusy);
+
+        let open = EdfFile::open(&path).unwrap();
+        assert!(is_busy(&edit_header(&path, &edit).unwrap_err()));
+        assert!(is_busy(
+            &anonymize(&path, &AnonymizeOptions::default()).unwrap_err()
+        ));
+        let dry_run = AnonymizeOptions {
+            dry_run: true,
+            ..AnonymizeOptions::default()
+        };
+        anonymize(&path, &dry_run).unwrap();
+        audit(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        drop(open);
+        edit_header(&path, &edit).unwrap();
+        assert_eq!(
+            EdfFile::open(&path).unwrap().header().patient_id,
+            "X X X Subject-001"
+        );
     }
 }

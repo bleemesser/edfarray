@@ -153,13 +153,13 @@ class EdfFile:
         annotation channel cannot be selected: it is always rebuilt automatically,
         and annotations are copied in full regardless of the selection.
 
-        Raises `EdfFileError` if `path` is open for reading, including when `path`
-        is this file. Close every `EdfFile` on that path, and drop every signal and
-        proxy taken from one, before writing to it.
+        If another edfarray handle has `path` open, raises `EdfFileError`. This
+        includes this file itself. Close every `EdfFile` on that path, and drop every
+        signal and proxy taken from one, before writing to it.
 
         Transcoding caveats:
         - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
-          copy. Transcoding to any non-EDF+D variant flattens timing: the
+          copy. Transcoding to any non-`+D` variant flattens timing: the
           per-record onsets/gaps are replaced by uniform `record_idx *
           record_duration` timing.
         - Because the annotation channel is rebuilt from parsed annotations,

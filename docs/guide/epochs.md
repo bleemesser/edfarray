@@ -23,7 +23,9 @@ epochs.data.shape  # (3, n_channels, 240)
 epochs.onsets      # array([10., 20., 30.])
 ```
 
-The sample axis is always `ceil((pre + post) * sample_rate)` columns wide. That width
+The sample axis is always `ceil((pre + post) * sample_rate)` columns wide. A product
+within 1e-6 of an integer counts as that integer, so `pre=0.1, post=0.2` at 200 Hz gives
+60 columns, not 61. That width
 comes from your request alone, never from where the events landed, so shapes match
 across files. Column 0 of a row is the first sample at or after `onset - pre`, and column
 `j` is the sample `j` places later. An event that falls between two samples therefore

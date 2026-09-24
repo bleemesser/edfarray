@@ -105,7 +105,7 @@ impl LruCache {
 /// Array-like view of one signal.
 ///
 /// Decodes samples on access. Bytes come from the memory map or a streaming read depending on
-/// [`ReadStrategy`]; an optional [`LruCache`] holds decoded records for repeated physical reads.
+/// [`ReadStrategy`]; an optional LRU cache holds decoded records for repeated physical reads.
 #[derive(Debug)]
 pub struct SignalProxy {
     signal_idx: usize,

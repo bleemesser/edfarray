@@ -12,7 +12,7 @@ use edfarray_core::writer::{EdfWriter, WriterSignal, WriterSpec, write_edf};
 use crate::annotations::PyAnnotation;
 use crate::errors::{invalid_argument_err, to_py_err};
 
-/// Per-signal description used by [`EdfWriter`] and [`write_edf`].
+/// Per-signal description used by `EdfWriter` and `write_edf`.
 ///
 /// `physical_min`/`physical_max` define the unit range. `digital_min`/`digital_max`
 /// define the integer range used in the binary file (16-bit for EDF, 24-bit for BDF).

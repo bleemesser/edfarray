@@ -23,9 +23,9 @@ def bench_file(name, sig_idx=0):
         return
     size_mb = path.stat().st_size / (1024 * 1024)
 
-    print(f"\n{'─' * 70}")
+    print(f"\n{'-' * 70}")
     print(f"File: {name} ({size_mb:.1f} MB)")
-    print(f"{'─' * 70}")
+    print(f"{'-' * 70}")
 
     t0 = time.perf_counter()
     f = edfarray.EdfFile(str(path))

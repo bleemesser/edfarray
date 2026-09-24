@@ -27,8 +27,14 @@ diff = edfarray.edit_header(
 
 Pass `None` for a field to leave it alone. Values must fit the fixed-width ASCII fields, so
 at most 80 bytes for the two id fields. Every value is checked before anything is written, so
-a rejected edit leaves the file byte-identical. An `EdfFile` handle opened before the edit
-keeps its stale parsed header; reopen it.
+a rejected edit leaves the file byte-identical.
+
+If another edfarray handle has the file open, `edit_header` and `anonymize` raise
+`EdfFileError`. An open `EdfFile` keeps the header that it parsed at open time. Without
+this check, that `EdfFile` would report the old identity after an edit. Before you edit,
+close the file. Then drop every signal and proxy taken from it. A dry run (`dry_run=True`,
+which reports the result but writes nothing) and `audit` only read the file, so they work
+on an open file.
 
 ## Anonymizing
 
@@ -48,7 +54,7 @@ What it does, by default:
   subject's files always share one pseudonym, so a subject's recordings stay linkable across
   a corpus. The pseudonym is keyed on the patient name, code, and birthdate only, so
   per-session notes in the free-text subfield do not split one subject into several
-  pseudonyms. Without a seed, the pseudonym is random per run.
+  pseudonyms. Without a seed, every call picks a new random pseudonym and date shift.
 - Replaces the patient code, technician, admin code, and free-text subfields with `X`.
   Sex and equipment survive unless you pass `keep_sex=False` / `keep_equipment=False`.
 - Shifts birthdate, recording date, and the header startdate by the same number of days.
@@ -56,14 +62,16 @@ What it does, by default:
   startdate outside the 1985-2084 range the two-digit year field can hold raises instead
   of silently clamping.
 
-Add `dry_run=True` to see what would change without writing anything. A dry run validates
-everything a real run does, so an edit that passes as a dry run will not fail on write.
+Add `dry_run=True` to see the changes without writing anything. A dry run makes the same
+checks on the field values as a real run. A real run can still fail if another edfarray
+handle has the file open, or on an I/O error. If you want the dry run to show the same
+pseudonym and date shift as the real run, pass a `seed`.
 
 !!! danger "The seed is a re-identification key"
     A reused `seed` determines both the pseudonym and the date shift. Pseudonyms are HMAC-SHA256
     keyed on the seed and stretched over 500,000 iterations, so without the seed they are not
     reversible, and with it a dictionary sweep over candidate names costs about 20 ms per guess
-    rather than being instant. That is a speed bump, not a wall: the date shift has only 7,303
+    rather than being instant. That is a speed bump, not a wall: the date shift has only 7,302
     possible values and cannot be protected this way at all. Store the seed the way you would
     store a linking log -- separately from the anonymized files, and never in the same release.
 

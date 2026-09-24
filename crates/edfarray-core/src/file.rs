@@ -60,7 +60,7 @@ impl EdfFile {
         &self.file
     }
 
-    /// File variant: EDF, EDF+C, or EDF+D.
+    /// File variant: EDF, EDF+C, EDF+D, BDF, BDF+C, or BDF+D.
     pub fn variant(&self) -> EdfVariant {
         self.file.header.variant
     }
@@ -85,12 +85,12 @@ impl EdfFile {
         self.file.header.duration_secs()
     }
 
-    /// Parsed patient identification info (EDF+ only).
+    /// Parsed patient identification subfields. Filled for any file that uses the EDF+ layout.
     pub fn patient(&self) -> &PatientInfo {
         &self.file.header.patient
     }
 
-    /// Parsed recording identification info (EDF+ only).
+    /// Parsed recording identification subfields. Filled for any file that uses the EDF+ layout.
     pub fn recording(&self) -> &RecordingInfo {
         &self.file.header.recording
     }
@@ -407,12 +407,20 @@ impl EdfFile {
         let target_variant = variant.unwrap_or(self.variant());
         let header = &self.file.header;
 
-        let start_datetime = match header.start_datetime.as_datetime() {
+        let whole_seconds = match header.start_datetime.as_datetime() {
             Some(dt) => *dt,
             None => NaiveDateTime::new(
                 NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
                 NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             ),
+        };
+        // The header stores whole seconds. EDF+ keeps the subsecond start in the first
+        // time-keeping TAL, which the writer rebuilds from `start_datetime`'s nanoseconds.
+        let start_datetime = if header.variant.is_plus() && target_variant.is_plus() {
+            let subsecond = self.file.with_annotations(|idx| idx.starttime_subsecond);
+            whole_seconds + chrono::TimeDelta::nanoseconds((subsecond * 1e9).round() as i64)
+        } else {
+            whole_seconds
         };
 
         let ordinary = match signals {
@@ -1136,7 +1144,7 @@ mod fixture_tests {
 
     #[test]
     fn filter_annotations_regex_case_insensitive() {
-        // Fixture contains "RECORD START" — lowercase pattern must match.
+        // Fixture contains "RECORD START", so a lowercase pattern must match.
         let edf = EdfFile::open(fixture_path("edfPlusC.edf")).unwrap();
         let anns = edf.filter_annotations("record", true).unwrap();
         assert!(

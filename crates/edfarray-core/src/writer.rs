@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
 
-use crate::annotation::Annotation;
+use crate::annotation::{Annotation, TAL_DURATION_MARKER, TAL_SEPARATOR, TAL_TERMINATOR};
 use crate::error::{EdfError, Result};
 use crate::header::EdfVariant;
 
@@ -242,19 +242,7 @@ impl EdfWriter {
                 path: path.clone(),
                 source: e,
             })?;
-        // Filesystems without lock support return an error rather than WouldBlock. The lock is
-        // advisory, so writing proceeds without it there.
-        if let Err(TryLockError::WouldBlock) = file.try_lock() {
-            return Err(EdfError::Io {
-                path,
-                op: "writing",
-                source: std::io::Error::new(
-                    std::io::ErrorKind::ResourceBusy,
-                    "the file is open for reading. Close or drop every EdfFile opened on it, \
-                     and every signal or proxy taken from one, then retry",
-                ),
-            });
-        }
+        lock_exclusive(&file, &path, "writing")?;
         file.set_len(0).map_err(|e| EdfError::Io {
             path: path.clone(),
             op: "truncating",
@@ -294,11 +282,13 @@ impl EdfWriter {
 
     /// Write one record from physical values. Flushes pending annotations.
     pub fn write_record_physical(&mut self, physical: &[&[f64]]) -> Result<()> {
-        let extra = std::mem::take(&mut self.pending_annotations);
-        self.write_record_with_annotations(physical, &extra)
+        self.write_record_with_annotations(physical, &[])
     }
 
-    /// Write one record from physical values with explicit annotations.
+    /// Write one record from physical values with explicit annotations, plus any pending ones.
+    ///
+    /// A rejected record writes nothing and keeps the pending annotations, so the file stays
+    /// valid and the caller can retry or continue.
     pub fn write_record_with_annotations(
         &mut self,
         physical: &[&[f64]],
@@ -321,8 +311,8 @@ impl EdfWriter {
             });
         }
 
-        // Validate everything before emitting a single byte: a rejection after a partial write
-        // leaves a corrupt trailing record that finish() would then finalize.
+        // Validate and encode everything before emitting a single byte: a rejection after a
+        // partial write leaves a corrupt trailing record that finish() would then finalize.
         for (i, sig) in self.spec.signals.iter().enumerate() {
             if physical[i].len() != sig.samples_per_record {
                 return Err(EdfError::InvalidArgument {
@@ -363,6 +353,36 @@ impl EdfWriter {
             });
         }
 
+        let annotation_block = if self.spec.variant.is_plus() {
+            let record_idx = self.num_records_written;
+            let record_onset = match &self.spec.record_onsets {
+                Some(onsets) => {
+                    let i = record_idx as usize;
+                    *onsets.get(i).ok_or_else(|| EdfError::InvalidArgument {
+                        name: "record_onsets",
+                        reason: format!(
+                            "record {record_idx} has no onset: the table holds {} entries",
+                            onsets.len()
+                        ),
+                    })?
+                }
+                None => record_idx as f64 * self.spec.record_duration_secs,
+            };
+            let combined: Vec<&Annotation> = annotations
+                .iter()
+                .chain(self.pending_annotations.iter())
+                .collect();
+            Some(encode_annotation_channel(
+                record_idx,
+                record_onset,
+                self.start_subsecond,
+                &combined,
+                self.ann_bytes_per_record,
+            )?)
+        } else {
+            None
+        };
+
         let sample_size = self.sample_size_bytes();
         let writer = self.inner.as_mut().expect("writer open");
 
@@ -384,39 +404,12 @@ impl EdfWriter {
             }
         }
 
-        let mut combined: Vec<&Annotation> = Vec::with_capacity(annotations.len());
-        for a in annotations {
-            combined.push(a);
+        if let Some(block) = annotation_block {
+            writer
+                .write_all(&block)
+                .map_err(|e| io_err(&self.path, "writing annotation channel", e))?;
         }
-        let pending = std::mem::take(&mut self.pending_annotations);
-        let pending_refs: Vec<&Annotation> = pending.iter().collect();
-        combined.extend(pending_refs);
-
-        if self.spec.variant.is_plus() {
-            let record_idx = self.num_records_written;
-            let record_onset = match &self.spec.record_onsets {
-                Some(onsets) => {
-                    let i = record_idx as usize;
-                    *onsets.get(i).ok_or_else(|| EdfError::InvalidArgument {
-                        name: "record_onsets",
-                        reason: format!(
-                            "record {record_idx} has no onset: the table holds {} entries",
-                            onsets.len()
-                        ),
-                    })?
-                }
-                None => record_idx as f64 * self.spec.record_duration_secs,
-            };
-            write_annotation_channel(
-                &self.path,
-                writer,
-                record_idx,
-                record_onset,
-                self.start_subsecond,
-                &combined,
-                self.ann_bytes_per_record,
-            )?;
-        }
+        self.pending_annotations.clear();
 
         self.num_records_written += 1;
         Ok(())
@@ -772,19 +765,14 @@ fn write_sample<W: Write>(path: &Path, w: &mut W, value: i32, sample_size: usize
     Ok(())
 }
 
-const TAL_SEPARATOR: u8 = 0x14;
-const TAL_DURATION_MARKER: u8 = 0x15;
-const TAL_TERMINATOR: u8 = 0x00;
-
-fn write_annotation_channel<W: Write>(
-    path: &Path,
-    w: &mut W,
+/// Encode one record's annotation channel, padded to `byte_budget` bytes.
+fn encode_annotation_channel(
     record_idx: u64,
     record_onset: f64,
     start_subsecond: f64,
     annotations: &[&Annotation],
     byte_budget: usize,
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(byte_budget);
 
     let onset = record_onset + start_subsecond;
@@ -842,9 +830,7 @@ fn write_annotation_channel<W: Write>(
         });
     }
     buf.resize(byte_budget, 0);
-    w.write_all(&buf)
-        .map_err(|e| io_err(path, "writing annotation channel", e))?;
-    Ok(())
+    Ok(buf)
 }
 
 fn format_tal_onset(onset: f64) -> String {
@@ -881,6 +867,26 @@ fn io_err(path: &Path, op: &'static str, e: std::io::Error) -> EdfError {
     }
 }
 
+/// Take an exclusive advisory lock on `file`. Fails with `ResourceBusy` if another edfarray
+/// handle holds a lock on it: an `EdfFile`, a signal or proxy taken from one, an `EdfWriter`, or
+/// a header edit in progress. On filesystems without lock support the caller proceeds unlocked,
+/// because the lock is advisory.
+pub(crate) fn lock_exclusive(file: &File, path: &Path, op: &'static str) -> Result<()> {
+    if let Err(TryLockError::WouldBlock) = file.try_lock() {
+        return Err(EdfError::Io {
+            path: path.to_path_buf(),
+            op,
+            source: std::io::Error::new(
+                std::io::ErrorKind::ResourceBusy,
+                "another edfarray handle has this file open. Close or drop every EdfFile \
+                 opened on it, every signal or proxy taken from one, and any EdfWriter \
+                 writing it, then retry",
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -904,6 +910,80 @@ mod tests {
             annotation_bytes_per_record: None,
             record_onsets: None,
         }
+    }
+
+    #[test]
+    fn rejected_record_writes_nothing_and_keeps_pending_annotations() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("reject.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusD);
+        spec.record_onsets = Some(vec![0.0, 1.0]);
+        let mut w = EdfWriter::create(&path, spec).unwrap();
+        let data = ramp(256);
+        let ann = |onset: f64, text: &str| Annotation {
+            onset,
+            duration: None,
+            text: text.to_string(),
+        };
+
+        w.add_annotation(ann(0.5, "queued"));
+        let oversize = ann(0.0, &"x".repeat(1000));
+        assert!(
+            w.write_record_with_annotations(&[&data], &[oversize])
+                .is_err()
+        );
+        let reserved = ann(0.0, "bad\u{14}text");
+        assert!(
+            w.write_record_with_annotations(&[&data], &[reserved])
+                .is_err()
+        );
+        w.write_record_physical(&[&data]).unwrap();
+        w.write_record_physical(&[&data]).unwrap();
+        // The onset table has two entries, so a third record has no onset.
+        assert!(w.write_record_physical(&[&data]).is_err());
+        w.finish().unwrap();
+
+        let f = EdfFile::open(&path).unwrap();
+        assert!(f.warnings().is_empty(), "{:?}", f.warnings());
+        assert_eq!(f.num_records(), 2);
+        let expected_len = f.header().data_offset() + f.num_records() * f.file().layout.record_size;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len() as usize,
+            expected_len
+        );
+        let texts: Vec<String> = f.annotations().into_iter().map(|a| a.text).collect();
+        assert_eq!(texts, vec!["queued".to_string()]);
+        let sig = f.signal(0).unwrap();
+        let mut buf = vec![0.0; 512];
+        sig.read_physical(0, 512, &mut buf).unwrap();
+        for (got, want) in buf.iter().zip(data.iter().chain(data.iter())) {
+            assert!((got - want).abs() < 0.2, "{got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn write_to_keeps_subsecond_start() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.edf");
+        let dst = dir.path().join("dst.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusC);
+        spec.start_datetime += chrono::TimeDelta::milliseconds(250);
+        let data = ramp(256 * 2);
+        let anns = vec![Annotation {
+            onset: 1.5,
+            duration: None,
+            text: "event".into(),
+        }];
+        write_edf(&src, spec, &[&data], &anns).unwrap();
+
+        let subsecond = |f: &EdfFile| f.file().with_annotations(|idx| idx.starttime_subsecond);
+        let f = EdfFile::open(&src).unwrap();
+        assert!((subsecond(&f) - 0.25).abs() < 1e-9);
+
+        f.write_to(&dst, None).unwrap();
+        let g = EdfFile::open(&dst).unwrap();
+        assert!((subsecond(&g) - 0.25).abs() < 1e-9);
+        assert!((g.annotations()[0].onset - 1.5).abs() < 1e-9);
     }
 
     fn ramp(samples: usize) -> Vec<f64> {

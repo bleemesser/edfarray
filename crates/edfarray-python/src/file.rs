@@ -121,7 +121,7 @@ impl PyEdfFile {
         Ok(self.get()?.duration())
     }
 
-    /// File variant: "EDF", "EDF+C", or "EDF+D".
+    /// File variant: "EDF", "EDF+C", "EDF+D", "BDF", "BDF+C", or "BDF+D".
     #[getter]
     fn variant(&self) -> PyResult<String> {
         Ok(self.get()?.variant().to_string())
@@ -380,6 +380,8 @@ impl PyEdfFile {
     ) -> PyResult<PySignal> {
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
             self.get()?.signal(idx).map_err(to_py_err)?
+        } else if let Ok(idx) = idx_or_label.extract::<i64>() {
+            return Err(negative_index_err(idx, self.get()?.num_signals()));
         } else if let Ok(label) = idx_or_label.extract::<String>() {
             self.get()?.signal_by_label(&label).map_err(to_py_err)?
         } else {
@@ -523,9 +525,9 @@ impl PyEdfFile {
     /// annotation channel cannot be selected: it is always rebuilt automatically,
     /// and annotations are copied in full regardless of the selection.
     ///
-    /// Raises `EdfFileError` if `path` is open for reading, including when `path`
-    /// is this file. Close every `EdfFile` on that path, and drop every signal and
-    /// proxy taken from one, before writing to it.
+    /// If another edfarray handle has `path` open, raises `EdfFileError`. This
+    /// includes this file itself. Close every `EdfFile` on that path, and drop every
+    /// signal and proxy taken from one, before writing to it.
     ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D preserves the source record onsets, so gaps survive the
@@ -811,10 +813,7 @@ fn selection_item(f: &EdfFile, value: &Bound<'_, PyAny>) -> PyResult<Option<usiz
         return Ok(Some(idx));
     }
     if let Ok(idx) = value.extract::<i64>() {
-        return Err(out_of_range_err(format!(
-            "signal index {idx} out of range (file has {} signals)",
-            f.num_signals()
-        )));
+        return Err(negative_index_err(idx, f.num_signals()));
     }
     if let Ok(label) = value.extract::<String>() {
         let idx = f
@@ -825,4 +824,11 @@ fn selection_item(f: &EdfFile, value: &Bound<'_, PyAny>) -> PyResult<Option<usiz
         return Ok(Some(idx));
     }
     Ok(None)
+}
+
+/// Error for an int index that does not fit `usize`. Negative indices do not wrap around.
+pub(crate) fn negative_index_err(idx: i64, count: usize) -> PyErr {
+    out_of_range_err(format!(
+        "signal index {idx} out of range (file has {count} signals)"
+    ))
 }

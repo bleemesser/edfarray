@@ -7,7 +7,7 @@ use edfarray_core::group::{GroupKind, SignalGroup};
 /// needed to decide whether a 2D or 3D proxy is supported.
 ///
 /// Created by `EdfFile.signal_groups()`. Within a single EDF file, every group
-/// returned by that method is "rectangular" — all channels share a sample rate
+/// returned by that method is "rectangular": all channels share a sample rate
 /// and total sample count.
 #[gen_stub_pyclass]
 #[pyclass(name = "SignalGroup", module = "edfarray._core", frozen)]

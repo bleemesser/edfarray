@@ -16,7 +16,7 @@ pages = f.read_page(0.0, 10.0, signal_indices=[0, 1, 5])
 
 `read_page()` returns a list of numpy float64 arrays, one per signal. Signals with different sample rates produce arrays of different lengths.
 
-There's also `read_page_digital()` which returns int16 arrays without the gain/offset conversion.
+There is also `read_page_digital()`, which returns int32 arrays without the gain/offset conversion.
 
 ### Time-aware reading for EDF+D
 
@@ -102,7 +102,7 @@ f.annotations         # waits, then returns the annotation list
 f.warnings            # waits, then returns warnings including annotation parse issues
 ```
 
-For plain EDF files (no annotation signals), there is no scan at all -- record onsets are computed directly from the header. For EDF+C files, signal reads never block because record onsets are uniform. Only EDF+D files need the scan results for correct time mapping via `sample_time()` / `times()`.
+For plain EDF files (no annotation signals), there is no scan at all -- record onsets are computed directly from the header. For EDF+C files, signal reads never block because record onsets are uniform. Only EDF+D files need the scan results for correct time mapping via `times()` and `read_time_range()`.
 
 The scan reads every data record, so on a very large file it competes with your own reads for
 page cache. Pass `scan_annotations=False` to skip it at open; the index is then built on first
