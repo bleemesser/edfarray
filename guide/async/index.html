@@ -1,0 +1,1454 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An EDF/EDF+ parser written in Rust with numpy-like Python bindings">
+      
+      
+      
+      
+        <link rel="prev" href="../anonymization/">
+      
+      
+        <link rel="next" href="../../reference/python-api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Async API - edfarray</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#async-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="edfarray" class="md-header__button md-logo" aria-label="edfarray" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            edfarray
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Async API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/bleemesser/edfarray" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="edfarray" class="md-nav__button md-logo" aria-label="edfarray" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    edfarray
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/bleemesser/edfarray" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Working with Signals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../annotations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotations & Time
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../epochs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Epoch Extraction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../writing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../anonymization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anonymization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Async API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Async API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#opening-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opening files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading signals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concurrent reads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-channel-access-in-async-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-channel access in async mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waiting-for-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for annotations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transcoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transcoding
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-and-when-to-choose-async" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance and when to choose async
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance and when to choose async">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#parallel-decode-scales-near-linearly-up-to-core-count" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallel decode scales near-linearly up to core count
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-event-loop-stays-responsive-under-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The event loop stays responsive under load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-shot-overhead-is-small-for-bulk-reads-noticeable-for-tiny-ones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single-shot overhead is small for bulk reads, noticeable for tiny ones
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gil-release-and-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GIL release and parallelism
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/python-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust Crate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/edf-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EDF Format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#opening-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Opening files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading signals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrent-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concurrent reads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-channel-access-in-async-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-channel access in async mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waiting-for-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for annotations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transcoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transcoding
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-and-when-to-choose-async" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance and when to choose async
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance and when to choose async">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#parallel-decode-scales-near-linearly-up-to-core-count" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parallel decode scales near-linearly up to core count
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-event-loop-stays-responsive-under-load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The event loop stays responsive under load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-shot-overhead-is-small-for-bulk-reads-noticeable-for-tiny-ones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single-shot overhead is small for bulk reads, noticeable for tiny ones
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gil-release-and-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GIL release and parallelism
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="async-api">Async API<a class="headerlink" href="#async-api" title="Permanent link">&para;</a></h1>
+<p>The async API is in <code>edfarray.aio</code>. It has the same classes and methods as the sync API, with two exceptions. <code>aio.open(path, variant=None)</code> has no <code>scan_annotations</code> argument, and <code>aio.EdfFile.signal(idx_or_label, cache_capacity=0)</code> has no <code>strategy</code> argument.</p>
+<p>The async API is for applications that run an event loop and must not block on mmap decode. An event loop is the scheduler that runs asyncio coroutines. Typical applications are:</p>
+<ul>
+<li>A desktop reader that serves a browser UI.</li>
+<li>A local server that sends data to multiple clients.</li>
+<li>A pipeline where Python work must interleave with signal decoding.</li>
+</ul>
+<p>Every async method releases the GIL (the Python global interpreter lock) during decode. It uses <code>tokio::task::spawn_blocking</code> on a multi-threaded tokio runtime. Concurrent reads on the same file run in parallel.</p>
+<h2 id="opening-files">Opening files<a class="headerlink" href="#opening-files" title="Permanent link">&para;</a></h2>
+<p>Open a file asynchronously. The <code>open</code> call reads the header and starts an
+annotation scan in the background. Thus it returns quickly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">edfarray.aio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aio</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">num_signals</span><span class="p">,</span> <span class="n">f</span><span class="o">.</span><span class="n">duration</span><span class="p">)</span>
+</code></pre></div>
+<p>To get the metadata quickly without keeping the file open, use <code>inspect</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">meta</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">inspect</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">meta</span><span class="p">[</span><span class="s2">&quot;variant&quot;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;num_signals&quot;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;duration&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>When the block exits, the async context manager closes the file:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">async</span> <span class="k">with</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">f</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">read_range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span>
+</code></pre></div>
+<p><code>aio.open</code> takes the same <code>variant</code> override as the sync constructor. Use it for
+files whose <code>+C</code>/<code>+D</code> marker is missing or wrong:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">,</span> <span class="n">variant</span><span class="o">=</span><span class="s2">&quot;EDF+D&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Metadata getters such as <code>num_signals</code>, <code>variant</code>, and <code>start_datetime</code> are sync, also on the async <code>EdfFile</code>. They read from a header that is already loaded and shared through an <code>Arc</code>. They return immediately and do no I/O.</p>
+<h2 id="reading-signals">Reading signals<a class="headerlink" href="#reading-signals" title="Permanent link">&para;</a></h2>
+<p>Get a <code>Signal</code> object with <code>f.signal()</code> (sync). Then read data asynchronously:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">sig</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="c1"># sync: returns a Signal proxy</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">chunk</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sig</span><span class="o">.</span><span class="n">read_range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span> <span class="c1"># async: decodes and returns numpy array</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">full</span>  <span class="o">=</span> <span class="k">await</span> <span class="n">sig</span><span class="o">.</span><span class="n">to_physical</span><span class="p">()</span> <span class="c1"># async: entire signal as float64 array</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">raw</span>   <span class="o">=</span> <span class="k">await</span> <span class="n">sig</span><span class="o">.</span><span class="n">to_digital</span><span class="p">()</span> <span class="c1"># async: entire signal as int32 array</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">times</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sig</span><span class="o">.</span><span class="n">times</span><span class="p">()</span> <span class="c1"># async: timestamp for each sample</span>
+</code></pre></div>
+<p>Time-based reads convert seconds to sample indices internally:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sig</span><span class="o">.</span><span class="n">read_time_range</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">)</span>  <span class="c1"># physical values in [0, 10) seconds</span>
+</code></pre></div>
+<p>If you read the same signal again and again, pass <code>cache_capacity</code>. This
+enables an LRU (least recently used) cache of decoded physical records. A record
+is a block of samples with a fixed duration. The unit of <code>cache_capacity</code> is data
+records, not samples:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">sig</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">cache_capacity</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>  <span class="c1"># cache 4 decoded records</span>
+</code></pre></div>
+<p>The cache behaves the same as in the sync API. <a href="../signals/#caching-repeated-reads">Caching repeated reads</a> tells how to size
+<code>cache_capacity</code> and in which cases the cache helps.</p>
+<h2 id="concurrent-reads">Concurrent reads<a class="headerlink" href="#concurrent-reads" title="Permanent link">&para;</a></h2>
+<p>If multiple coroutines read different regions of the same file, they run concurrently on separate OS threads:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">)</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># Read four non-overlapping pages concurrently</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">f</span><span class="o">.</span><span class="n">read_page</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">30.0</span><span class="p">),</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="n">f</span><span class="o">.</span><span class="n">read_page</span><span class="p">(</span><span class="mf">30.0</span><span class="p">,</span> <span class="mf">60.0</span><span class="p">),</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    <span class="n">f</span><span class="o">.</span><span class="n">read_page</span><span class="p">(</span><span class="mf">60.0</span><span class="p">,</span> <span class="mf">90.0</span><span class="p">),</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="n">f</span><span class="o">.</span><span class="n">read_page</span><span class="p">(</span><span class="mf">90.0</span><span class="p">,</span> <span class="mf">120.0</span><span class="p">),</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="p">)</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="c1"># Each element of results is a list of numpy arrays (one per signal).</span>
+</code></pre></div>
+<p>The four reads decode in parallel on the tokio thread pool. The total wall time is close to the time of one page read, not four times that time.</p>
+<p>While Rust decodes, other Python coroutines that do not need the extension continue to run. The decode does not block the event loop.</p>
+<h2 id="multi-channel-access-in-async-mode">Multi-channel access in async mode<a class="headerlink" href="#multi-channel-access-in-async-mode" title="Permanent link">&para;</a></h2>
+<p>The array proxies (<code>Proxy2D</code> and <code>Proxy3D</code>) are sync only. A proxy is an array view that reads from the file on access. Their purpose is synchronous numpy-style <code>proxy[ch, samp_range]</code> indexing. This indexing does not map well to <code>await</code> points. The ML preprocessing pipelines that use this access pattern are also sync.</p>
+<p>For async reads of multiple signals, use <code>read_page</code>. It decodes signals in parallel on the tokio thread pool. If you need numpy-style indexing, open the file synchronously. The async file also has <code>signal_groups()</code> and <code>signal_group()</code> as plain sync getters. You can use them to find the signal groups.</p>
+<h2 id="waiting-for-annotations">Waiting for annotations<a class="headerlink" href="#waiting-for-annotations" title="Permanent link">&para;</a></h2>
+<p>Opening a file is fast because the annotation scan runs in the background. If
+your code needs the full annotation index before it continues, wait for it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;recording.edf&quot;</span><span class="p">)</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="c1"># ... start reading signals immediately ...</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">await</span> <span class="n">f</span><span class="o">.</span><span class="n">wait_for_annotations</span><span class="p">()</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Now f.annotations is guaranteed to be complete</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">for</span> <span class="n">ann</span> <span class="ow">in</span> <span class="n">f</span><span class="o">.</span><span class="n">annotations</span><span class="p">:</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">ann</span><span class="o">.</span><span class="n">onset</span><span class="p">,</span> <span class="n">ann</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>To find out whether the scan is finished, read <code>f.annotations_ready</code> (sync). This
+read does not block.</p>
+<h2 id="writing">Writing<a class="headerlink" href="#writing" title="Permanent link">&para;</a></h2>
+<p>The async API has the same two ways to write a file as the sync API.</p>
+<p>To write a file in one call, use <code>write_edf</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">sig_def</span> <span class="o">=</span> <span class="n">aio</span><span class="o">.</span><span class="n">WriterSignal</span><span class="p">(</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;EEG Fpz&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">physical_dimension</span><span class="o">=</span><span class="s2">&quot;uV&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">physical_min</span><span class="o">=-</span><span class="mf">3200.0</span><span class="p">,</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">physical_max</span><span class="o">=</span><span class="mf">3200.0</span><span class="p">,</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">digital_min</span><span class="o">=-</span><span class="mi">32768</span><span class="p">,</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">digital_max</span><span class="o">=</span><span class="mi">32767</span><span class="p">,</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="n">samples_per_record</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="p">)</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">256</span> <span class="o">*</span> <span class="mi">4</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">write_edf</span><span class="p">(</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="s2">&quot;out.edf&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>    <span class="n">variant</span><span class="o">=</span><span class="s2">&quot;EDF+C&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>    <span class="n">record_duration</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="n">signals</span><span class="o">=</span><span class="p">[</span><span class="n">sig_def</span><span class="p">],</span>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="n">data</span><span class="o">=</span><span class="p">[</span><span class="n">data</span><span class="p">],</span>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="p">)</span>
+</code></pre></div>
+<p>To write a file as a stream, use <code>EdfWriter</code>. Its constructor is a classmethod.
+Call <code>create()</code>. Do not call <code>EdfWriter(...)</code> directly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">w</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">EdfWriter</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="s2">&quot;live.edf&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">variant</span><span class="o">=</span><span class="s2">&quot;EDF+C&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">record_duration</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">signals</span><span class="o">=</span><span class="p">[</span><span class="n">sig_def</span><span class="p">],</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">)</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="k">for</span> <span class="n">record</span> <span class="ow">in</span> <span class="n">produce_records</span><span class="p">():</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="k">await</span> <span class="n">w</span><span class="o">.</span><span class="n">write_record</span><span class="p">([</span><span class="n">record</span><span class="p">])</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="k">await</span> <span class="n">w</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</code></pre></div>
+<p>You can also use the async context manager:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">async</span> <span class="k">with</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">EdfWriter</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="s2">&quot;live.edf&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">variant</span><span class="o">=</span><span class="s2">&quot;EDF+C&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">record_duration</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">signals</span><span class="o">=</span><span class="p">[</span><span class="n">sig_def</span><span class="p">],</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">)</span> <span class="k">as</span> <span class="n">w</span><span class="p">:</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="k">for</span> <span class="n">record</span> <span class="ow">in</span> <span class="n">produce_records</span><span class="p">():</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>        <span class="k">await</span> <span class="n">w</span><span class="o">.</span><span class="n">write_record</span><span class="p">([</span><span class="n">record</span><span class="p">])</span>
+</code></pre></div>
+<p><code>add_annotation</code> is sync. It puts an annotation in a queue for the next record:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">edfarray</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">w</span><span class="o">.</span><span class="n">add_annotation</span><span class="p">(</span><span class="n">edfarray</span><span class="o">.</span><span class="n">Annotation</span><span class="p">(</span><span class="n">onset</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="s2">&quot;event&quot;</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="transcoding">Transcoding<a class="headerlink" href="#transcoding" title="Permanent link">&para;</a></h2>
+<p>Transcoding writes an open file to a new path. You can change the variant at the
+same time:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;input.edfd&quot;</span><span class="p">)</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="k">await</span> <span class="n">f</span><span class="o">.</span><span class="n">write_to</span><span class="p">(</span><span class="s2">&quot;output.edf&quot;</span><span class="p">,</span> <span class="n">variant</span><span class="o">=</span><span class="s2">&quot;EDF+C&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>write_to</code> copies only the ordinary signals. An ordinary signal is a signal that
+is not the annotation channel. <code>write_to</code> encodes the annotations again from the
+parsed index. It does not copy them byte for byte. The same <a href="../writing/#round-tripping-an-existing-file">transcoding caveats</a>
+apply as for the sync <code>write_to</code>:</p>
+<ul>
+<li>Transcoding EDF+D to a non-<code>+D</code> variant loses the EDF+D gaps. An EDF+D gap is
+  a time gap between two records.</li>
+<li>Transcoding to a plain variant drops annotations.</li>
+<li>Transcoding to a smaller sample size loses precision.</li>
+</ul>
+<p>The async <code>write_to</code> also accepts a <code>signals</code> subset selection. It also rejects
+a destination that is open. Both behave the same as in the sync method.</p>
+<h2 id="performance-and-when-to-choose-async">Performance and when to choose async<a class="headerlink" href="#performance-and-when-to-choose-async" title="Permanent link">&para;</a></h2>
+<p>The async API is not always faster than the sync API. It adds a small overhead to each call. In return, it gives parallel decode and a responsive event loop. The benchmarks in <code>examples/</code> measure this on a 4 MB test file (<code>test_generator.edf</code>, 180 000 samples @ 200 Hz). Absolute numbers change with the file size and the machine.</p>
+<h3 id="parallel-decode-scales-near-linearly-up-to-core-count">Parallel decode scales near-linearly up to core count<a class="headerlink" href="#parallel-decode-scales-near-linearly-up-to-core-count" title="Permanent link">&para;</a></h3>
+<p><code>benchmark_async_parallel_decode.py</code> compares N sequential awaits against
+<code>asyncio.gather</code> of N concurrent reads on the same file:</p>
+<table>
+<thead>
+<tr>
+<th>N</th>
+<th>sequential</th>
+<th>gather</th>
+<th>speedup</th>
+<th>efficiency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>5.15 ms</td>
+<td>5.18 ms</td>
+<td>0.99x</td>
+<td>99%</td>
+</tr>
+<tr>
+<td>2</td>
+<td>10.47 ms</td>
+<td>5.67 ms</td>
+<td>1.85x</td>
+<td>92%</td>
+</tr>
+<tr>
+<td>4</td>
+<td>20.79 ms</td>
+<td>5.70 ms</td>
+<td>3.65x</td>
+<td>91%</td>
+</tr>
+<tr>
+<td>8</td>
+<td>41.11 ms</td>
+<td>9.43 ms</td>
+<td>4.36x</td>
+<td>55%</td>
+</tr>
+</tbody>
+</table>
+<p>The speedup is close to N up to the number of available cores. Above that number, the speedup stops increasing.</p>
+<h3 id="the-event-loop-stays-responsive-under-load">The event loop stays responsive under load<a class="headerlink" href="#the-event-loop-stays-responsive-under-load" title="Permanent link">&para;</a></h3>
+<p><code>benchmark_async_gil_release.py</code> runs a busy Python thread at the same time as 10 full decodes. Both APIs release the GIL during decode. With both APIs, the busy thread runs at about 95% of its free-running tick rate. But the wall-clock time for the decodes is very different:</p>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Wall time (10 decodes, busy thread)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sync</td>
+<td>4296 ms</td>
+</tr>
+<tr>
+<td>async</td>
+<td>325 ms (~13x faster)</td>
+</tr>
+</tbody>
+</table>
+<p>The sync API runs decode on the calling thread. That thread releases the GIL
+during each decode, but it must take the GIL back between decodes. So it competes
+with the busy thread for the GIL and the CPU. The async API sends the work to a tokio
+worker on a separate OS thread. Thus the Python side does only event-loop work.</p>
+<h3 id="single-shot-overhead-is-small-for-bulk-reads-noticeable-for-tiny-ones">Single-shot overhead is small for bulk reads, noticeable for tiny ones<a class="headerlink" href="#single-shot-overhead-is-small-for-bulk-reads-noticeable-for-tiny-ones" title="Permanent link">&para;</a></h3>
+<p><code>benchmark_async_vs_sync.py</code> runs the same operations through both APIs
+in series (concurrency = 1):</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>sync</th>
+<th>async</th>
+<th>overhead</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>open</code></td>
+<td>158 us</td>
+<td>237 us</td>
+<td>+50%</td>
+</tr>
+<tr>
+<td>full read (physical)</td>
+<td>6.34 ms</td>
+<td>6.07 ms</td>
+<td>~0</td>
+</tr>
+<tr>
+<td>full read (digital)</td>
+<td>4.46 ms</td>
+<td>4.53 ms</td>
+<td>+1.5%</td>
+</tr>
+<tr>
+<td>1-second slice</td>
+<td>11 us</td>
+<td>107 us</td>
+<td>+880%</td>
+</tr>
+</tbody>
+</table>
+<p>A tokio dispatch and an event-loop hop have a fixed cost of about 100 us. This cost is very small compared with a decode of several milliseconds. But it is most of the time for a slice at microsecond scale.</p>
+<h3 id="recommendations">Recommendations<a class="headerlink" href="#recommendations" title="Permanent link">&para;</a></h3>
+<p>Use async (<code>edfarray.aio</code>) in these cases:</p>
+<ul>
+<li>You read multiple files or multiple regions concurrently and want true
+  parallel decode. Examples are <code>asyncio.gather</code> and a server with multiple
+  clients.</li>
+<li>You serve a UI or another event loop and must not stall it during long
+  decodes.</li>
+<li>You already work inside an asyncio application.</li>
+</ul>
+<p>Use sync (<code>edfarray.EdfFile</code>) in these cases:</p>
+<ul>
+<li>You run a serial pipeline of small reads (less than one millisecond each).
+  In this pipeline, the overhead of about 100 us per call is important.</li>
+<li>The program is not async for other reasons, and you do not need concurrency.</li>
+<li>You write a one-off script. The sync API is simpler for that.</li>
+</ul>
+<p>Both APIs use the same Rust decode path. Thus, for one bulk read, they finish in
+almost the same wall time.</p>
+<h2 id="gil-release-and-parallelism">GIL release and parallelism<a class="headerlink" href="#gil-release-and-parallelism" title="Permanent link">&para;</a></h2>
+<p>The async runtime is a multi-threaded tokio executor. Every async method that
+does decode or file I/O wraps the work in <code>tokio::task::spawn_blocking</code>. This
+releases the Python GIL while the work runs. The results are:</p>
+<ul>
+<li>Decode of large signals does not block the event loop.</li>
+<li>Other Python-only coroutines can run while decode is in progress.</li>
+<li>Multiple reads on the same file are dispatched to separate OS threads and
+  run in parallel.</li>
+</ul>
+<p>The tests prove this with a busy-thread counter. A background thread increments
+a counter while async reads run. The counter increases during decode. This result
+shows that the decode releases the GIL.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "content.code.copy", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,1929 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An EDF/EDF+ parser written in Rust with numpy-like Python bindings">
+      
+      
+      
+      
+        <link rel="prev" href="../../guide/async/">
+      
+      
+        <link rel="next" href="../contracts/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>Python API - edfarray</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#python-api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="edfarray" class="md-header__button md-logo" aria-label="edfarray" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            edfarray
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Python API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/bleemesser/edfarray" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="edfarray" class="md-nav__button md-logo" aria-label="edfarray" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    edfarray
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/bleemesser/edfarray" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/signals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Working with Signals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/annotations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotations & Time
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/epochs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Epoch Extraction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/writing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Files
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/anonymization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Anonymization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guide/async/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Async API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#edffile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EdfFile
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="EdfFile">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        inspect
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signal
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Signal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signalgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SignalGroup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SignalGroup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proxy2d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proxy2D
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proxy2D">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proxy3d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proxy3D
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proxy3D">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#epochs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epochs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Epochs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#edfarraywrite_edf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.write_edf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayedfwriter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.EdfWriter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarraywritersignal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.WriterSignal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#annotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Annotation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Annotation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#header-editing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Header editing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Header editing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayedit_header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.edit_header
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayanonymize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.anonymize
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayaudit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edfarrayaio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.aio
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust Crate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../edf-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    EDF Format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#edffile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EdfFile
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="EdfFile">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspect" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        inspect
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signal
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Signal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signalgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SignalGroup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SignalGroup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proxy2d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proxy2D
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proxy2D">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#proxy3d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proxy3D
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proxy3D">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#methods_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#indexing_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#epochs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epochs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Epochs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Writing files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#edfarraywrite_edf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.write_edf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayedfwriter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.EdfWriter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarraywritersignal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.WriterSignal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#annotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Annotation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Annotation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#properties_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Properties
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#header-editing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Header editing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Header editing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayedit_header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.edit_header
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayanonymize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.anonymize
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edfarrayaudit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edfarrayaio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edfarray.aio
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="python-api-reference">Python API Reference<a class="headerlink" href="#python-api-reference" title="Permanent link">&para;</a></h1>
+<p>For the exception hierarchy, the supported indexing rules, and the threading and async guarantees, see
+<a href="../contracts/">API contracts</a>.</p>
+<h2 id="edffile">EdfFile<a class="headerlink" href="#edffile" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">EdfFile</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">variant</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">scan_annotations</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>The constructor opens an EDF/EDF+ file at the given path. It parses the header synchronously and starts a background annotation scan for EDF+ files. You can read signals immediately after construction.</p>
+<p>If <code>scan_annotations=False</code>, edfarray does not start the scan at open. The scan then runs on the calling thread at the first access to annotations. The scan reads every data record (a fixed-duration block of samples for every signal). On very large files, the scan takes a long time. See <a href="../../guide/performance/">Performance</a>.</p>
+<p><code>variant</code> forces the file variant and ignores the detected variant. Use it for files that omit or misreport the EDF+ <code>"+C"</code>/<code>"+D"</code> marker. It controls only the plain, <code>"+C"</code>, and <code>"+D"</code> distinction. The version field sets the sample size of EDF or BDF. If an override changes that sample size, the constructor raises <code>ValueError</code>. If the override does not match the detected variant, edfarray records the mismatch in <code>warnings</code>.</p>
+<p>If an <code>EdfWriter</code> or <code>write_edf</code> call is still writing <code>path</code>, the constructor raises <code>EdfFileError</code>. The open file holds a shared lock on <code>path</code>. A proxy is an object that reads samples only on access. The lock stays until you drop the <code>EdfFile</code> and every signal and proxy taken from it. While the lock stays, edfarray rejects writes to <code>path</code>. See <a href="../contracts/#memory-mapping">Memory mapping</a>.</p>
+<p><code>EdfFile</code> supports the context manager protocol (the <code>with</code> statement).</p>
+<h3 id="properties">Properties<a class="headerlink" href="#properties" title="Permanent link">&para;</a></h3>
+<p><code>num_signals: int</code>: The total number of signals in the file, including annotation channels.</p>
+<p><code>num_records: int</code>: The number of data records. For EDF-L files, the header value is <code>-1</code> ("unknown length"). For these files, edfarray recovers the true count from the file size at open time. A <code>warnings</code> entry records the recovery.</p>
+<p><code>record_duration: float</code>: The duration of each data record in seconds.</p>
+<p><code>duration: float</code>: The total recording duration in seconds.</p>
+<p><code>variant: str</code>: <code>"EDF"</code>, <code>"EDF+C"</code>, <code>"EDF+D"</code>, <code>"BDF"</code>, <code>"BDF+C"</code>, or <code>"BDF+D"</code>.</p>
+<p><code>start_datetime: datetime.datetime | str</code>: The recording start date and time. If edfarray can parse the header date fields, the value is a <code>datetime.datetime</code>. If edfarray cannot parse the date, for example because it is anonymized or non-standard, the value is a raw string such as <code>"04.04.yy 12.57.02"</code>. The EDF header stores only whole seconds. EDF+ files encode subsecond precision in the first time-keeping annotation. edfarray applies that precision to annotation onsets and sample timestamps, but not to this property.</p>
+<p><code>patient_id: str</code>: The raw 80-byte patient identification field from the header.</p>
+<p><code>recording_id: str</code>: The raw 80-byte recording identification field from the header.</p>
+<p><code>patient_name: str | None</code>: Parsed from the patient identification field. edfarray replaces underscores with spaces. If the field is absent or set to <code>"X"</code>, the value is <code>None</code>.</p>
+<p><code>patient_code: str | None</code>: The hospital patient code from the patient identification field.</p>
+<p><code>patient_sex: str | None</code>: <code>"M"</code> or <code>"F"</code>. If the sex is unknown, the value is <code>None</code>.</p>
+<p><code>patient_birthdate: datetime.date | str | None</code>: The patient birthdate. If edfarray can parse it, the value is a <code>datetime.date</code>. If the format is non-standard, the value is a raw string. If the field is absent, the value is <code>None</code>.</p>
+<p><code>patient_additional: str | None</code>: Additional patient information after the standard subfields.</p>
+<p><code>admin_code: str | None</code>: The hospital administration code from the recording identification field.</p>
+<p><code>technician: str | None</code>: The technician or investigator code.</p>
+<p><code>equipment: str | None</code>: The equipment code.</p>
+<p><code>recording_additional: str | None</code>: Additional recording information.</p>
+<p>The annotation accessors below block until the background annotation scan is complete. To get the scan status without blocking, use <code>annotations_ready</code>. Range queries use binary search.</p>
+<p><code>annotations: list[Annotation]</code>: All annotations from the file except time-keeping annotations, sorted by onset. For plain EDF files, the list is empty.</p>
+<p><code>annotations_before(t: float) -&gt; list[Annotation]</code>: Annotations with onset strictly before <code>t</code>.</p>
+<p><code>annotations_after(t: float) -&gt; list[Annotation]</code>: Annotations with onset &gt;= <code>t</code>.</p>
+<p><code>annotations_in_range(start: float, end: float) -&gt; list[Annotation]</code>: Annotations with onset in the half-open interval <code>[start, end)</code>.</p>
+<p><code>filter_annotations(query: str, regex: bool = False) -&gt; list[Annotation]</code>: Filters annotations by text content. With <code>regex=False</code>, the method matches the query as a case-insensitive substring. With <code>regex=True</code>, the method matches the query as a case-insensitive regex pattern. An invalid regex pattern raises <code>ValueError</code>.</p>
+<p><code>events(query: str, regex: bool = False) -&gt; list[Annotation]</code>: Returns the <code>Annotation</code> list that <code>query</code> matches, with the same rules as <code>filter_annotations</code>. You can pass the result directly to <code>extract_epochs</code>.</p>
+<p><code>annotations_by_text(text: str) -&gt; list[Annotation]</code>: Annotations whose text exactly matches <code>text</code> (case-sensitive).</p>
+<p><code>warnings: list[str]</code>: Warnings from the header parse and from the annotation scan. It waits until the scan is complete. If the file is well-formed, the list is empty.</p>
+<p><code>header() -&gt; dict</code>: Returns a dict with these basic header fields: <code>version</code>, <code>patient_id</code>, <code>recording_id</code>, <code>num_signals</code>, <code>num_records</code>, <code>record_duration</code>, <code>duration</code>, <code>variant</code>. <code>header()</code> is a method, not a property, because it builds a new dict on each call.</p>
+<p><code>annotations_ready: bool</code>: If the background annotation scan is complete, the value is <code>True</code>. Does not block.</p>
+<p><code>scan_progress: tuple[int, int]</code>: <code>(records_scanned, total_records)</code> for the background annotation scan. Does not block. For large files, you can poll it to show progress.</p>
+<p><code>closed: bool</code>: <code>True</code> after a call to <code>close()</code>.</p>
+<h3 id="methods">Methods<a class="headerlink" href="#methods" title="Permanent link">&para;</a></h3>
+<p><code>signal(idx_or_label: int | str, cache_capacity: int = 0, strategy: str | None = None) -&gt; Signal</code>: Returns a signal by index or label. An out-of-range index raises <code>OutOfRangeError</code> (an <code>IndexError</code>). An unknown label raises <code>SignalNotFoundError</code> (a <code>KeyError</code>). <code>signal()</code> does not support negative indices. A negative index raises <code>OutOfRangeError</code>. <code>strategy</code> is <code>"auto"</code> (default), <code>"mmap"</code>, or <code>"stream"</code>. See <a href="../../guide/performance/">Performance</a>. <code>cache_capacity</code> enables a per-<code>Signal</code> LRU cache of decoded physical records. See <a href="../../guide/signals/#caching-repeated-reads">Caching repeated reads</a>.</p>
+<p><code>find_all_signals(label: str, exact: bool = False) -&gt; list[int]</code>: Returns the indices of all signals whose label matches <code>label</code>. If <code>exact</code> is <code>False</code> (default), the method does a case-insensitive substring match. If <code>exact</code> is <code>True</code>, the method does a case-sensitive exact match. The search includes annotation channels. To read a signal, pass its index to <code>signal()</code>.</p>
+<p><code>signal_labels() -&gt; list[str]</code>: The labels of all signals in the file.</p>
+<p><code>ordinary_signal_indices() -&gt; list[int]</code>: The indices of all ordinary signals. An ordinary signal is a signal that is not the annotation channel.</p>
+<p><code>read_page(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -&gt; list[numpy.ndarray]</code>: Reads physical (float64) data for multiple signals over a time range. Returns one array per signal. If <code>signal_indices</code> is <code>None</code>, the method reads all ordinary signals. Signals with different sample rates give arrays of different lengths. A flat index is a sample position counted across records, ignoring gaps. If <code>use_time</code> is <code>False</code> (default), each time maps to the flat index of the first sample at or after it. Thus <code>[start_sec, end_sec)</code> is half-open. A time within 1e-6 of a sample counts as that sample. This rule absorbs float noise such as <code>0.1 + 0.2</code>. Every time-based API uses this one rule. An EDF+D gap is a time span with no records. If an EDF+D file has time gaps, set <code>use_time=True</code>. edfarray then resolves the time range with the actual record onset times. See <a href="../../guide/annotations/#read_page-and-proxy2d-use-flat-sample-indices">Annotations &amp; Time</a> for details.</p>
+<p><code>read_page_digital(start_sec: float, end_sec: float, signal_indices: list[int] | None = None, use_time: bool = False) -&gt; list[numpy.ndarray]</code>: Same as <code>read_page()</code>, but returns raw int32 digital values without gain and offset conversion. If <code>use_time</code> is <code>True</code>, the method resolves the time range with record onset times for EDF+D files.</p>
+<p><code>extract_epochs(events, *, pre: float, post: float, group=None, pad=None, query=None, regex=False) -&gt; Epochs</code>: Decodes fixed <code>[onset - pre, onset + post)</code> windows around each event into a dense <code>(n_epochs, n_channels, n_samples)</code> float64 block. The decode runs in parallel. <code>n_samples</code> is always <code>ceil((pre + post) * sample_rate)</code> and does not depend on where the events fall. A product within 1e-6 of an integer counts as that integer. Thus <code>pre=0.1, post=0.2</code> at 200 Hz gives 60 samples, not 61.</p>
+<p><code>events</code> accepts a float, a sequence of floats, <code>Annotation</code> objects (or a mix), or a numpy float64 array. To select events by annotation text, pass <code>events=None</code> with <code>query</code>. You cannot use <code>query</code> with a non-<code>None</code> <code>events</code>. <code>group</code> is a <code>SignalGroup</code> or a list of signal indices. The group must be rectangular. The default is the largest rectangular group.</p>
+<p><code>pad</code> controls epochs that run off the file or cross an EDF+D gap:</p>
+<ul>
+<li><code>"drop"</code> (default) omits these epochs.</li>
+<li><code>"nan"</code>, <code>"zero"</code>, a number, or <code>"edge"</code> keeps these epochs, fills them, and marks them <code>valid=False</code>.</li>
+<li><code>"raise"</code> raises an error on the first such epoch.</li>
+</ul>
+<p>edfarray never joins samples across a gap. See <a href="../../guide/epochs/">Epoch Extraction</a>.</p>
+<p><code>epoch_windows(events, *, pre: float, post: float, group=None) -&gt; tuple[list[tuple[float, int, int]], numpy.ndarray]</code>: Plans epochs without reading data. Returns <code>([(onset, s_start, s_end)], valid)</code>. The sample indices are flat offsets into the group, and <code>valid</code> is a boolean array. If a window runs past a file edge or crosses a gap, its entry is <code>False</code>. <code>extract_epochs</code> decodes this same table. Thus you can inspect or filter events before you pay for the decode.</p>
+<p><code>signal_groups() -&gt; list[SignalGroup]</code>: Partitions all ordinary signals into groups by sample rate. Each group records its classification, its sample rate, its range of sample counts, and whether it covers every ordinary signal. The sample rates keep sub-Hz precision.</p>
+<p><code>signal_group(indices: list[int]) -&gt; SignalGroup</code>: Classifies any list of file-level signal indices into a <code>SignalGroup</code>. Use it to get a group that is a subset of the natural rate-based groups of the file, or that crosses them.</p>
+<p><code>proxy_2d(group: SignalGroup, pad_mode: str | float | None = None) -&gt; Proxy2D</code>: Builds a 2D proxy for numpy-style indexing over multiple signals. The method accepts any group kind. For <code>Open</code> groups (mixed sample rates), <code>pad_mode</code> sets what reads past the end of shorter signals return. Values: <code>"raise"</code> (default), <code>"nan"</code>, <code>"zero"</code>, <code>"edge"</code>, or a numeric scalar (interpreted as <code>Value(x)</code>).</p>
+<p><code>proxy_3d(group: SignalGroup) -&gt; Proxy3D</code>: Builds a 3D proxy with shape <code>(num_records, num_channels, samples_per_record)</code>. Requires <code>group.kind == "rectangular"</code>. For any other group, the method raises an error.</p>
+<p><code>write_to(path: str, variant: str | None = None, signals: SignalGroup | int | str | Sequence[int | str] | None = None) -&gt; None</code>: Writes a copy of this file to <code>path</code>. By default, the copy uses the source variant. To transcode, pass <code>variant</code> (one of <code>"EDF"</code>, <code>"EDF+C"</code>, <code>"EDF+D"</code>, <code>"BDF"</code>, <code>"BDF+C"</code>, <code>"BDF+D"</code>). edfarray copies only ordinary signals. It rebuilds the annotation channel of the destination from the parsed annotations.</p>
+<p><code>signals</code> selects which ordinary signals edfarray writes. It accepts a <code>SignalGroup</code>, a signal index, a label, or a sequence that mixes indices and labels. Labels must match exactly, as in <code>signal()</code>. The destination signals appear in the given order, so <code>write_to</code> rejects sets and dicts. <code>None</code> (the default) writes every ordinary signal. You cannot select the annotation channel. edfarray always rebuilds it and copies all annotations, whatever the selection.</p>
+<p>If another edfarray handle has <code>path</code> open, <code>write_to</code> raises <code>EdfFileError</code>. This includes the case where <code>path</code> is this file. Before you write to <code>path</code>, do these steps:</p>
+<ul>
+<li>Close every <code>EdfFile</code> on <code>path</code>.</li>
+<li>Drop every signal and proxy taken from one of these files.</li>
+<li>Finish any <code>EdfWriter</code> on <code>path</code>.</li>
+</ul>
+<p>Transcoding has these limits:</p>
+<ul>
+<li>From EDF+D to EDF+D, edfarray keeps the source record onsets, so the gaps stay.</li>
+<li>From EDF+D to any variant without <code>+D</code>, edfarray flattens the timing. The onsets become uniform <code>record_idx * record_duration</code>.</li>
+<li>From any <code>+</code> variant to a plain variant, edfarray drops all annotations. Plain EDF and BDF have no annotation channel.</li>
+<li>A smaller sample size (BDF 24-bit to EDF 16-bit) clamps the digital range and encodes again from physical values. This loses precision.</li>
+</ul>
+<p><code>close() -&gt; None</code>: Releases the underlying memory-mapped file. After <code>close()</code>, any further method or property access on the <code>EdfFile</code> raises an error. Existing <code>Signal</code>, <code>Proxy2D</code>, and <code>Proxy3D</code> objects keep their own references to the mapping and stay usable. When you drop the file and every object taken from it, edfarray releases the mapping. A second call to <code>close()</code> does nothing. The context manager (<code>with</code> statement) calls <code>close()</code> on exit.</p>
+<hr />
+<h2 id="inspect">inspect<a class="headerlink" href="#inspect" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">inspect</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</code></pre></div>
+<p><code>path</code> must be a <code>str</code>. A <code>pathlib.Path</code> raises <code>TypeError</code>, so pass <code>str(path)</code>. This rule applies to every function that takes a path.</p>
+<p><code>inspect</code> reads metadata from the header of an EDF/EDF+ file. It does not memory-map the file, start background threads, read any data records, or build an annotation index.</p>
+<p>Returns a dict with these keys:</p>
+<p><code>variant: str</code>: <code>"EDF"</code>, <code>"EDF+C"</code>, <code>"EDF+D"</code>, <code>"BDF"</code>, <code>"BDF+C"</code>, or <code>"BDF+D"</code>.</p>
+<p><code>num_signals: int</code>: The total number of signals in the file, including annotation channels.</p>
+<p><code>num_records: int</code>: The number of data records. For EDF-L files (header value <code>-1</code>, "unknown length"), edfarray recovers this count from the file size.</p>
+<p><code>record_duration: float</code>: The duration of each data record in seconds.</p>
+<p><code>duration: float</code>: The total recording duration in seconds.</p>
+<p><code>patient_id: str</code>: The raw 80-byte patient identification field.</p>
+<p><code>recording_id: str</code>: The raw 80-byte recording identification field.</p>
+<p><code>signal_labels: list[str]</code>: The labels of all signals in the file.</p>
+<p><code>sample_rates: list[float]</code>: The sample rates in Hz, one for each signal.</p>
+<hr />
+<h2 id="signal">Signal<a class="headerlink" href="#signal" title="Permanent link">&para;</a></h2>
+<p><code>EdfFile.signal()</code> returns this object. It is a proxy view of one signal. It decodes samples from the memory-mapped file on access.</p>
+<h3 id="properties_1">Properties<a class="headerlink" href="#properties_1" title="Permanent link">&para;</a></h3>
+<p><code>label: str</code>: The signal label, for example <code>"EEG Fpz-Cz"</code>.</p>
+<p><code>transducer: str</code>: The transducer type, for example <code>"AgAgCl electrode"</code>.</p>
+<p><code>physical_dimension: str</code>: The physical units, for example <code>"uV"</code>.</p>
+<p><code>prefiltering: str</code>: The prefiltering description, for example <code>"HP:0.1Hz LP:75Hz"</code>.</p>
+<p><code>sample_rate: float</code>: The sample frequency in Hz.</p>
+<p><code>samples_per_record: int</code>: The number of samples in each data record for this signal.</p>
+<p><code>physical_min: float</code>: The physical minimum value.</p>
+<p><code>physical_max: float</code>: The physical maximum value.</p>
+<p><code>digital_min: int</code>: The digital minimum value.</p>
+<p><code>digital_max: int</code>: The digital maximum value.</p>
+<p><code>num_samples: int</code>: The total number of samples. Same as <code>len(sig)</code>.</p>
+<p><code>shape: tuple[int]</code>: <code>(num_samples,)</code>.</p>
+<p><code>ndim: int</code>: Always <code>1</code>.</p>
+<p><code>dtype: numpy.dtype</code>: <code>float64</code>, the dtype of physical reads.</p>
+<h3 id="indexing">Indexing<a class="headerlink" href="#indexing" title="Permanent link">&para;</a></h3>
+<p><code>sig[i]</code>: Returns one physical value as a <code>float</code>. Supports negative indexing.</p>
+<p><code>sig[start:stop]</code>: Returns a <code>numpy.ndarray</code> of float64 physical values.</p>
+<p><code>sig[start:stop:step]</code>: Returns a strided <code>numpy.ndarray</code> of float64 physical values.</p>
+<h3 id="methods_1">Methods<a class="headerlink" href="#methods_1" title="Permanent link">&para;</a></h3>
+<p><code>to_physical() -&gt; numpy.ndarray</code>: The full signal as a float64 numpy array.</p>
+<p><code>to_digital() -&gt; numpy.ndarray</code>: The full signal as an int32 numpy array (raw digital values).</p>
+<p><code>times() -&gt; numpy.ndarray</code>: The time in seconds from the recording start for each sample. For EDF+D files, the times include the gaps between data records.</p>
+<p><code>read_range(start: int, stop: int) -&gt; numpy.ndarray</code>: Physical values for samples <code>[start, stop)</code>, indexed by sample number. Equivalent to <code>signal[start:stop]</code>.</p>
+<p><code>read_range_digital(start: int, stop: int) -&gt; numpy.ndarray</code>: Raw digital values for samples <code>[start, stop)</code>, indexed by sample number.</p>
+<p><code>read_time_range(start_sec: float, end_sec: float) -&gt; numpy.ndarray</code>: Returns physical data for samples whose time is in <code>[start_sec, end_sec)</code>. For EDF+D files, the method uses record onset times to include the gaps between records. For EDF and EDF+C files, the method is equivalent to indexing by flat sample number. Each time maps to the first sample at or after it.</p>
+<div class="admonition note">
+<p class="admonition-title">Caching</p>
+<p>To enable a per-<code>Signal</code> LRU cache, call <code>EdfFile.signal(idx, cache_capacity=N)</code>. The returned <code>Signal</code> has no method for it. See <a href="../../guide/signals/#caching-repeated-reads">Caching repeated reads</a>.</p>
+</div>
+<p><code>__len__() -&gt; int</code>: The total number of samples.</p>
+<hr />
+<h2 id="signalgroup">SignalGroup<a class="headerlink" href="#signalgroup" title="Permanent link">&para;</a></h2>
+<p>A set of file-level signal indices plus classification metadata.
+<code>EdfFile.signal_groups()</code> and <code>EdfFile.signal_group(indices)</code> build it.</p>
+<h3 id="properties_2">Properties<a class="headerlink" href="#properties_2" title="Permanent link">&para;</a></h3>
+<p><code>indices: list[int]</code>: The file-level signal indices in the group.</p>
+<p><code>kind: str</code>: <code>"rectangular"</code> (all signals share a sample rate and a total sample count) or <code>"open"</code> (mixed sample rates, 2D only).</p>
+<p><code>sample_rate: float | None</code>: The common rate. If <code>kind == "open"</code>, the value is <code>None</code>.</p>
+<p><code>samples_per_record: int | None</code>: The common samples per record (SPR). If <code>kind == "open"</code>, the value is <code>None</code>.</p>
+<p><code>min_samples: int</code> / <code>max_samples: int</code>: The bounds on the total sample count of the signals in the group. For <code>"rectangular"</code> groups, they are equal.</p>
+<p><code>covers_all_ordinary: bool</code>: If this group spans every ordinary signal in the file, the value is <code>True</code>. Otherwise, it is <code>False</code>. Only <code>signal_groups()</code> sets this value. For groups built by hand, it is always <code>False</code>.</p>
+<p><code>is_singleton: bool</code>: If the group contains exactly one signal, the value is <code>True</code>. Otherwise, it is <code>False</code>.</p>
+<p><code>is_rectangular: bool</code>: Same as <code>kind == "rectangular"</code>.</p>
+<p><code>len(group)</code>: The number of signals in the group.</p>
+<hr />
+<h2 id="proxy2d">Proxy2D<a class="headerlink" href="#proxy2d" title="Permanent link">&para;</a></h2>
+<p><code>EdfFile.proxy_2d(group, pad_mode=...)</code> returns this object. It is a 2D view over a <code>SignalGroup</code>. It reads from the memory-mapped file on demand.</p>
+<h3 id="properties_3">Properties<a class="headerlink" href="#properties_3" title="Permanent link">&para;</a></h3>
+<p><code>shape: tuple[int, int]</code>: <code>(num_signals, max_samples_across_signals)</code>.</p>
+<p><code>sample_rate: float | None</code>: The common rate. If the underlying group is <code>Open</code>, the value is <code>None</code>.</p>
+<p><code>valid_lengths: list[int]</code>: The valid sample count of each signal, in proxy-coordinate order. For <code>"rectangular"</code> groups, all entries equal <code>shape[1]</code>. For <code>"open"</code> groups, the entries vary.</p>
+<p><code>pad_mode: str</code>: <code>"raise"</code>, <code>"nan"</code>, <code>"zero"</code>, <code>"value"</code>, or <code>"edge"</code>.</p>
+<p><code>ndim: int</code>: Always <code>2</code>.</p>
+<p><code>dtype: numpy.dtype</code>: <code>float64</code>, the dtype of physical reads.</p>
+<h3 id="methods_2">Methods<a class="headerlink" href="#methods_2" title="Permanent link">&para;</a></h3>
+<p><code>read_digital(signals: list[int], start: int, stop: int) -&gt; numpy.ndarray</code>: Raw digital values for the given signals over samples <code>[start, stop)</code>, as a 2D int32 array. This is the digital counterpart of physical indexing with <code>[]</code>. If <code>pad_mode="nan"</code>, this method raises an error, because int32 has no NaN value.</p>
+<h3 id="indexing_1">Indexing<a class="headerlink" href="#indexing_1" title="Permanent link">&para;</a></h3>
+<p><code>proxy[int, int]</code>: Returns one physical value as a <code>float</code>. Supports negative indexing.</p>
+<p><code>proxy[int, slice]</code> / <code>proxy[slice, int]</code> / <code>proxy[slice, slice]</code>: Returns the natural 1D or 2D <code>numpy.ndarray</code> of float64 physical values.</p>
+<p><code>proxy[list, slice]</code>: Fancy indexing on the signal axis. The list contains proxy-coordinate signal indices.</p>
+<p>The sample (time) axis accepts a step, for example <code>proxy[:, ::4]</code> to downsample. Negative steps are also supported. The signal axis requires step 1. A strided sample read still reads the full enclosing span and then takes every nth sample. Thus a step makes the result smaller, but not the I/O. <code>pad_mode</code> controls reads past the valid length of a signal. If <code>pad_mode</code> is <code>"raise"</code> (default), such a read raises <code>IndexError</code>. Other modes fill the missing samples, and <code>"nan"</code> applies only to physical reads.</p>
+<hr />
+<h2 id="proxy3d">Proxy3D<a class="headerlink" href="#proxy3d" title="Permanent link">&para;</a></h2>
+<p><code>EdfFile.proxy_3d(group)</code> returns this object. It is a 3D view over a <code>Rectangular</code> <code>SignalGroup</code> and shows the record-major layout of the underlying data.</p>
+<h3 id="properties_4">Properties<a class="headerlink" href="#properties_4" title="Permanent link">&para;</a></h3>
+<p><code>shape: tuple[int, int, int]</code>: <code>(num_records, num_channels, samples_per_record)</code>.</p>
+<p><code>sample_rate: float</code>: The common sample rate.</p>
+<p><code>supports_strided_view: bool</code>: If the file and group support a zero-copy <code>as_strided</code> view, the value is <code>True</code>. See <code>stride_info()</code>.</p>
+<p><code>ndim: int</code>: Always <code>3</code>.</p>
+<p><code>dtype: numpy.dtype</code>: <code>float64</code>, the dtype of physical reads.</p>
+<h3 id="methods_3">Methods<a class="headerlink" href="#methods_3" title="Permanent link">&para;</a></h3>
+<p><code>read_digital(record_start: int, record_stop: int, channel_start: int, channel_stop: int) -&gt; numpy.ndarray</code>: Raw digital values as a 3D int32 array with shape <code>(records, channels, samples_per_record)</code>.</p>
+<p><code>stride_info() -&gt; dict | None</code>: Byte-level metadata for a zero-copy strided view of the underlying int16 mmap. If the view is not possible, the method returns <code>None</code>. Keys: <code>base_offset</code>, <code>record_stride_bytes</code>, <code>channel_stride_bytes</code>, <code>sample_stride_bytes</code>, <code>shape</code>. The view requires 2-byte samples, a contiguous range of signal indices in the file, and no annotation channel in that range.</p>
+<h3 id="indexing_2">Indexing<a class="headerlink" href="#indexing_2" title="Permanent link">&para;</a></h3>
+<p><code>proxy[rec, ch, samp]</code>: Each axis accepts an int or a slice. The sample axis also accepts a step, for example <code>proxy[:, :, ::4]</code>. Negative steps are also supported. The record and channel axes require step 1. If all three indices are ints, the result is a scalar. Otherwise, the result is a 1D, 2D, or 3D <code>numpy.ndarray</code>, with one dimension for each axis that is not an int. edfarray decodes the full enclosing block of records, whatever the sample step. Thus a step makes the result smaller, but not the work.</p>
+<hr />
+<h2 id="epochs">Epochs<a class="headerlink" href="#epochs" title="Permanent link">&para;</a></h2>
+<p><code>EdfFile.extract_epochs(...)</code> returns this object. It holds a dense block of epochs and the metadata that you need to interpret it. <code>np.asarray(epochs)</code> returns <code>data</code>.</p>
+<h3 id="properties_5">Properties<a class="headerlink" href="#properties_5" title="Permanent link">&para;</a></h3>
+<p><code>data: numpy.ndarray</code>: The decoded float64 physical samples, with shape <code>(n_epochs, n_channels, n_samples)</code>.</p>
+<p><code>onsets: numpy.ndarray</code>: The event onset times in seconds, in caller order, as float64.</p>
+<p><code>labels: list[str]</code>: The signal labels for the channel axis, in group order.</p>
+<p><code>sample_rate: float</code>: The common sample rate in Hz.</p>
+<p><code>valid: numpy.ndarray</code>: One boolean for each epoch. The value is <code>False</code> where edfarray padded a sample under a fill policy. Under <code>pad="drop"</code>, the values are always <code>True</code>, because edfarray removes those epochs.</p>
+<p><code>dropped: list[int]</code>: The indices into the original <code>events</code> argument of the epochs that <code>pad="drop"</code> removed.</p>
+<p><code>len(epochs)</code> returns the number of epochs.</p>
+<hr />
+<h2 id="writing-files">Writing files<a class="headerlink" href="#writing-files" title="Permanent link">&para;</a></h2>
+<p>See <a href="../../guide/writing/">Writing EDF/BDF files</a> for a full guide.</p>
+<h3 id="edfarraywrite_edf"><code>edfarray.write_edf</code><a class="headerlink" href="#edfarraywrite_edf" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">write_edf</span><span class="p">(</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">variant</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">record_duration</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">signals</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">WriterSignal</span><span class="p">],</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">data</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">numpy</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">annotations</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Annotation</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">start_datetime</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span> <span class="o">|</span> <span class="n">datetime</span><span class="o">.</span><span class="n">date</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">recording_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="n">annotation_bytes_per_record</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+<p>Writes a full file in one call. <code>start_datetime</code> is a <code>datetime.datetime</code> or a <code>datetime.date</code>. edfarray writes its wall-clock fields as they are and ignores any <code>tzinfo</code>. <code>data[i]</code> must have length <code>num_records * signals[i].samples_per_record</code>. <code>variant</code> is one of <code>"EDF"</code>, <code>"EDF+C"</code>, <code>"EDF+D"</code>, <code>"BDF"</code>, <code>"BDF+C"</code>, <code>"BDF+D"</code>. For <code>+</code> variants, edfarray adds the annotation channel. Do not include it in <code>signals</code>. If another edfarray handle has <code>path</code> open, <code>write_edf</code> raises <code>EdfFileError</code>.</p>
+<h3 id="edfarrayedfwriter"><code>edfarray.EdfWriter</code><a class="headerlink" href="#edfarrayedfwriter" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">EdfWriter</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">variant</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">record_duration</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">signals</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">WriterSignal</span><span class="p">],</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">start_datetime</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span> <span class="o">|</span> <span class="n">datetime</span><span class="o">.</span><span class="n">date</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">recording_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">annotation_bytes_per_record</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="p">)</span>
+</code></pre></div>
+<p>Writes a file one record at a time. <code>EdfWriter</code> supports the context manager protocol, and the <code>with</code> block calls <code>finish()</code> on exit. <code>start_datetime</code> follows the same rules as in <code>write_edf</code>. If another edfarray handle has <code>path</code> open, the constructor raises <code>EdfFileError</code>. The writer holds an exclusive lock on <code>path</code> until <code>finish()</code>. If you open <code>path</code> with <code>EdfFile</code> before then, <code>EdfFile</code> raises <code>EdfFileError</code>.</p>
+<p><code>write_record(physical: list[numpy.ndarray], annotations: list[Annotation] | None = None) -&gt; None</code>: Encodes and appends one record. <code>physical[i]</code> must be a 1D float64 array of length <code>signals[i].samples_per_record</code>. If you pass <code>annotations</code>, edfarray embeds them in the annotation channel of this record. It also embeds any pending annotations that <code>add_annotation</code> queued.</p>
+<p><code>add_annotation(annotation: Annotation) -&gt; None</code>: Queues an annotation. edfarray embeds it with the next <code>write_record</code> call.</p>
+<p><code>finish() -&gt; None</code>: Flushes the data, then seeks back and patches <code>num_records</code> in the header. A second call does nothing. <code>__exit__</code> calls <code>finish()</code>.</p>
+<h3 id="edfarraywritersignal"><code>edfarray.WriterSignal</code><a class="headerlink" href="#edfarraywritersignal" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">WriterSignal</span><span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">physical_dimension</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">physical_min</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">physical_max</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">digital_min</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">digital_max</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">samples_per_record</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">transducer</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">prefiltering</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">reserved</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span>
+</code></pre></div>
+<p>Describes one signal. <code>samples_per_record</code> and the <code>record_duration</code> of the writer together give the sample rate. For BDF/BDF+ files, <code>digital_min</code> and <code>digital_max</code> can use the full 24-bit signed range, from -8388608 to 8388607.</p>
+<p>Every constructor argument is also a read-only property with the same name. A <code>WriterSignal</code> compares by value and can be pickled, but it is not hashable.</p>
+<hr />
+<h2 id="annotation">Annotation<a class="headerlink" href="#annotation" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">Annotation</span><span class="p">(</span><span class="n">onset</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">duration</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p><code>EdfFile.annotations</code> returns these objects. Construct one to pass to <code>write_edf</code>, <code>EdfWriter</code>, or <code>extract_epochs</code>. An <code>Annotation</code> is immutable. Annotations compare by value, sort by onset, are hashable, and can be pickled.</p>
+<h3 id="properties_6">Properties<a class="headerlink" href="#properties_6" title="Permanent link">&para;</a></h3>
+<p><code>onset: float</code>: The time in seconds from the start of the recording.</p>
+<p><code>duration: float | None</code>: The duration in seconds. If no duration is set, the value is <code>None</code>.</p>
+<p><code>text: str</code>: The annotation text.</p>
+<hr />
+<h2 id="header-editing">Header editing<a class="headerlink" href="#header-editing" title="Permanent link">&para;</a></h2>
+<p>See <a href="../../guide/anonymization/">Anonymization</a> for a full guide. These functions change the file in place. They rewrite only the fixed-width identity fields of the header. They never change data records.</p>
+<h3 id="edfarrayedit_header"><code>edfarray.edit_header</code><a class="headerlink" href="#edfarrayedit_header" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">edit_header</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">recording_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">start_datetime</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span> <span class="o">|</span> <span class="n">datetime</span><span class="o">.</span><span class="n">date</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</code></pre></div>
+<p>Replaces the given header fields. <code>None</code> leaves a field unchanged. edfarray checks every value before it writes anything, so a rejected edit leaves the file unchanged. <code>start_datetime</code> follows the same rules as in <code>write_edf</code>, and the header stores only whole seconds. Returns a dict that maps each changed field name to <code>{"before": str, "after": str}</code>. If another edfarray handle has <code>path</code> open, <code>edit_header</code> raises <code>EdfFileError</code>.</p>
+<h3 id="edfarrayanonymize"><code>edfarray.anonymize</code><a class="headerlink" href="#edfarrayanonymize" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">seed</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">pseudonym</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">date_shift_days</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">keep_sex</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="n">keep_code</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    <span class="n">keep_technician</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="n">keep_equipment</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="n">keep_additional</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    <span class="n">dry_run</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</code></pre></div>
+<p>Replaces the patient name with a pseudonym and shifts every date by the same number of days. The function also clears the other identity subfields, except the subfields that you keep. With a <code>seed</code>, the pseudonym and the date shift are the same on every call. Without a seed, every call uses a new random seed.</p>
+<p>A dry run is a call that writes nothing. If <code>dry_run=True</code>, <code>anonymize</code> makes the same checks and returns the same report. A dry run takes no lock, so it works on an open file.</p>
+<p>Returns a dict with <code>pseudonym</code>, <code>date_shift_days</code>, <code>patient_id_before</code>, <code>patient_id_after</code>, <code>recording_id_before</code>, <code>recording_id_after</code>, <code>start_datetime_before</code>, <code>start_datetime_after</code>, <code>scrubbed_terms</code>, and <code>dry_run</code>. If <code>dry_run</code> is <code>False</code> and another edfarray handle has <code>path</code> open, <code>anonymize</code> raises <code>EdfFileError</code>.</p>
+<h3 id="edfarrayaudit"><code>edfarray.audit</code><a class="headerlink" href="#edfarrayaudit" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">edfarray</span><span class="o">.</span><span class="n">audit</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">terms</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</code></pre></div>
+<p>Searches signal labels, transducers, prefiltering text, and annotation text for identity strings. If <code>terms</code> is <code>None</code>, <code>audit</code> takes the terms from the current header. After <code>anonymize</code>, pass its <code>scrubbed_terms</code>. Returns a dict with <code>terms</code>, <code>clean</code>, and <code>hits</code>. Each hit has <code>location</code>, <code>signal_index</code> (<code>None</code> for annotation text), <code>term</code>, and <code>excerpt</code>. <code>audit</code> only reads the file, so it works on an open file.</p>
+<hr />
+<h2 id="edfarrayaio">edfarray.aio<a class="headerlink" href="#edfarrayaio" title="Permanent link">&para;</a></h2>
+<p>An async API with the same classes and methods. Each read returns an awaitable. <code>edfarray.aio.open(path, variant=None)</code> returns an <code>edfarray.aio.EdfFile</code>. See <a href="../../guide/async/">Async API</a> for the differences from the sync API.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "content.code.copy", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
