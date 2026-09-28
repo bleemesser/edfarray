@@ -335,6 +335,37 @@ async def test_write_edf_async_roundtrip(tmp_path):
         f.close()
 
 
+async def test_write_edf_async_edf_plus_d_onsets(tmp_path):
+    out = tmp_path / "gap.edf"
+    sig = aio.WriterSignal(
+        label="ch1",
+        physical_dimension="uV",
+        physical_min=-1.0,
+        physical_max=1.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=100,
+    )
+    data = np.arange(300, dtype=np.float64)
+    await aio.write_edf(
+        str(out),
+        variant="EDF+D",
+        record_duration=1.0,
+        signals=[sig],
+        data=[data],
+        record_onsets=[0.0, 1.0, 3.0],
+    )
+    f = await aio.open(str(out))
+    try:
+        assert f.variant == "EDF+D"
+        s = f.signal(0)
+        times = await s.times()
+        assert times[200] == pytest.approx(3.0)
+        assert times[250] == pytest.approx(3.5)
+    finally:
+        f.close()
+
+
 async def test_streaming_async_writer(tmp_path):
     out = tmp_path / "stream.edf"
     sig = aio.WriterSignal(

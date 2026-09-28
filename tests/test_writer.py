@@ -224,6 +224,90 @@ def test_write_to_preserves_edf_plus_d_gaps(tmp_path: Path):
     np.testing.assert_allclose(flat_times, np.arange(len(flat_times)) / rate, atol=1e-9)
 
 
+def test_write_edf_edf_plus_d_onsets(tmp_path: Path):
+    p = tmp_path / "gap.edf"
+    sig = _signal(samples_per_record=100)
+    # Three records: onsets 0, 1, 3 leave a 1-second gap before the last record.
+    onsets = [0.0, 1.0, 3.0]
+    data = np.arange(300, dtype=np.float64)
+    edfarray.write_edf(
+        str(p), variant="EDF+D", record_duration=1.0,
+        signals=[sig], data=[data],
+        annotations=[edfarray.Annotation(onset=3.5, text="after-gap")],
+        record_onsets=onsets,
+    )
+    f = edfarray.EdfFile(str(p))
+    assert f.variant == "EDF+D"
+    s = f.signal(0)
+    # One onset per record: sample i sits at onsets[i // 100] + i % 100 / rate.
+    times = s.times()
+    assert times[0] == pytest.approx(0.0)
+    assert times[100] == pytest.approx(1.0)
+    assert times[200] == pytest.approx(3.0)
+    anns = [a.text for a in f.annotations if a.text]
+    assert "after-gap" in anns
+
+
+def test_streaming_writer_edf_plus_d_onsets(tmp_path: Path):
+    p = tmp_path / "gap_stream.edf"
+    sig = _signal(samples_per_record=100)
+    onsets = [0.0, 1.0, 3.0]
+    with edfarray.EdfWriter(
+        str(p), variant="EDF+D", record_duration=1.0,
+        signals=[sig], record_onsets=onsets,
+    ) as w:
+        for i in range(3):
+            w.write_record([np.full(100, float(i), dtype=np.float64)])
+    f = edfarray.EdfFile(str(p))
+    assert f.variant == "EDF+D"
+    s = f.signal(0)
+    # The gap shows up in the sample times and the decoded values are flat per record.
+    times = s.times()
+    assert times[200] == pytest.approx(3.0)
+    # 16-bit quantization of the +/-3200 uV range leaves about 0.1 uV of slack.
+    assert s[200] == pytest.approx(2.0, abs=0.1)
+    assert s[250] == pytest.approx(2.0, abs=0.1)
+
+
+def test_record_onsets_rejected_on_non_plus_d(tmp_path: Path):
+    p = tmp_path / "c.edf"
+    sig = _signal()
+    data = _ramp(256 * 2)
+    with pytest.raises(edfarray.InvalidArgumentError, match="record_onsets"):
+        edfarray.write_edf(
+            str(p), variant="EDF+C", record_duration=1.0,
+            signals=[sig], data=[data],
+            record_onsets=[0.0, 2.0],
+        )
+
+
+def test_record_onsets_must_match_record_count(tmp_path: Path):
+    sig = _signal(samples_per_record=100)
+    short = tmp_path / "short.edf"
+    # Two onsets for three records: writing the third record fails.
+    w = edfarray.EdfWriter(
+        str(short), variant="EDF+D", record_duration=1.0,
+        signals=[sig], record_onsets=[0.0, 1.0],
+    )
+    w.write_record([np.full(100, 0.0, dtype=np.float64)])
+    w.write_record([np.full(100, 1.0, dtype=np.float64)])
+    with pytest.raises(edfarray.InvalidArgumentError, match="record_onsets"):
+        w.write_record([np.full(100, 2.0, dtype=np.float64)])
+    # A rejected record writes nothing, so the writer still matches its table.
+    w.finish()
+
+    # The reverse mismatch (more onsets than records) is caught at finish().
+    long = tmp_path / "long.edf"
+    w2 = edfarray.EdfWriter(
+        str(long), variant="EDF+D", record_duration=1.0,
+        signals=[sig], record_onsets=[0.0, 1.0, 3.0, 4.0],
+    )
+    for i in range(3):
+        w2.write_record([np.full(100, float(i), dtype=np.float64)])
+    with pytest.raises(edfarray.InvalidArgumentError, match="record_onsets"):
+        w2.finish()
+
+
 def test_writer_rejects_non_finite_values(tmp_path: Path):
     p = tmp_path / "nan.edf"
     sig = _signal(samples_per_record=8)

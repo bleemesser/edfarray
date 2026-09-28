@@ -234,6 +234,7 @@ class EdfWriter:
         patient_id: str | None = None,
         recording_id: str | None = None,
         annotation_bytes_per_record: int | None = None,
+        record_onsets: Sequence[float] | None = None,
     ) -> Awaitable[EdfWriter]: ...
 
     def add_annotation(self, annotation: Annotation) -> None: ...
@@ -260,4 +261,5 @@ def write_edf(
     patient_id: str | None = None,
     recording_id: str | None = None,
     annotation_bytes_per_record: int | None = None,
+    record_onsets: Sequence[float] | None = None,
 ) -> Awaitable[None]: ...

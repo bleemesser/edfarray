@@ -1,7 +1,9 @@
 # Writing EDF/BDF files
 
 `edfarray` can write EDF, EDF+C, EDF+D, BDF, BDF+C, and BDF+D files. A record is
-a block of samples with a fixed duration. Two functions cover the common cases:
+a block of samples with a fixed duration. A `+D` file can hold time gaps between
+records. Use the `record_onsets` argument to place them. Two functions cover the
+common cases:
 
 - `edfarray.write_edf(...)`: Writes the file in one call. Pass all signal data and
   annotations at the same time. Use it to transcode existing files or to save data
@@ -78,6 +80,36 @@ of `write_record`:
 ```python
 w.write_record([record], [edfarray.Annotation(onset=t, text="cue")])
 ```
+
+## Discontinuous (EDF+D / BDF+D)
+
+The `+D` variants keep the time-keeping onset of each record. A gap is a span of
+time between two records. To write a gapped file, pass `record_onsets` to
+`write_edf` or `EdfWriter`. It is a sequence of one float per record, in seconds
+from the recording start. The values must be finite, non-negative, and
+non-decreasing:
+
+```python
+# Records start at 0 s, 1 s, and 3 s. The file has a 1-second gap.
+record_onsets = [0.0, 1.0, 3.0]
+
+edfarray.write_edf(
+    "gapped.edfd",
+    variant="EDF+D",
+    record_duration=1.0,
+    signals=[sig],
+    data=[data],
+    record_onsets=record_onsets,
+)
+```
+
+The `EdfWriter` constructor takes the same argument. Pass one onset per record,
+in order. `write_record` fails when a record has no onset in the table. `finish()`
+fails when the table holds more entries than you wrote records.
+
+Without `record_onsets`, every variant, including `+D`, gets uniform
+`record_idx * record_duration` timing. A `+D` file written that way has no gaps.
+edfarray rejects `record_onsets` on any variant that is not `+D`.
 
 ## Round-tripping an existing file
 

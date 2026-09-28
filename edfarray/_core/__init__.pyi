@@ -414,8 +414,14 @@ class EdfWriter:
     
     Use the writer as a context manager (`with edfarray.EdfWriter(...) as w:`), or call
     `.finish()` explicitly. `__exit__` calls `finish()` automatically.
+    
+    `record_onsets` sets the time-keeping onset of each record for `+D` variants. It is a
+    sequence of one float per record, in seconds from the recording start. The values must be
+    finite, non-negative, and non-decreasing. Without it, every variant, including `+D`, gets
+    uniform `record_idx * record_duration` timing. The table must hold exactly one onset per
+    record you write.
     """
-    def __new__(cls, path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None) -> EdfWriter: ...
+    def __new__(cls, path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None, record_onsets: typing.Optional[typing.Sequence[builtins.float]] = None) -> EdfWriter: ...
     def __enter__(self) -> EdfWriter: ...
     def __exit__(self, *_args: typing.Any) -> None: ...
     def add_annotation(self, annotation: Annotation) -> None:
@@ -956,13 +962,18 @@ def inspect(path: builtins.str) -> dict:
     `patient_id`, `recording_id`, `signal_labels`, `sample_rates`.
     """
 
-def write_edf(path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], data: typing.Sequence[numpy.typing.NDArray[numpy.float64]], annotations: typing.Optional[typing.Sequence[Annotation]] = None, start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None) -> None:
+def write_edf(path: builtins.str, *, variant: builtins.str, record_duration: builtins.float, signals: typing.Sequence[WriterSignal], data: typing.Sequence[numpy.typing.NDArray[numpy.float64]], annotations: typing.Optional[typing.Sequence[Annotation]] = None, start_datetime: typing.Optional[typing.Any] = None, patient_id: typing.Optional[builtins.str] = None, recording_id: typing.Optional[builtins.str] = None, annotation_bytes_per_record: typing.Optional[builtins.int] = None, record_onsets: typing.Optional[typing.Sequence[builtins.float]] = None) -> None:
     r"""
     Write a complete EDF/BDF file in one call.
     
     `data` is a list of 1D float64 numpy arrays, one per ordinary signal. An ordinary
     signal is a signal that is not the annotation channel. The length of each array must be
     `num_records * samples_per_record`, with the same `num_records` for all signals.
+    
+    `record_onsets` sets the time-keeping onset of each record for `+D` variants. It is a
+    sequence of one float per record, in seconds from the recording start. The values must be
+    finite, non-negative, and non-decreasing. Without it, every variant, including `+D`, gets
+    uniform `record_idx * record_duration` timing.
     """
 
 

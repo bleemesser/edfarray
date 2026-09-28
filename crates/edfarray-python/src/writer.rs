@@ -233,6 +233,7 @@ pub(crate) fn parse_start_datetime(obj: Option<&Bound<'_, PyAny>>) -> PyResult<N
     Ok(NaiveDateTime::new(date, time))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_spec(
     variant: &str,
     record_duration: f64,
@@ -241,6 +242,7 @@ pub(crate) fn build_spec(
     patient_id: Option<String>,
     recording_id: Option<String>,
     annotation_bytes_per_record: Option<usize>,
+    record_onsets: Option<Vec<f64>>,
 ) -> PyResult<WriterSpec> {
     Ok(WriterSpec {
         variant: parse_variant(variant)?,
@@ -250,7 +252,7 @@ pub(crate) fn build_spec(
         record_duration_secs: record_duration,
         signals,
         annotation_bytes_per_record,
-        record_onsets: None,
+        record_onsets,
     })
 }
 
@@ -268,6 +270,12 @@ pub(crate) fn anns_to_core(anns: &[PyAnnotation]) -> Vec<Annotation> {
 ///
 /// Use the writer as a context manager (`with edfarray.EdfWriter(...) as w:`), or call
 /// `.finish()` explicitly. `__exit__` calls `finish()` automatically.
+///
+/// `record_onsets` sets the time-keeping onset of each record for `+D` variants. It is a
+/// sequence of one float per record, in seconds from the recording start. The values must be
+/// finite, non-negative, and non-decreasing. Without it, every variant, including `+D`, gets
+/// uniform `record_idx * record_duration` timing. The table must hold exactly one onset per
+/// record you write.
 #[gen_stub_pyclass]
 #[pyclass(name = "EdfWriter", module = "edfarray._core")]
 pub struct PyEdfWriter {
@@ -288,6 +296,7 @@ impl PyEdfWriter {
         patient_id = None,
         recording_id = None,
         annotation_bytes_per_record = None,
+        record_onsets = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -299,6 +308,7 @@ impl PyEdfWriter {
         patient_id: Option<String>,
         recording_id: Option<String>,
         annotation_bytes_per_record: Option<usize>,
+        record_onsets: Option<Vec<f64>>,
     ) -> PyResult<Self> {
         let spec = build_spec(
             variant,
@@ -311,6 +321,7 @@ impl PyEdfWriter {
             patient_id,
             recording_id,
             annotation_bytes_per_record,
+            record_onsets,
         )?;
         let writer = EdfWriter::create(&path, spec).map_err(to_py_err)?;
         Ok(PyEdfWriter {
@@ -396,6 +407,11 @@ impl PyEdfWriter {
 /// `data` is a list of 1D float64 numpy arrays, one per ordinary signal. An ordinary
 /// signal is a signal that is not the annotation channel. The length of each array must be
 /// `num_records * samples_per_record`, with the same `num_records` for all signals.
+///
+/// `record_onsets` sets the time-keeping onset of each record for `+D` variants. It is a
+/// sequence of one float per record, in seconds from the recording start. The values must be
+/// finite, non-negative, and non-decreasing. Without it, every variant, including `+D`, gets
+/// uniform `record_idx * record_duration` timing.
 #[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(name = "write_edf", signature = (
@@ -410,6 +426,7 @@ impl PyEdfWriter {
     patient_id = None,
     recording_id = None,
     annotation_bytes_per_record = None,
+    record_onsets = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn write_edf_py(
@@ -424,6 +441,7 @@ pub fn write_edf_py(
     patient_id: Option<String>,
     recording_id: Option<String>,
     annotation_bytes_per_record: Option<usize>,
+    record_onsets: Option<Vec<f64>>,
 ) -> PyResult<()> {
     let spec = build_spec(
         variant,
@@ -436,6 +454,7 @@ pub fn write_edf_py(
         patient_id,
         recording_id,
         annotation_bytes_per_record,
+        record_onsets,
     )?;
     let slices: Vec<&[f64]> = data
         .iter()

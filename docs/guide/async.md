@@ -185,6 +185,10 @@ async with await aio.EdfWriter.create(
         await w.write_record([record])
 ```
 
+`write_edf` and `EdfWriter.create` take the same keyword arguments as their sync
+counterparts, including `record_onsets` for gapped `+D` files. See
+[Writing files](writing.md).
+
 `add_annotation` is sync. It puts an annotation in a queue for the next record:
 
 ```python

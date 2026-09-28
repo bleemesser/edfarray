@@ -363,10 +363,13 @@ edfarray.write_edf(
     patient_id: str | None = None,
     recording_id: str | None = None,
     annotation_bytes_per_record: int | None = None,
+    record_onsets: Sequence[float] | None = None,
 ) -> None
 ```
 
 Writes a full file in one call. `start_datetime` is a `datetime.datetime` or a `datetime.date`. edfarray writes its wall-clock fields as they are and ignores any `tzinfo`. `data[i]` must have length `num_records * signals[i].samples_per_record`. `variant` is one of `"EDF"`, `"EDF+C"`, `"EDF+D"`, `"BDF"`, `"BDF+C"`, `"BDF+D"`. For `+` variants, edfarray adds the annotation channel. Do not include it in `signals`. If another edfarray handle has `path` open, `write_edf` raises `EdfFileError`.
+
+`record_onsets` sets the time-keeping onset of each record, in seconds from the recording start. You pass one value per record, in order. The values must be finite, non-negative, and non-decreasing. The argument only works with the `+D` variants. For any other variant, edfarray raises `InvalidArgumentError`. Without it, every variant, including `+D`, gets uniform `record_idx * record_duration` timing. See [Discontinuous recordings](../guide/writing.md#discontinuous-edfd-bdfd).
 
 ### `edfarray.EdfWriter`
 
@@ -381,10 +384,11 @@ edfarray.EdfWriter(
     patient_id: str | None = None,
     recording_id: str | None = None,
     annotation_bytes_per_record: int | None = None,
+    record_onsets: Sequence[float] | None = None,
 )
 ```
 
-Writes a file one record at a time. `EdfWriter` supports the context manager protocol, and the `with` block calls `finish()` on exit. `start_datetime` follows the same rules as in `write_edf`. If another edfarray handle has `path` open, the constructor raises `EdfFileError`. The writer holds an exclusive lock on `path` until `finish()`. If you open `path` with `EdfFile` before then, `EdfFile` raises `EdfFileError`.
+Writes a file one record at a time. `EdfWriter` supports the context manager protocol, and the `with` block calls `finish()` on exit. `start_datetime` follows the same rules as in `write_edf`. `record_onsets` follows the same rules as well. The table must hold exactly one onset per record you write. edfarray checks this twice: `write_record` fails when a record has no onset, and `finish()` fails when the table holds more entries than you wrote. If another edfarray handle has `path` open, the constructor raises `EdfFileError`. The writer holds an exclusive lock on `path` until `finish()`. If you open `path` with `EdfFile` before then, `EdfFile` raises `EdfFileError`.
 
 `write_record(physical: list[numpy.ndarray], annotations: list[Annotation] | None = None) -> None`: Encodes and appends one record. `physical[i]` must be a 1D float64 array of length `signals[i].samples_per_record`. If you pass `annotations`, edfarray embeds them in the annotation channel of this record. It also embeds any pending annotations that `add_annotation` queued.
 

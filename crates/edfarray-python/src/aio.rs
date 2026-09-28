@@ -840,6 +840,7 @@ impl PyAsyncEdfWriter {
         patient_id = None,
         recording_id = None,
         annotation_bytes_per_record = None,
+        record_onsets = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn create<'py>(
@@ -853,6 +854,7 @@ impl PyAsyncEdfWriter {
         patient_id: Option<String>,
         recording_id: Option<String>,
         annotation_bytes_per_record: Option<usize>,
+        record_onsets: Option<Vec<f64>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let spec = build_spec(
             &variant,
@@ -862,6 +864,7 @@ impl PyAsyncEdfWriter {
             patient_id,
             recording_id,
             annotation_bytes_per_record,
+            record_onsets,
         )?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let writer = tokio::task::spawn_blocking(move || EdfWriter::create(&path, spec))
@@ -994,6 +997,7 @@ impl PyAsyncEdfWriter {
     patient_id = None,
     recording_id = None,
     annotation_bytes_per_record = None,
+    record_onsets = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn write_edf_async<'py>(
@@ -1008,6 +1012,7 @@ fn write_edf_async<'py>(
     patient_id: Option<String>,
     recording_id: Option<String>,
     annotation_bytes_per_record: Option<usize>,
+    record_onsets: Option<Vec<f64>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let spec = build_spec(
         &variant,
@@ -1017,6 +1022,7 @@ fn write_edf_async<'py>(
         patient_id,
         recording_id,
         annotation_bytes_per_record,
+        record_onsets,
     )?;
     let owned: Vec<Vec<f64>> = data
         .iter()
