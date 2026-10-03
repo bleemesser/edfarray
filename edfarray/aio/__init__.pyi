@@ -47,7 +47,16 @@ class EdfFile:
     @property
     def recording_additional(self) -> str | None: ...
     @property
-    def annotations(self) -> list[Annotation]: ...
+    def annotations(self) -> list[Annotation]:
+        r"""
+        All annotations, sorted by onset.
+
+        This getter is sync. If the annotation scan is not complete, it waits for the scan.
+        It releases the GIL while it waits, but the event loop stops. To prevent this, await
+        ``wait_for_annotations()`` first. The same applies to ``warnings``, ``events``,
+        ``filter_annotations``, and the other ``annotations_*`` methods.
+        """
+        ...
     @property
     def warnings(self) -> list[str]: ...
     @property
@@ -116,7 +125,12 @@ class EdfFile:
         Planned epoch windows without reading data. See `EdfFile.epoch_windows`.
         """
         ...
-    def signal(self, idx_or_label: int | str, cache_capacity: int = 0) -> Signal:
+    def signal(
+        self,
+        idx_or_label: int | str,
+        cache_capacity: int = 0,
+        strategy: str | None = None,
+    ) -> Signal:
         r"""
         Get a signal by index or label.
 
@@ -133,6 +147,9 @@ class EdfFile:
         The cache makes only physical reads faster. ``read_range_digital()`` always decodes again
         from the memory map. Each ``Signal`` has its own cache. A new call to ``signal()`` starts
         with an empty cache.
+
+        ``strategy`` sets how the signal reads bytes, as in the sync API: ``"auto"`` (default),
+        ``"mmap"``, or ``"stream"``.
         """
         ...
     def signal_group(self, indices: list[int]) -> SignalGroup: ...
@@ -158,8 +175,10 @@ class EdfFile:
 
         Transcoding caveats:
         - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
-          Transcoding to any variant without `+D` removes the per-record onsets and gaps. The
-          output uses uniform `record_idx * record_duration` timing.
+          Transcoding to any variant without `+D` packs the records end to end, and the gaps
+          disappear. Each annotation keeps its offset into its record, so it stays with the
+          same samples. An annotation inside a gap moves to the start of the record after the
+          gap.
         - The method builds the annotation channel from the parsed annotations. Plain (non-"+")
           EDF/BDF variants have no annotation channel. Thus transcoding to a plain variant drops
           all annotations.

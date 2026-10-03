@@ -239,48 +239,42 @@ impl PyEdfFile {
     /// All annotations, sorted by onset.
     ///
     /// The list does not include the timekeeping annotations that give the start time of each
-    /// data record.
+    /// data record. The getter waits until the annotation scan is complete, with the GIL
+    /// released.
     #[getter]
-    fn annotations(&self) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations()
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    fn annotations(&self, py: Python<'_>) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations());
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     /// The annotations with an onset strictly before `t`.
     /// This method uses a binary search for speed.
-    pub fn annotations_before(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_before(t)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    pub fn annotations_before(&self, py: Python<'_>, t: f64) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_before(t));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     /// The annotations with an onset >= `t`.
     /// This method uses a binary search for speed.
-    pub fn annotations_after(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_after(t)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    pub fn annotations_after(&self, py: Python<'_>, t: f64) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_after(t));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     /// The annotations with an onset in [start, end).
     /// This method uses a binary search for speed.
-    pub fn annotations_in_range(&self, start: f64, end: f64) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_in_range(start, end)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    pub fn annotations_in_range(
+        &self,
+        py: Python<'_>,
+        start: f64,
+        end: f64,
+    ) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_in_range(start, end));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     /// Filter annotations by text content.
@@ -293,10 +287,15 @@ impl PyEdfFile {
     ///
     /// If the regex pattern is invalid, the method raises `ValueError`.
     #[pyo3(signature = (query, regex=false))]
-    fn filter_annotations(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
-        let anns = self
-            .get()?
-            .filter_annotations(query, regex)
+    fn filter_annotations(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        regex: bool,
+    ) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py
+            .detach(|| inner.filter_annotations(query, regex))
             .map_err(to_py_err)?;
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
@@ -307,18 +306,15 @@ impl PyEdfFile {
     /// goes directly into `f.extract_epochs(...)`. The matching rules are the same: a
     /// case-insensitive substring, or a case-insensitive regex when `regex=True`.
     #[pyo3(signature = (query, regex=false))]
-    fn events(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
-        self.filter_annotations(query, regex)
+    fn events(&self, py: Python<'_>, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
+        self.filter_annotations(py, query, regex)
     }
 
     /// The annotations whose text exactly matches `text` (case-sensitive).
-    pub fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_by_text(text)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    pub fn annotations_by_text(&self, py: Python<'_>, text: &str) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_by_text(text));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     /// Return the indices of all signals whose label matches `label`.
@@ -332,10 +328,12 @@ impl PyEdfFile {
         Ok(self.get()?.find_all_signals(label, exact))
     }
 
-    /// Warnings from the header parse and the annotation scan. Waits until the scan is complete.
+    /// Warnings from the header parse and the annotation scan. Waits until the scan is complete,
+    /// with the GIL released.
     #[getter]
-    fn warnings(&self) -> PyResult<Vec<String>> {
-        Ok(self.get()?.warnings())
+    fn warnings(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        let inner = self.get()?;
+        Ok(py.detach(|| inner.warnings()))
     }
 
     /// The raw header fields as a dict.
@@ -548,8 +546,10 @@ impl PyEdfFile {
     ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
-    ///   Transcoding to any variant without `+D` removes the per-record onsets and gaps. The
-    ///   output uses uniform `record_idx * record_duration` timing.
+    ///   Transcoding to any variant without `+D` packs the records end to end, and the gaps
+    ///   disappear. Each annotation keeps its offset into its record, so it stays with the
+    ///   same samples. An annotation inside a gap moves to the start of the record after the
+    ///   gap.
     /// - The method builds the annotation channel from the parsed annotations. Plain (non-"+")
     ///   EDF/BDF variants have no annotation channel. Thus transcoding to a plain variant drops
     ///   all annotations.
@@ -558,6 +558,7 @@ impl PyEdfFile {
     #[pyo3(signature = (path, variant=None, signals=None))]
     fn write_to(
         &self,
+        py: Python<'_>,
         path: &str,
         variant: Option<&str>,
         #[gen_stub(override_type(
@@ -579,10 +580,11 @@ impl PyEdfFile {
             }
         };
         let f = self.get()?;
-        match resolve_signal_selection(f, signals)? {
+        let selection = resolve_signal_selection(f, signals)?;
+        py.detach(|| match selection {
             Some(selected) => f.write_subset_to(path, target, &selected),
             None => f.write_to(path, target),
-        }
+        })
         .map_err(to_py_err)
     }
 
@@ -751,7 +753,7 @@ pub fn inspect<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>>
 }
 
 /// Parse the `strategy` argument accepted by `EdfFile.signal`.
-fn parse_strategy(value: &str) -> PyResult<ReadStrategy> {
+pub(crate) fn parse_strategy(value: &str) -> PyResult<ReadStrategy> {
     match value {
         "auto" => Ok(ReadStrategy::Auto),
         "mmap" => Ok(ReadStrategy::Mmap),

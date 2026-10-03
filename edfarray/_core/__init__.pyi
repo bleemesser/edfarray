@@ -162,12 +162,14 @@ class EdfFile:
         All annotations, sorted by onset.
         
         The list does not include the timekeeping annotations that give the start time of each
-        data record.
+        data record. The getter waits until the annotation scan is complete, with the GIL
+        released.
         """
     @property
     def warnings(self) -> builtins.list[builtins.str]:
         r"""
-        Warnings from the header parse and the annotation scan. Waits until the scan is complete.
+        Warnings from the header parse and the annotation scan. Waits until the scan is complete,
+        with the GIL released.
         """
     @property
     def annotations_ready(self) -> builtins.bool:
@@ -361,8 +363,10 @@ class EdfFile:
         
         Transcoding caveats:
         - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
-          Transcoding to any variant without `+D` removes the per-record onsets and gaps. The
-          output uses uniform `record_idx * record_duration` timing.
+          Transcoding to any variant without `+D` packs the records end to end, and the gaps
+          disappear. Each annotation keeps its offset into its record, so it stays with the
+          same samples. An annotation inside a gap moves to the start of the record after the
+          gap.
         - The method builds the annotation channel from the parsed annotations. Plain (non-"+")
           EDF/BDF variants have no annotation channel. Thus transcoding to a plain variant drops
           all annotations.

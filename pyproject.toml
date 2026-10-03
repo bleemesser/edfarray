@@ -18,6 +18,16 @@ python-source = "."
 python-packages = ["edfarray"]
 include = ["edfarray/_core/*.pyi", "edfarray/aio/*.pyi", "edfarray/py.typed", "LICENSE"]
 
+[tool.uv]
+# rebuild the extension on `uv run` when the Rust sources change
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "crates/**/Cargo.toml" },
+    { file = "crates/**/*.rs" },
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

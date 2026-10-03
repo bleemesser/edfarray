@@ -130,7 +130,7 @@ If another edfarray handle has `path` open, `write_to` raises `EdfFileError`. Th
 Transcoding has these limits:
 
 - From EDF+D to EDF+D, edfarray keeps the source record onsets, so the gaps stay.
-- From EDF+D to any variant without `+D`, edfarray flattens the timing. The onsets become uniform `record_idx * record_duration`.
+- From EDF+D to any variant without `+D`, edfarray flattens the timing. The onsets become uniform `record_idx * record_duration`. Each annotation keeps its offset into its record, so it stays with the same samples. An annotation inside a gap moves to the start of the record after the gap.
 - From any `+` variant to a plain variant, edfarray drops all annotations. Plain EDF and BDF have no annotation channel.
 - A smaller sample size (BDF 24-bit to EDF 16-bit) clamps the digital range and encodes again from physical values. This loses precision.
 

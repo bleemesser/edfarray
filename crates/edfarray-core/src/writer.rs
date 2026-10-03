@@ -88,6 +88,18 @@ impl WriterSignal {
                 ),
             });
         }
+        for (field, value) in [
+            ("physical_min", self.physical_min),
+            ("physical_max", self.physical_max),
+        ] {
+            if format_f64_field(value, 8).is_none() {
+                return Err(EdfError::InvalidSignalField {
+                    index,
+                    field,
+                    reason: format!("{value} does not fit the 8-character EDF header field"),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -158,6 +170,15 @@ impl EdfWriter {
             return Err(EdfError::InvalidArgument {
                 name: "record_duration_secs",
                 reason: format!("must be > 0, got {}", spec.record_duration_secs),
+            });
+        }
+        if format_f64_field(spec.record_duration_secs, 8).is_none() {
+            return Err(EdfError::InvalidArgument {
+                name: "record_duration_secs",
+                reason: format!(
+                    "{} does not fit the 8-character EDF header field",
+                    spec.record_duration_secs
+                ),
             });
         }
         // The 8-byte startdate field stores only two year digits, read back with an 85-pivot.
@@ -602,21 +623,33 @@ pub(crate) fn format_ascii_field(value: &str, size: usize) -> Vec<u8> {
     out
 }
 
-fn format_f64_field(value: f64, size: usize) -> Vec<u8> {
+/// Format a number into a `size`-byte header field, or `None` if its integer part does not fit.
+fn format_f64_field(value: f64, size: usize) -> Option<Vec<u8>> {
+    if !value.is_finite() {
+        return None;
+    }
     if value.fract() == 0.0 && value.abs() < 1e15 {
         let s = format!("{}", value as i64);
         if s.len() <= size {
-            return format_ascii_field(&s, size);
+            return Some(format_ascii_field(&s, size));
         }
     }
     for precision in (0..=8).rev() {
         let s = format!("{:.*}", precision, value);
         if s.len() <= size {
-            return format_ascii_field(&s, size);
+            return Some(format_ascii_field(&s, size));
         }
     }
-    let s = format!("{}", value);
-    format_ascii_field(&s, size)
+    None
+}
+
+/// Format an 8-byte numeric header field. `create` validates these values first, so this only
+/// fails if that validation is bypassed.
+fn header_number(value: f64) -> Result<Vec<u8>> {
+    format_f64_field(value, 8).ok_or_else(|| EdfError::InvalidArgument {
+        name: "header",
+        reason: format!("{value} does not fit an 8-character EDF header field"),
+    })
 }
 
 fn serialize_header<W: Write>(
@@ -669,7 +702,7 @@ fn serialize_header<W: Write>(
     main.extend(format_ascii_field(reserved, 44));
 
     main.extend(format_ascii_field(&num_records.to_string(), 8));
-    main.extend(format_f64_field(spec.record_duration_secs, 8));
+    main.extend(header_number(spec.record_duration_secs)?);
     main.extend(format_ascii_field(&n_total.to_string(), 4));
 
     debug_assert_eq!(main.len(), 256);
@@ -687,8 +720,14 @@ fn serialize_header<W: Write>(
         .iter()
         .map(|s| s.physical_dimension.clone())
         .collect();
-    let pmins: Vec<_> = all_signals.iter().map(|s| s.physical_min).collect();
-    let pmaxs: Vec<_> = all_signals.iter().map(|s| s.physical_max).collect();
+    let pmins: Vec<_> = all_signals
+        .iter()
+        .map(|s| header_number(s.physical_min))
+        .collect::<Result<_>>()?;
+    let pmaxs: Vec<_> = all_signals
+        .iter()
+        .map(|s| header_number(s.physical_max))
+        .collect::<Result<_>>()?;
     let dmins: Vec<_> = all_signals.iter().map(|s| s.digital_min).collect();
     let dmaxs: Vec<_> = all_signals.iter().map(|s| s.digital_max).collect();
     let prefilters: Vec<_> = all_signals.iter().map(|s| s.prefiltering.clone()).collect();
@@ -698,8 +737,8 @@ fn serialize_header<W: Write>(
     write_field_block(path, w, &labels, 16, |s| s.as_bytes().to_vec())?;
     write_field_block(path, w, &transducers, 80, |s| s.as_bytes().to_vec())?;
     write_field_block(path, w, &dims, 8, |s| s.as_bytes().to_vec())?;
-    write_field_block(path, w, &pmins, 8, |v| format_f64_field(*v, 8))?;
-    write_field_block(path, w, &pmaxs, 8, |v| format_f64_field(*v, 8))?;
+    write_field_block(path, w, &pmins, 8, |v| v.clone())?;
+    write_field_block(path, w, &pmaxs, 8, |v| v.clone())?;
     write_field_block(path, w, &dmins, 8, |v| v.to_string().into_bytes())?;
     write_field_block(path, w, &dmaxs, 8, |v| v.to_string().into_bytes())?;
     write_field_block(path, w, &prefilters, 80, |s| s.as_bytes().to_vec())?;
@@ -1312,11 +1351,18 @@ mod tests {
         spec.signals[0].samples_per_record = 10;
         spec.record_onsets = Some(vec![0.0, 1.0, 3.0, 6.0]);
         let data: Vec<f64> = (0..40).map(|i| i as f64).collect();
-        let anns = vec![Annotation {
-            onset: 3.5,
-            duration: None,
-            text: "gap-event".into(),
-        }];
+        let anns = vec![
+            Annotation {
+                onset: 3.5,
+                duration: None,
+                text: "gap-event".into(),
+            },
+            Annotation {
+                onset: 4.5,
+                duration: None,
+                text: "in-gap".into(),
+            },
+        ];
         write_edf(&src, spec, &[&data], &anns).unwrap();
 
         let f = EdfFile::open(&src).unwrap();
@@ -1335,8 +1381,9 @@ mod tests {
             );
         }
         let got = g.annotations();
-        assert_eq!(got.len(), 1);
+        assert_eq!(got.len(), 2);
         assert!((got[0].onset - 3.5).abs() < 1e-6);
+        assert!((got[1].onset - 4.5).abs() < 1e-6);
 
         f.write_to(&flat, Some(EdfVariant::EdfPlusC)).unwrap();
         let h = EdfFile::open(&flat).unwrap();
@@ -1347,6 +1394,12 @@ mod tests {
                 "non-+D target must flatten record {r}"
             );
         }
+        // annotations move with their samples: 0.5s into the record that now starts at 2.0,
+        // and the gap annotation lands where the gap closed
+        let got = h.annotations();
+        assert_eq!(got.len(), 2);
+        assert!((got[0].onset - 2.5).abs() < 1e-6, "{}", got[0].onset);
+        assert!((got[1].onset - 3.0).abs() < 1e-6, "{}", got[1].onset);
     }
 
     #[test]
@@ -1374,6 +1427,36 @@ mod tests {
             let err = write_edf(path.clone(), spec.clone(), &[&d], &[]).unwrap_err();
             assert!(matches!(err, EdfError::InvalidArgument { .. }));
         }
+    }
+
+    #[test]
+    fn format_f64_field_rejects_values_that_do_not_fit() {
+        assert_eq!(format_f64_field(-3200.0, 8).unwrap(), b"-3200   ");
+        assert_eq!(format_f64_field(0.123456789, 8).unwrap(), b"0.123457");
+        assert_eq!(format_f64_field(12345678.0, 8).unwrap(), b"12345678");
+        assert!(format_f64_field(123456789.1, 8).is_none());
+        assert!(format_f64_field(123456789.0, 8).is_none());
+        assert!(format_f64_field(f64::NAN, 8).is_none());
+    }
+
+    #[test]
+    fn rejects_physical_range_that_does_not_fit_header() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wide.edf");
+        let mut spec = sample_spec(EdfVariant::Edf);
+        spec.signals[0].physical_max = 123456789.1;
+        let err = match EdfWriter::create(&path, spec) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
+        assert!(matches!(
+            err,
+            EdfError::InvalidSignalField {
+                field: "physical_max",
+                ..
+            }
+        ));
+        assert!(!path.exists());
     }
 
     #[test]

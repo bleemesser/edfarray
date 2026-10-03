@@ -111,6 +111,11 @@ corrupts nothing. edfarray does not support this pattern.
 
 `edfarray.aio` runs blocking work on a thread pool. This has two effects.
 
+The annotation accessors (`annotations`, `warnings`, `events`, and the `annotations_*` and
+`filter_annotations` methods) are sync. If the annotation scan is not finished, they wait for
+it. They release the GIL while they wait, but they block the event loop. Await
+`wait_for_annotations()` first.
+
 If you cancel a task, the work that the pool already has continues. A cancelled
 `write_record()` can still write its record. After a cancel, the state of the writer is
 unknown. Do not write to that writer again.

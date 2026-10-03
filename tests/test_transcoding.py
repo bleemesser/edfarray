@@ -90,3 +90,26 @@ def test_write_to_after_close_raises(tmp_path):
     src.close()
     with pytest.raises(edfarray.ClosedFileError):
         src.write_to(str(tmp_path / "x.edf"))
+
+
+def test_plus_d_to_plus_c_keeps_annotations_with_their_samples(tmp_path):
+    sig = edfarray.WriterSignal(
+        label="EEG", physical_dimension="uV", physical_min=-100.0, physical_max=100.0,
+        digital_min=-32768, digital_max=32767, samples_per_record=10,
+    )
+    src_path = str(tmp_path / "gap.edf")
+    edfarray.write_edf(
+        src_path, variant="EDF+D", record_duration=1.0, signals=[sig],
+        data=[np.zeros(30)], record_onsets=[0.0, 1.0, 5.0],
+        annotations=[
+            edfarray.Annotation(onset=2.5, text="in gap"),
+            edfarray.Annotation(onset=5.5, text="after gap"),
+        ],
+    )
+    out = str(tmp_path / "flat.edf")
+    edfarray.EdfFile(src_path).write_to(out, variant="EDF+C")
+
+    # the gap closes at 2.0, and "after gap" stays 0.5 s into the third record
+    got = {a.text: a.onset for a in edfarray.EdfFile(out).annotations}
+    assert got["in gap"] == pytest.approx(2.0)
+    assert got["after gap"] == pytest.approx(2.5)

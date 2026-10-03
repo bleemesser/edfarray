@@ -188,64 +188,59 @@ impl PyAsyncEdfFile {
     }
 
     #[getter]
-    fn annotations(&self) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations()
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    fn annotations(&self, py: Python<'_>) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations());
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
-    fn annotations_before(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_before(t)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    fn annotations_before(&self, py: Python<'_>, t: f64) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_before(t));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
-    fn annotations_after(&self, t: f64) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_after(t)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    fn annotations_after(&self, py: Python<'_>, t: f64) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_after(t));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
-    fn annotations_in_range(&self, start: f64, end: f64) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_in_range(start, end)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    fn annotations_in_range(
+        &self,
+        py: Python<'_>,
+        start: f64,
+        end: f64,
+    ) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_in_range(start, end));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     #[pyo3(signature = (query, regex=false))]
-    fn filter_annotations(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
-        let anns = self
-            .get()?
-            .filter_annotations(query, regex)
+    fn filter_annotations(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        regex: bool,
+    ) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py
+            .detach(|| inner.filter_annotations(query, regex))
             .map_err(to_py_err)?;
         Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     /// An alias of `filter_annotations`, as in the sync API. See `EdfFile.events`.
     #[pyo3(signature = (query, regex=false))]
-    fn events(&self, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
-        self.filter_annotations(query, regex)
+    fn events(&self, py: Python<'_>, query: &str, regex: bool) -> PyResult<Vec<PyAnnotation>> {
+        self.filter_annotations(py, query, regex)
     }
 
-    fn annotations_by_text(&self, text: &str) -> PyResult<Vec<PyAnnotation>> {
-        Ok(self
-            .get()?
-            .annotations_by_text(text)
-            .iter()
-            .map(PyAnnotation::from)
-            .collect())
+    fn annotations_by_text(&self, py: Python<'_>, text: &str) -> PyResult<Vec<PyAnnotation>> {
+        let inner = self.get()?;
+        let anns = py.detach(|| inner.annotations_by_text(text));
+        Ok(anns.iter().map(PyAnnotation::from).collect())
     }
 
     #[pyo3(signature = (label, exact=false))]
@@ -254,8 +249,9 @@ impl PyAsyncEdfFile {
     }
 
     #[getter]
-    fn warnings(&self) -> PyResult<Vec<String>> {
-        Ok(self.get()?.warnings())
+    fn warnings(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        let inner = self.get()?;
+        Ok(py.detach(|| inner.warnings()))
     }
 
     #[getter]
@@ -517,8 +513,10 @@ impl PyAsyncEdfFile {
     ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
-    ///   Transcoding to any variant without `+D` removes the per-record onsets and gaps. The
-    ///   output uses uniform `record_idx * record_duration` timing.
+    ///   Transcoding to any variant without `+D` packs the records end to end, and the gaps
+    ///   disappear. Each annotation keeps its offset into its record, so it stays with the
+    ///   same samples. An annotation inside a gap moves to the start of the record after the
+    ///   gap.
     /// - The method builds the annotation channel from the parsed annotations. Plain (non-"+")
     ///   EDF/BDF variants have no annotation channel. Thus transcoding to a plain variant drops
     ///   all annotations.
@@ -565,11 +563,15 @@ impl PyAsyncEdfFile {
     /// The cache makes only physical reads faster. `read_range_digital()` always decodes again
     /// from the memory map. Each `Signal` has its own cache. A new call to `signal()` starts
     /// with an empty cache.
-    #[pyo3(signature = (idx_or_label, cache_capacity=0))]
+    ///
+    /// `strategy` sets how the signal reads bytes, as in the sync API: `"auto"` (default),
+    /// `"mmap"`, or `"stream"`.
+    #[pyo3(signature = (idx_or_label, cache_capacity=0, strategy=None))]
     fn signal(
         &self,
         idx_or_label: &Bound<'_, PyAny>,
         cache_capacity: usize,
+        strategy: Option<&str>,
     ) -> PyResult<PyAsyncSignal> {
         let inner = self.get()?;
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
@@ -582,6 +584,10 @@ impl PyAsyncEdfFile {
             return Err(pyo3::exceptions::PyTypeError::new_err(
                 "signal() argument must be int or str",
             ));
+        };
+        let proxy = match strategy {
+            None => proxy,
+            Some(s) => proxy.with_strategy(crate::file::parse_strategy(s)?),
         };
         let proxy = if cache_capacity > 0 {
             proxy.with_cache(cache_capacity)

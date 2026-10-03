@@ -150,9 +150,10 @@ rejects these values before it writes any data.
     changes more than the variant tag in the header:
 
     - EDF+D to EDF+D keeps the source record onsets, so the gaps stay in the copy.
-      EDF+D to any non-`+D` variant makes the timing uniform. Uniform
-      `record_idx * record_duration` timing replaces the onset and gap of each
-      record.
+      EDF+D to any non-`+D` variant puts the records end to end, and the gaps
+      disappear. Each annotation keeps its offset into its record, so it stays
+      with the same samples. An annotation inside a gap moves to the start of the
+      record after the gap.
     - Any `+` variant to a plain (non-`+`) variant drops all annotations. Plain
       EDF/BDF has no annotation channel.
     - A smaller sample size (for example, BDF 24-bit to EDF 16-bit) clamps the

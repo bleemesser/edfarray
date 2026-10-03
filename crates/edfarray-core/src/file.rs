@@ -371,8 +371,9 @@ impl EdfFile {
     ///
     /// Transcoding caveats:
     /// - EDF+D to EDF+D keeps the source record onsets, so gaps stay in the copy. Transcoding
-    ///   to a variant that is not `+D` flattens the timing: uniform
-    ///   `record_idx * record_duration` timing replaces the record onsets and gaps.
+    ///   to a variant that is not `+D` packs the records end to end, and the gaps disappear.
+    ///   Each annotation keeps its offset into its record, so it stays with the same samples.
+    ///   An annotation inside a gap moves to the start of the record after the gap.
     /// - The copy rebuilds the destination annotation channel from the parsed annotations.
     ///   Plain (not `+`) EDF/BDF variants have no annotation channel, so transcoding to one
     ///   drops all annotations.
@@ -484,12 +485,13 @@ impl EdfFile {
         // An EDF+D to EDF+D copy preserves the source record onsets, so the discontinuity
         // survives the rewrite. Any other target flattens to uniform timing. Reading the
         // table blocks until the source annotation scan finishes.
-        let source_onsets: Option<Vec<f64>> =
-            if self.variant().is_plus_d() && target_variant.is_plus_d() {
-                Some(self.file.with_annotations(|idx| idx.record_onsets.clone()))
-            } else {
-                None
-            };
+        let source_onsets: Option<Vec<f64>> = if self.variant().is_plus_d() {
+            Some(self.file.with_annotations(|idx| idx.record_onsets.clone()))
+        } else {
+            None
+        };
+        let keep_onsets = source_onsets.is_some() && target_variant.is_plus_d();
+        let pack_gaps = source_onsets.is_some() && !target_variant.is_plus_d();
 
         let spec = WriterSpec {
             variant: target_variant,
@@ -499,32 +501,25 @@ impl EdfFile {
             record_duration_secs: header.record_duration_secs,
             signals: signals_spec,
             annotation_bytes_per_record,
-            record_onsets: source_onsets.clone(),
+            record_onsets: source_onsets.clone().filter(|_| keep_onsets),
         };
 
         let mut writer = EdfWriter::create(path, spec)?;
 
-        // Group annotations by record window. A gapped source needs the onset table, not
-        // `floor(onset / record_dur)`: an annotation belongs to the last record whose onset
-        // is at or before it.
         let record_dur = header.record_duration_secs;
         let num_records = self.num_records();
-        let mut by_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
-        if target_variant.is_plus() {
-            let onset_table = source_onsets.as_deref();
-            for ann in self.annotations().into_iter() {
-                let r = match onset_table {
-                    Some(table) if !table.is_empty() => {
-                        table.partition_point(|&o| o <= ann.onset).saturating_sub(1)
-                    }
-                    _ => (ann.onset / record_dur).floor().max(0.0) as usize,
-                };
-                let r = r.min(num_records.saturating_sub(1));
-                if num_records > 0 {
-                    by_record[r].push(ann);
-                }
-            }
-        }
+        let source_onset = |r: usize| {
+            source_onsets
+                .as_ref()
+                .and_then(|o| o.get(r).copied())
+                .unwrap_or(r as f64 * record_dur)
+        };
+        let annotations = if target_variant.is_plus() {
+            self.annotations()
+        } else {
+            Vec::new()
+        };
+        let mut next_ann = 0;
 
         // Stream records to avoid loading entire file into RAM.
         let mut proxies: Vec<SignalProxy> = Vec::with_capacity(ordinary.len());
@@ -537,14 +532,36 @@ impl EdfFile {
             .map(|p| vec![0.0f64; p.header().num_samples])
             .collect();
 
-        for (r, record_annotations) in by_record.iter().enumerate().take(num_records) {
+        let mut record_annotations = Vec::new();
+        for r in 0..num_records {
             for (buf, p) in bufs.iter_mut().zip(proxies.iter()) {
                 let spr = p.header().num_samples;
                 let start = r * spr;
                 p.read_physical(start, start + spr, buf)?;
             }
             let row: Vec<&[f64]> = bufs.iter().map(|b| b.as_slice()).collect();
-            writer.write_record_with_annotations(&row, record_annotations)?;
+
+            // annotations are sorted by onset, so each record takes those that start before
+            // the next record, and the last record takes the rest
+            let record_start = source_onset(r);
+            let is_last = r + 1 == num_records;
+            let next_start = source_onset(r + 1);
+            record_annotations.clear();
+            while next_ann < annotations.len()
+                && (is_last || annotations[next_ann].onset < next_start)
+            {
+                let mut ann = annotations[next_ann].clone();
+                if pack_gaps {
+                    // keep the annotation at the same offset into its record. Only gap
+                    // annotations exceed the record, so the clamp moves them to the gap's end.
+                    let lo = if r == 0 { f64::NEG_INFINITY } else { 0.0 };
+                    let hi = if is_last { f64::INFINITY } else { record_dur };
+                    ann.onset = r as f64 * record_dur + (ann.onset - record_start).clamp(lo, hi);
+                }
+                record_annotations.push(ann);
+                next_ann += 1;
+            }
+            writer.write_record_with_annotations(&row, &record_annotations)?;
         }
 
         writer.finish()?;

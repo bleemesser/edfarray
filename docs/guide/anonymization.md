@@ -67,6 +67,14 @@ By default, `anonymize` makes these changes:
   year field can hold only the years 1985-2084. If a shift moves the startdate outside this
   range, `anonymize` raises an error. It does not clamp the date silently.
 
+!!! note "Two subjects can get the same pseudonym"
+    The 8-character pseudonym suffix holds 40 bits, about 1.1 trillion values. If two
+    subjects get the same pseudonym, their recordings look like the recordings of one
+    subject. The chance that a corpus has at least one such collision is about 0.005% for
+    10,000 subjects, 0.5% for 100,000 subjects, and 37% for 1,000,000 subjects. For a large
+    corpus, compare each new pseudonym with the pseudonyms that you already issued, or pass
+    an explicit `pseudonym`.
+
 To see the changes without writing anything, add `dry_run=True`. A dry run makes the same
 checks on the field values as a real run. A real run can still fail for two reasons.
 Another edfarray handle can have the file open, or an I/O error can occur. To make the dry

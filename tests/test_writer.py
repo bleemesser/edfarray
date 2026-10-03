@@ -352,3 +352,17 @@ def test_write_with_patient_recording_ids(tmp_path: Path):
     f = edfarray.EdfFile(str(p))
     assert "MCH-1234" in f.patient_id
     assert "PSG-1" in f.recording_id
+
+
+def test_writer_rejects_physical_range_too_wide_for_header(tmp_path: Path):
+    # 123456789.1 has no 8-character form, and truncating it would change the value
+    sig = edfarray.WriterSignal(
+        label="EEG", physical_dimension="uV", physical_min=-3200.0,
+        physical_max=123456789.1, digital_min=-32768, digital_max=32767,
+        samples_per_record=256,
+    )
+    with pytest.raises(edfarray.InvalidFileError, match="physical_max"):
+        edfarray.write_edf(
+            str(tmp_path / "wide.edf"), variant="EDF", record_duration=1.0,
+            signals=[sig], data=[_ramp(256)],
+        )

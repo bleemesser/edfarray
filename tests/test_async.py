@@ -522,3 +522,18 @@ class TestCancellationAndClose:
         first = results[0]
         for r in results[1:]:
             assert (r == first).all()
+
+
+@pytest.mark.parametrize("strategy", ["auto", "mmap", "stream"])
+async def test_signal_strategy_matches_sync(strategy):
+    path = _pick_fixture()
+    expected = edfarray.EdfFile(str(path)).signal(0).to_physical()
+    f = await aio.open(str(path))
+    got = await f.signal(0, strategy=strategy).to_physical()
+    np.testing.assert_array_equal(got, expected)
+
+
+async def test_signal_rejects_unknown_strategy():
+    f = await aio.open(str(_pick_fixture()))
+    with pytest.raises(ValueError):
+        f.signal(0, strategy="bogus")

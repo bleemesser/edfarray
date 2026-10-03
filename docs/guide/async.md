@@ -1,6 +1,6 @@
 # Async API
 
-The async API is in `edfarray.aio`. It has the same classes and methods as the sync API, with two exceptions. `aio.open(path, variant=None)` has no `scan_annotations` argument, and `aio.EdfFile.signal(idx_or_label, cache_capacity=0)` has no `strategy` argument.
+The async API is in `edfarray.aio`. It has the same classes and methods as the sync API, with one exception. `aio.open(path, variant=None)` has no `scan_annotations` argument.
 
 The async API is for applications that run an event loop and must not block on mmap decode. An event loop is the scheduler that runs asyncio coroutines. Typical applications are:
 
@@ -8,7 +8,7 @@ The async API is for applications that run an event loop and must not block on m
 - A local server that sends data to multiple clients.
 - A pipeline where Python work must interleave with signal decoding.
 
-Every async method releases the GIL (the Python global interpreter lock) during decode. It uses `tokio::task::spawn_blocking` on a multi-threaded tokio runtime. Concurrent reads on the same file run in parallel.
+Every awaitable method releases the GIL (the Python global interpreter lock) during decode. It uses `tokio::task::spawn_blocking` on a multi-threaded tokio runtime. Concurrent reads on the same file run in parallel. The annotation accessors are sync and can block the event loop. See [Waiting for annotations](#waiting-for-annotations).
 
 ## Opening files
 
@@ -79,6 +79,15 @@ sig = f.signal(0, cache_capacity=4)  # cache 4 decoded records
 The cache behaves the same as in the sync API. [Caching repeated reads](signals.md#caching-repeated-reads) tells how to size
 `cache_capacity` and in which cases the cache helps.
 
+`strategy` sets how the signal reads bytes, as in the sync API. On a network
+filesystem, `strategy="stream"` prevents memory-map page faults:
+
+```python
+sig = f.signal(0, strategy="stream")  # "auto" (default), "mmap", or "stream"
+```
+
+[Performance](performance.md) tells which strategy to use.
+
 ## Concurrent reads
 
 If multiple coroutines read different regions of the same file, they run concurrently on separate OS threads:
@@ -124,6 +133,13 @@ for ann in f.annotations:
 
 To find out whether the scan is finished, read `f.annotations_ready` (sync). This
 read does not block.
+
+!!! warning "Await the scan before you read annotations"
+    `annotations`, `warnings`, `events`, `filter_annotations`, `annotations_by_text`,
+    `annotations_before`, `annotations_after`, and `annotations_in_range` are sync.
+    If the scan is not finished, they wait for it. They release the GIL, so other
+    threads continue to run. But the event loop stops until the scan finishes. For a
+    large file, `await f.wait_for_annotations()` before you call them.
 
 ## Writing
 
@@ -213,7 +229,7 @@ parsed index. It does not copy them byte for byte. The same [transcoding caveats
 apply as for the sync `write_to`:
 
 - Transcoding EDF+D to a non-`+D` variant loses the EDF+D gaps. An EDF+D gap is
-  a time gap between two records.
+  a time gap between two records. The annotations stay with their samples.
 - Transcoding to a plain variant drops annotations.
 - Transcoding to a smaller sample size loses precision.
 
@@ -289,7 +305,7 @@ almost the same wall time.
 
 ## GIL release and parallelism
 
-The async runtime is a multi-threaded tokio executor. Every async method that
+The async runtime is a multi-threaded tokio executor. Every awaitable method that
 does decode or file I/O wraps the work in `tokio::task::spawn_blocking`. This
 releases the Python GIL while the work runs. The results are:
 
