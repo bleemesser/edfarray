@@ -11,6 +11,7 @@ use edfarray_core::proxy::ReadStrategy;
 use crate::annotations::PyAnnotation;
 use crate::errors::{closed_file_err, invalid_argument_err, out_of_range_err, to_py_err};
 use crate::group::PySignalGroup;
+use crate::indexing::is_bool;
 use crate::proxy_2d::{PyProxy2D, parse_pad_mode};
 use crate::proxy_3d::PyProxy3D;
 use crate::signal::PySignal;
@@ -384,6 +385,11 @@ impl PyEdfFile {
         cache_capacity: usize,
         strategy: Option<&str>,
     ) -> PyResult<PySignal> {
+        if is_bool(idx_or_label) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "signal() argument must be int or str, not bool",
+            ));
+        }
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
             self.get()?.signal(idx).map_err(to_py_err)?
         } else if let Ok(idx) = idx_or_label.extract::<i64>() {

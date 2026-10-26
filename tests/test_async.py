@@ -216,6 +216,36 @@ async def test_signal_read_physical_matches_sync():
         async_f.close()
 
 
+async def test_read_range_clamps_stop_like_sync():
+    path = _pick_fixture()
+    sync_f = edfarray.EdfFile(str(path))
+    async_f = await aio.open(str(path))
+    try:
+        idx = async_f.ordinary_signal_indices()[0]
+        n = async_f.signal(idx).num_samples
+        sync_sig = sync_f.signal(idx)
+        async_sig = async_f.signal(idx)
+        np.testing.assert_array_equal(
+            await async_sig.read_range(n - 2, n + 100), sync_sig.read_range(n - 2, n + 100)
+        )
+        np.testing.assert_array_equal(
+            await async_sig.read_range_digital(n - 2, n + 100),
+            sync_sig.read_range_digital(n - 2, n + 100),
+        )
+        assert (await async_sig.read_range(n + 5, n + 10)).shape == (0,)
+    finally:
+        async_f.close()
+
+
+async def test_signal_rejects_bool_index():
+    async_f = await aio.open(str(_pick_fixture()))
+    try:
+        with pytest.raises(TypeError, match="bool"):
+            async_f.signal(True)
+    finally:
+        async_f.close()
+
+
 async def test_signal_to_physical_and_to_digital():
     path = _pick_fixture()
     async_f = await aio.open(str(path))

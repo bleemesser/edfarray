@@ -8,7 +8,7 @@ use edfarray_core::group::PadMode;
 use edfarray_core::proxy_2d::Proxy2D;
 
 use crate::errors::{invalid_argument_err, to_py_err};
-use crate::indexing::{extract_index, normalize_index, unsupported_index_err};
+use crate::indexing::{extract_index, normalize_index, range_len, unsupported_index_err};
 use crate::numpy_util::numpy_dtype;
 
 /// A 2D array proxy for numpy-style access to many signals.
@@ -267,21 +267,6 @@ impl SampleSlice {
             let abs = (self.start + k as isize * self.step) as usize;
             *slot = buf[abs - lo];
         }
-    }
-}
-
-/// Number of elements in `range(start, stop, step)`, matching Python semantics.
-fn range_len(start: isize, stop: isize, step: isize) -> usize {
-    if step > 0 {
-        if stop > start {
-            (((stop - start) + step - 1) / step) as usize
-        } else {
-            0
-        }
-    } else if start > stop {
-        (((start - stop) + (-step) - 1) / (-step)) as usize
-    } else {
-        0
     }
 }
 

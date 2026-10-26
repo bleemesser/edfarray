@@ -7,7 +7,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use edfarray_core::proxy_3d::Proxy3D;
 
 use crate::errors::to_py_err;
-use crate::indexing::{extract_index, unsupported_index_err};
+use crate::indexing::{extract_index, range_len, unsupported_index_err};
 use crate::numpy_util::numpy_dtype;
 
 /// A 3D proxy for a `Rectangular` signal group, with shape
@@ -330,21 +330,6 @@ impl AxisSpec {
 
     fn is_int(self) -> bool {
         matches!(self, AxisSpec::Int(_))
-    }
-}
-
-/// Number of elements in `range(start, stop, step)`, matching Python semantics.
-fn range_len(start: isize, stop: isize, step: isize) -> usize {
-    if step > 0 {
-        if stop > start {
-            (((stop - start) + step - 1) / step) as usize
-        } else {
-            0
-        }
-    } else if start > stop {
-        (((start - stop) + (-step) - 1) / (-step)) as usize
-    } else {
-        0
     }
 }
 

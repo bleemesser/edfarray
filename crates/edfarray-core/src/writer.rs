@@ -11,6 +11,12 @@ use crate::header::EdfVariant;
 /// Default minimum byte budget for the annotation channel per record.
 const DEFAULT_MIN_ANNOTATION_BYTES: usize = 120;
 
+/// Largest signal count that fits the 4-byte header field, annotation channel included.
+pub const MAX_SIGNALS: usize = 9_999;
+
+/// Largest integer that fits an 8-byte header field (samples per record, record count).
+pub const MAX_HEADER_INT: usize = 99_999_999;
+
 /// Signal metadata for the writer.
 #[derive(Debug, Clone)]
 pub struct WriterSignal {
@@ -61,6 +67,16 @@ impl WriterSignal {
                 reason: "must be > 0".to_string(),
             });
         }
+        if self.samples_per_record > MAX_HEADER_INT {
+            return Err(EdfError::InvalidSignalField {
+                index,
+                field: "samples_per_record",
+                reason: format!(
+                    "{} does not fit the 8-character EDF header field (max {MAX_HEADER_INT})",
+                    self.samples_per_record
+                ),
+            });
+        }
         if self.digital_min >= self.digital_max {
             return Err(EdfError::InvalidDigitalRange {
                 index,
@@ -88,17 +104,27 @@ impl WriterSignal {
                 ),
             });
         }
-        for (field, value) in [
+        let mut stored = [0.0; 2];
+        for (slot, (field, value)) in stored.iter_mut().zip([
             ("physical_min", self.physical_min),
             ("physical_max", self.physical_max),
-        ] {
-            if format_f64_field(value, 8).is_none() {
-                return Err(EdfError::InvalidSignalField {
-                    index,
-                    field,
-                    reason: format!("{value} does not fit the 8-character EDF header field"),
-                });
-            }
+        ]) {
+            *slot = header_value(value).ok_or_else(|| EdfError::InvalidSignalField {
+                index,
+                field,
+                reason: format!("{value} does not fit the 8-character EDF header field"),
+            })?;
+        }
+        // a reader with equal stored bounds sees a degenerate range and returns digital values
+        if stored[0] == stored[1] {
+            return Err(EdfError::InvalidSignalField {
+                index,
+                field: "physical_min/max",
+                reason: format!(
+                    "{} and {} both round to {} in the 8-character EDF header field",
+                    self.physical_min, self.physical_max, stored[0]
+                ),
+            });
         }
         Ok(())
     }
@@ -166,20 +192,44 @@ impl EdfWriter {
         if spec.signals.is_empty() {
             return Err(EdfError::NoSignals);
         }
+        let max_user_signals = MAX_SIGNALS - usize::from(spec.variant.is_plus());
+        if spec.signals.len() > max_user_signals {
+            return Err(EdfError::InvalidArgument {
+                name: "signals",
+                reason: format!(
+                    "{} signals do not fit the 4-character EDF header field (max {max_user_signals} \
+                     for {})",
+                    spec.signals.len(),
+                    spec.variant
+                ),
+            });
+        }
         if !spec.record_duration_secs.is_finite() || spec.record_duration_secs <= 0.0 {
             return Err(EdfError::InvalidArgument {
                 name: "record_duration_secs",
                 reason: format!("must be > 0, got {}", spec.record_duration_secs),
             });
         }
-        if format_f64_field(spec.record_duration_secs, 8).is_none() {
-            return Err(EdfError::InvalidArgument {
-                name: "record_duration_secs",
-                reason: format!(
-                    "{} does not fit the 8-character EDF header field",
-                    spec.record_duration_secs
-                ),
-            });
+        match header_value(spec.record_duration_secs) {
+            None => {
+                return Err(EdfError::InvalidArgument {
+                    name: "record_duration_secs",
+                    reason: format!(
+                        "{} does not fit the 8-character EDF header field",
+                        spec.record_duration_secs
+                    ),
+                });
+            }
+            Some(stored) if stored <= 0.0 => {
+                return Err(EdfError::InvalidArgument {
+                    name: "record_duration_secs",
+                    reason: format!(
+                        "{} rounds to {stored} in the 8-character EDF header field",
+                        spec.record_duration_secs
+                    ),
+                });
+            }
+            Some(_) => {}
         }
         // The 8-byte startdate field stores only two year digits, read back with an 85-pivot.
         // Outside this range the year cannot round-trip, so refuse rather than write a date
@@ -218,6 +268,15 @@ impl EdfWriter {
         } else {
             0
         };
+        if ann_bytes_per_record / sample_size > MAX_HEADER_INT {
+            return Err(EdfError::InvalidArgument {
+                name: "annotation_bytes_per_record",
+                reason: format!(
+                    "{ann_bytes_per_record} bytes give more samples per record than the \
+                     8-character EDF header field holds (max {MAX_HEADER_INT})"
+                ),
+            });
+        }
 
         if let Some(onsets) = &spec.record_onsets {
             if !spec.variant.is_plus_d() {
@@ -319,6 +378,15 @@ impl EdfWriter {
             return Err(EdfError::InvalidArgument {
                 name: "writer",
                 reason: "writer has been finished".to_string(),
+            });
+        }
+        if self.num_records_written >= MAX_HEADER_INT as u64 {
+            return Err(EdfError::InvalidArgument {
+                name: "num_records",
+                reason: format!(
+                    "the file already holds {MAX_HEADER_INT} records, the most the 8-character \
+                     EDF header field holds"
+                ),
             });
         }
         if physical.len() != self.spec.signals.len() {
@@ -478,14 +546,6 @@ impl EdfWriter {
             source: e,
         })?;
         let nrec = self.num_records_written.to_string();
-        if nrec.len() > 8 {
-            return Err(EdfError::InvalidArgument {
-                name: "num_records",
-                reason: format!(
-                    "wrote {nrec} records, which does not fit the 8-byte EDF header field"
-                ),
-            });
-        }
         let nrec_field = format_ascii_field(&nrec, 8);
         file.write_all(&nrec_field).map_err(|e| EdfError::Io {
             path: self.path.clone(),
@@ -641,6 +701,12 @@ fn format_f64_field(value: f64, size: usize) -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+/// Parse back the value that the 8-byte header field stores for `value`.
+fn header_value(value: f64) -> Option<f64> {
+    let field = format_f64_field(value, 8)?;
+    std::str::from_utf8(&field).ok()?.trim().parse().ok()
 }
 
 /// Format an 8-byte numeric header field. `create` validates these values first, so this only
@@ -1457,6 +1523,106 @@ mod tests {
             }
         ));
         assert!(!path.exists());
+    }
+
+    fn create_err(spec: WriterSpec) -> EdfError {
+        let dir = TempDir::new().unwrap();
+        match EdfWriter::create(dir.path().join("x.edf"), spec) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn rejects_record_duration_that_rounds_to_zero() {
+        let mut spec = sample_spec(EdfVariant::Edf);
+        spec.record_duration_secs = 1e-7;
+        assert!(matches!(
+            create_err(spec),
+            EdfError::InvalidArgument {
+                name: "record_duration_secs",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_physical_bounds_that_round_to_the_same_field() {
+        let mut spec = sample_spec(EdfVariant::Edf);
+        spec.signals[0].physical_min = 1e-9;
+        spec.signals[0].physical_max = 2e-9;
+        assert!(matches!(
+            create_err(spec),
+            EdfError::InvalidSignalField {
+                field: "physical_min/max",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_signal_count_over_header_limit() {
+        let sig = WriterSignal::new("EEG", "uV", -1.0, 1.0, -32768, 32767, 1);
+        let mut spec = sample_spec(EdfVariant::EdfPlusC);
+        spec.signals = vec![sig.clone(); MAX_SIGNALS];
+        assert!(matches!(
+            create_err(spec),
+            EdfError::InvalidArgument {
+                name: "signals",
+                ..
+            }
+        ));
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("max.edf");
+        let mut spec = sample_spec(EdfVariant::Edf);
+        spec.signals = vec![sig; MAX_SIGNALS];
+        let data = vec![0.0];
+        let mut w = EdfWriter::create(&path, spec).unwrap();
+        w.write_record_physical(&vec![data.as_slice(); MAX_SIGNALS])
+            .unwrap();
+        w.finish().unwrap();
+        assert_eq!(EdfFile::open(&path).unwrap().num_signals(), MAX_SIGNALS);
+    }
+
+    #[test]
+    fn rejects_samples_per_record_over_header_limit() {
+        let mut spec = sample_spec(EdfVariant::Edf);
+        spec.signals[0].samples_per_record = MAX_HEADER_INT + 1;
+        assert!(matches!(
+            create_err(spec),
+            EdfError::InvalidSignalField {
+                field: "samples_per_record",
+                ..
+            }
+        ));
+
+        let mut spec = sample_spec(EdfVariant::EdfPlusC);
+        spec.annotation_bytes_per_record = Some(2 * MAX_HEADER_INT + 2);
+        assert!(matches!(
+            create_err(spec),
+            EdfError::InvalidArgument {
+                name: "annotation_bytes_per_record",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_record_past_header_limit_before_writing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("long.edf");
+        let mut w = EdfWriter::create(&path, sample_spec(EdfVariant::Edf)).unwrap();
+        let data = ramp(256);
+        w.write_record_physical(&[&data]).unwrap();
+        w.num_records_written = MAX_HEADER_INT as u64;
+        assert!(matches!(
+            w.write_record_physical(&[&data]),
+            Err(EdfError::InvalidArgument {
+                name: "num_records",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -574,6 +574,11 @@ impl PyAsyncEdfFile {
         strategy: Option<&str>,
     ) -> PyResult<PyAsyncSignal> {
         let inner = self.get()?;
+        if crate::indexing::is_bool(idx_or_label) {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "signal() argument must be int or str, not bool",
+            ));
+        }
         let proxy = if let Ok(idx) = idx_or_label.extract::<usize>() {
             inner.signal(idx).map_err(to_py_err)?
         } else if let Ok(idx) = idx_or_label.extract::<i64>() {
@@ -691,6 +696,7 @@ impl PyAsyncSignal {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let buf: Vec<f64> = tokio::task::spawn_blocking(
                 move || -> Result<Vec<f64>, edfarray_core::error::EdfError> {
+                    let stop = stop.min(proxy.len());
                     let count = stop.saturating_sub(start);
                     let mut buf = vec![0.0; count];
                     if count > 0 {
@@ -718,6 +724,7 @@ impl PyAsyncSignal {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let buf: Vec<i32> = tokio::task::spawn_blocking(
                 move || -> Result<Vec<i32>, edfarray_core::error::EdfError> {
+                    let stop = stop.min(proxy.len());
                     let count = stop.saturating_sub(start);
                     let mut buf = vec![0i32; count];
                     if count > 0 {

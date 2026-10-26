@@ -54,6 +54,13 @@ class TestSupported:
         np.testing.assert_array_equal(picked[0], p2[2, 0:10])
         np.testing.assert_array_equal(picked[1], p2[0, 0:10])
 
+    def test_huge_step_returns_first_element(self, proxies):
+        p2, p3 = proxies
+        big = 2**63 - 1
+        np.testing.assert_array_equal(p2[0, 0:100:big], p2[0, 0:1])
+        np.testing.assert_array_equal(p2[0, 100:0:-big], p2[0, 100:101])
+        assert p3[0, 0, 0:100:big].shape == (1,)
+
     def test_scalar_results_are_floats(self, sig, proxies):
         p2, p3 = proxies
         assert isinstance(sig[0], float)
@@ -91,6 +98,10 @@ class TestRejected:
         # sample instead of numpy's mask semantics.
         with pytest.raises(TypeError, match="boolean"):
             sig[True]
+
+    def test_bool_rejected_as_signal_index(self, file):
+        with pytest.raises(TypeError, match="bool"):
+            file.signal(True)
 
     def test_bool_rejected_on_proxy_axes(self, proxies):
         p2, p3 = proxies

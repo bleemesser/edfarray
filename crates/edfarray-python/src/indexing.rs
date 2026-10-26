@@ -59,3 +59,15 @@ pub fn normalize_index(idx: isize, len: usize, what: &str) -> PyResult<usize> {
     }
     Ok(adjusted as usize)
 }
+
+/// Count the elements in `range(start, stop, step)`, matching Python semantics.
+///
+/// The arguments are the output of `slice.indices(len)`, so `step` is never `isize::MIN`.
+pub fn range_len(start: isize, stop: isize, step: isize) -> usize {
+    let span = if step > 0 { stop - start } else { start - stop };
+    if span <= 0 {
+        return 0;
+    }
+    // (span - 1) / step + 1 cannot overflow, unlike (span + step - 1) / step
+    (span as usize - 1) / step.unsigned_abs() + 1
+}
