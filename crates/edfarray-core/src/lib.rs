@@ -1,3 +1,4 @@
+pub(crate) mod alloc;
 pub mod annotation;
 pub mod edit;
 pub mod epoch;

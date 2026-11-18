@@ -13,8 +13,9 @@ common cases:
   use a `with` block. Use it for live recording or for files too large to keep in
   memory.
 
-For `+C`/`+D` variants, the writer creates the annotation channel (the `EDF Annotations`
-signal) automatically. Do not include it in your signal list.
+For `+C`/`+D` variants, the writer creates the annotation channel automatically. Do not
+include it in your signal list. The channel carries the label `EDF Annotations` for EDF+
+variants and `BDF Annotations` for BDF+ variants, as the two specifications require.
 
 ## One-shot: `write_edf`
 
@@ -123,8 +124,9 @@ f.write_to("output.edf", variant="EDF+C")  # collapse a discontinuous file
 
 `write_to` copies only the ordinary signals. An ordinary signal is a signal that
 is not the annotation channel. `write_to` builds the annotation channel again from
-the parsed annotations. It does not copy the channel byte for byte. If you omit
-`variant`, the new file keeps the source variant.
+the parsed annotations, and sizes it to hold the largest re-encoded record, so
+every file that the library opens can be copied. It does not copy the channel byte
+for byte. If you omit `variant`, the new file keeps the source variant.
 
 ### Copying a subset of channels
 
@@ -229,10 +231,20 @@ The writer rejects these inputs:
 - Empty signal lists
 - `digital_min >= digital_max` or `physical_min == physical_max`
 - Digital ranges outside the format's signed-integer width
-- User signals labeled `EDF Annotations` (the writer adds the annotation channel)
+- User signals labeled `EDF Annotations` or `BDF Annotations` (the writer adds the annotation
+  channel itself)
 - Annotations on plain `EDF`/`BDF` (use a `+C`/`+D` variant)
+- Annotations with a non-finite onset, or a duration that is `NaN`, infinite, or negative.
+  `add_annotation` raises on the queue call, `write_edf` before it writes any byte. On
+  read-back, such a value would drop or change the annotation silently.
+- Text header fields that do not fit their field or hold non-ASCII text. The field widths are:
+  label 16, physical dimension 8, transducer 80, prefiltering 80, patient ID 80, recording ID
+  80, reserved 32. The error names the field. (`write_to` still copies every file that the
+  library opens; it re-encodes header text the reader decoded lossily as `?`.)
 - Data lengths that do not match, or data that `samples_per_record` does not divide
 - Annotations that overflow the annotation channel (increase `annotation_bytes_per_record`)
+- An `annotation_bytes_per_record` smaller than the timekeeping annotation needs. Such a
+  channel cannot hold even one record.
 - Non-finite physical values. `NaN`, `+inf`, or `-inf` raise `InvalidArgumentError`,
   and the error names the signal and the sample position. The writer never changes
   clinical data silently.

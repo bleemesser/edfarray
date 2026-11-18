@@ -170,6 +170,61 @@ impl WriterSpec {
             record_onsets: None,
         }
     }
+
+    /// Reject header text that is longer than its EDF field or not ASCII.
+    fn validate_text_fields(&self) -> Result<()> {
+        for (i, sig) in self.signals.iter().enumerate() {
+            for (field, value, size) in [
+                ("label", &sig.label, 16),
+                ("transducer", &sig.transducer, 80),
+                ("physical_dimension", &sig.physical_dimension, 8),
+                ("prefiltering", &sig.prefiltering, 80),
+                ("reserved", &sig.reserved, 32),
+            ] {
+                if value.len() > size {
+                    return Err(EdfError::InvalidArgument {
+                        name: field,
+                        reason: format!(
+                            "signal {i}: {:?} is {} bytes, which does not fit the {size}-byte \
+                             EDF header field",
+                            value,
+                            value.len()
+                        ),
+                    });
+                }
+                if !value.is_ascii() {
+                    return Err(EdfError::InvalidArgument {
+                        name: field,
+                        reason: format!(
+                            "signal {i}: header text fields must be ASCII, found {:?}",
+                            value
+                        ),
+                    });
+                }
+            }
+        }
+        for (name, value) in [
+            ("patient_id", &self.patient_id),
+            ("recording_id", &self.recording_id),
+        ] {
+            if value.len() > 80 {
+                return Err(EdfError::InvalidArgument {
+                    name,
+                    reason: format!(
+                        "{value:?} is {} bytes, which does not fit the 80-byte EDF header field",
+                        value.len()
+                    ),
+                });
+            }
+            if !value.is_ascii() {
+                return Err(EdfError::InvalidArgument {
+                    name,
+                    reason: format!("header text fields must be ASCII, found {:?}", value),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Streaming EDF/BDF writer.
@@ -187,6 +242,13 @@ pub struct EdfWriter {
 impl EdfWriter {
     /// Open `path` for writing. `finish()` patches the record count into the header.
     pub fn create(path: impl AsRef<Path>, spec: WriterSpec) -> Result<Self> {
+        spec.validate_text_fields()?;
+        Self::create_for_copy(path, spec)
+    }
+
+    /// Create a writer without the header text checks, so `write_to` can copy text fields
+    /// that the reader accepted.
+    pub(crate) fn create_for_copy(path: impl AsRef<Path>, spec: WriterSpec) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
         if spec.signals.is_empty() {
@@ -248,17 +310,22 @@ impl EdfWriter {
         let sample_size = spec.variant.sample_size_bytes();
         for (i, sig) in spec.signals.iter().enumerate() {
             sig.validate(i, sample_size)?;
-            if sig.label.starts_with("EDF Annotations") {
+            if crate::signal::is_annotation_label(&sig.label) {
                 return Err(EdfError::InvalidSignalField {
                     index: i,
                     field: "label",
-                    reason: "user signals must not be labelled 'EDF Annotations'; \
-                             the writer adds the annotation channel automatically"
+                    reason: "user signals must not be labelled 'EDF Annotations' or \
+                             'BDF Annotations'; the writer adds the annotation channel \
+                             automatically"
                         .to_string(),
                 });
             }
         }
 
+        let start_subsecond = {
+            let nanos = spec.start_datetime.nanosecond();
+            (nanos as f64) / 1_000_000_000.0
+        };
         let ann_bytes_per_record = if spec.variant.is_plus() {
             let bytes = spec
                 .annotation_bytes_per_record
@@ -276,6 +343,19 @@ impl EdfWriter {
                      8-character EDF header field holds (max {MAX_HEADER_INT})"
                 ),
             });
+        }
+
+        if spec.variant.is_plus() {
+            let min_bytes = timekeeping_tal_bytes(start_subsecond);
+            if ann_bytes_per_record < min_bytes {
+                return Err(EdfError::InvalidArgument {
+                    name: "annotation_bytes_per_record",
+                    reason: format!(
+                        "{ann_bytes_per_record} bytes cannot hold even the timekeeping TAL, \
+                         which needs {min_bytes} bytes",
+                    ),
+                });
+            }
         }
 
         if let Some(onsets) = &spec.record_onsets {
@@ -305,11 +385,6 @@ impl EdfWriter {
                 });
             }
         }
-
-        let start_subsecond = {
-            let nanos = spec.start_datetime.nanosecond();
-            (nanos as f64) / 1_000_000_000.0
-        };
 
         // Truncating a file that another EdfFile has mapped makes that mapping raise SIGBUS on
         // its next read, so take the lock before truncating rather than at open.
@@ -355,9 +430,13 @@ impl EdfWriter {
         self.spec.variant.sample_size_bytes()
     }
 
-    /// Queue an annotation for the next record write.
-    pub fn add_annotation(&mut self, ann: Annotation) {
+    /// Queue an annotation for the next record write. Fails for a non-finite onset or a NaN,
+    /// infinite, or negative duration.
+    pub fn add_annotation(&mut self, ann: Annotation) -> Result<()> {
+        let index = self.pending_annotations.len();
+        validate_annotation(index, &ann)?;
         self.pending_annotations.push(ann);
+        Ok(())
     }
 
     /// Write one record from physical values. Flushes pending annotations.
@@ -457,6 +536,10 @@ impl EdfWriter {
                 }
                 None => record_idx as f64 * self.spec.record_duration_secs,
             };
+            // annotations passed here skip the add_annotation check
+            for (i, ann) in annotations.iter().enumerate() {
+                validate_annotation(i, ann)?;
+            }
             let combined: Vec<&Annotation> = annotations
                 .iter()
                 .chain(self.pending_annotations.iter())
@@ -621,6 +704,11 @@ pub fn write_edf(
         }
     }
     let num_records = num_records.unwrap_or(0);
+
+    // check every annotation before the file is created
+    for (i, ann) in annotations.iter().enumerate() {
+        validate_annotation(i, ann)?;
+    }
 
     let mut writer = EdfWriter::create(path, spec)?;
     let signals_count = writer.spec.signals.len();
@@ -831,12 +919,19 @@ fn write_field_block<W: Write, T, F: Fn(&T) -> Vec<u8>>(
     Ok(())
 }
 
+fn annotation_channel_label(variant: &EdfVariant) -> &'static str {
+    match variant {
+        EdfVariant::BdfPlusC | EdfVariant::BdfPlusD => "BDF Annotations",
+        _ => "EDF Annotations",
+    }
+}
+
 fn annotation_signal(spec: &WriterSpec, ann_bytes_per_record: usize) -> WriterSignal {
     let sample_size = spec.variant.sample_size_bytes();
     let samples_per_record = ann_bytes_per_record / sample_size;
     let (dmin, dmax) = digital_bounds(sample_size);
     WriterSignal {
-        label: "EDF Annotations".to_string(),
+        label: annotation_channel_label(&spec.variant).to_string(),
         transducer: String::new(),
         physical_dimension: String::new(),
         physical_min: -1.0,
@@ -847,6 +942,63 @@ fn annotation_signal(spec: &WriterSpec, ann_bytes_per_record: usize) -> WriterSi
         samples_per_record,
         reserved: String::new(),
     }
+}
+
+/// Reject a non-finite onset or a NaN, infinite, or negative duration, since a TAL cannot
+/// store them and the reader would drop or change the annotation.
+fn validate_annotation(index: usize, ann: &Annotation) -> Result<()> {
+    if !ann.onset.is_finite() {
+        return Err(EdfError::InvalidArgument {
+            name: "annotations",
+            reason: format!(
+                "annotation {index}: onset {} is not finite; TAL onsets must be finite",
+                ann.onset
+            ),
+        });
+    }
+    if let Some(dur) = ann.duration {
+        if !dur.is_finite() {
+            return Err(EdfError::InvalidArgument {
+                name: "annotations",
+                reason: format!("annotation {index}: duration {dur} is not finite"),
+            });
+        }
+        if dur < 0.0 {
+            return Err(EdfError::InvalidArgument {
+                name: "annotations",
+                reason: format!("annotation {index}: duration {dur} is negative"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Return the encoded length of one record's annotation channel, timekeeping TAL included.
+pub(crate) fn annotation_record_bytes(
+    record_onset: f64,
+    start_subsecond: f64,
+    annotations: &[Annotation],
+) -> usize {
+    let mut len = timekeeping_tal_bytes(record_onset + start_subsecond);
+    for ann in annotations {
+        len += annotation_tal_bytes(ann, start_subsecond);
+    }
+    len
+}
+
+/// Return the encoded length of one annotation TAL.
+pub(crate) fn annotation_tal_bytes(ann: &Annotation, start_subsecond: f64) -> usize {
+    let mut len = format_tal_onset(ann.onset + start_subsecond).len();
+    if let Some(dur) = ann.duration {
+        len += 1 + format_tal_duration(dur).len();
+    }
+    // text separator, text, trailing separator, terminator
+    len + 1 + ann.text.len() + 2
+}
+
+fn timekeeping_tal_bytes(onset: f64) -> usize {
+    // onset, two separators, terminator
+    format_tal_onset(onset).len() + 3
 }
 
 fn write_sample<W: Write>(path: &Path, w: &mut W, value: i32, sample_size: usize) -> Result<()> {
@@ -955,7 +1107,8 @@ fn format_tal_number(v: f64) -> String {
     if v.fract() == 0.0 && v.abs() < 1e15 {
         return format!("{}", v as i64);
     }
-    let s = format!("{:.6}", v);
+    // nanosecond precision matches how the reader stores the subsecond start
+    let s = format!("{:.9}", v);
     let trimmed = s.trim_end_matches('0').trim_end_matches('.');
     if trimmed.is_empty() || trimmed.ends_with('.') {
         return format!("{}", v as i64);
@@ -1031,7 +1184,7 @@ mod tests {
             text: text.to_string(),
         };
 
-        w.add_annotation(ann(0.5, "queued"));
+        w.add_annotation(ann(0.5, "queued")).unwrap();
         let oversize = ann(0.0, &"x".repeat(1000));
         assert!(
             w.write_record_with_annotations(&[&data], &[oversize])
@@ -1192,7 +1345,8 @@ mod tests {
                 onset: r as f64 + 0.1,
                 duration: None,
                 text: format!("rec{r}"),
-            });
+            })
+            .unwrap();
             w.write_record_physical(&[&chunk]).unwrap();
         }
         w.finish().unwrap();
@@ -1250,6 +1404,264 @@ mod tests {
             Err(e) => e,
         };
         assert!(matches!(err, EdfError::InvalidSignalField { .. }));
+    }
+
+    #[test]
+    fn rejects_user_bdf_annotation_label() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.bdf");
+        let mut spec = sample_spec(EdfVariant::BdfPlusC);
+        spec.signals[0].label = "BDF Annotations".into();
+        let err = match EdfWriter::create(&path, spec) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, EdfError::InvalidSignalField { .. }));
+    }
+
+    #[test]
+    fn roundtrip_bdf_plus_uses_bdf_annotation_label() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("plus.bdf");
+        let mut spec = sample_spec(EdfVariant::BdfPlusC);
+        spec.signals[0].digital_min = -8_388_608;
+        spec.signals[0].digital_max = 8_388_607;
+        let data: Vec<f64> = ramp(256 * 2);
+        let anns = vec![Annotation {
+            onset: 0.5,
+            duration: None,
+            text: "blink".into(),
+        }];
+        write_edf(&path, spec, &[&data], &anns).unwrap();
+
+        let f = EdfFile::open(&path).unwrap();
+        assert_eq!(f.variant(), EdfVariant::BdfPlusC);
+        assert_eq!(f.num_signals(), 2);
+        assert_eq!(f.signal(1).unwrap().header().label, "BDF Annotations");
+        assert_eq!(f.ordinary_signal_indices(), vec![0]);
+        let got = f.annotations();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].text, "blink");
+        assert!(f.warnings().is_empty(), "{:?}", f.warnings());
+
+        let dst = dir.path().join("copy.bdf");
+        f.write_to(&dst, None).unwrap();
+        let g = EdfFile::open(&dst).unwrap();
+        assert_eq!(g.signal(1).unwrap().header().label, "BDF Annotations");
+        assert_eq!(g.annotations().len(), 1);
+    }
+
+    #[test]
+    fn rejects_non_finite_annotation_onset_and_duration() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nan.edf");
+
+        let mut w = EdfWriter::create(&path, sample_spec(EdfVariant::EdfPlusC)).unwrap();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = w
+                .add_annotation(Annotation {
+                    onset: bad,
+                    duration: None,
+                    text: "x".into(),
+                })
+                .unwrap_err();
+            assert!(matches!(err, EdfError::InvalidArgument { .. }), "{err:?}");
+        }
+        let err = w
+            .add_annotation(Annotation {
+                onset: 0.5,
+                duration: Some(f64::NAN),
+                text: "x".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, EdfError::InvalidArgument { .. }));
+        let err = w
+            .add_annotation(Annotation {
+                onset: 0.5,
+                duration: Some(f64::INFINITY),
+                text: "x".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, EdfError::InvalidArgument { .. }));
+        let err = w
+            .add_annotation(Annotation {
+                onset: 0.5,
+                duration: Some(-1.0),
+                text: "x".into(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, EdfError::InvalidArgument { .. }));
+
+        let data = ramp(256);
+        w.write_record_physical(&[&data]).unwrap();
+        w.finish().unwrap();
+        let f = EdfFile::open(&path).unwrap();
+        assert!(f.annotations().is_empty());
+
+        let path = dir.path().join("nan2.edf");
+        let data = ramp(256 * 2);
+        let anns = vec![
+            Annotation {
+                onset: 0.5,
+                duration: None,
+                text: "ok".into(),
+            },
+            Annotation {
+                onset: f64::NAN,
+                duration: None,
+                text: "bad".into(),
+            },
+        ];
+        let err = write_edf(&path, sample_spec(EdfVariant::EdfPlusC), &[&data], &anns).unwrap_err();
+        assert!(matches!(err, EdfError::InvalidArgument { .. }));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn rejects_overlong_and_non_ascii_text_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wide.edf");
+
+        let overlong = sample_spec(EdfVariant::Edf);
+        let mut spec = overlong.clone();
+        spec.signals[0].label = "EEG channel with".to_string();
+        spec.signals[0].label.push_str(" a long name");
+        assert!(matches!(
+            EdfWriter::create(&path, spec),
+            Err(EdfError::InvalidArgument { name: "label", .. })
+        ));
+
+        let mut spec = overlong.clone();
+        spec.signals[0].physical_dimension = "microvolt".into();
+        assert!(matches!(
+            EdfWriter::create(&path, spec),
+            Err(EdfError::InvalidArgument {
+                name: "physical_dimension",
+                ..
+            })
+        ));
+
+        let mut spec = overlong.clone();
+        spec.signals[0].transducer = "x".repeat(81);
+        assert!(matches!(
+            EdfWriter::create(&path, spec),
+            Err(EdfError::InvalidArgument {
+                name: "transducer",
+                ..
+            })
+        ));
+
+        let mut spec = overlong.clone();
+        spec.patient_id = "x".repeat(81);
+        assert!(matches!(
+            EdfWriter::create(&path, spec),
+            Err(EdfError::InvalidArgument {
+                name: "patient_id",
+                ..
+            })
+        ));
+
+        let mut spec = overlong;
+        spec.signals[0].label = "Jos\u{e9}".into();
+        assert!(matches!(
+            EdfWriter::create(&path, spec),
+            Err(EdfError::InvalidArgument { name: "label", .. })
+        ));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn copies_files_with_non_utf8_header_text() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src.edf");
+        let dst = dir.path().join("dst.edf");
+        let mut bytes = {
+            let spec = sample_spec(EdfVariant::EdfPlusC);
+            let data = ramp(256);
+            write_edf(&src, spec, &[&data], &[]).unwrap();
+            std::fs::read(&src).unwrap()
+        };
+        // Latin-1 "Jos\u{e9}" in patient_id decodes to a lossy string that must still copy
+        bytes[8..88].fill(b'x');
+        bytes[8..12].copy_from_slice(b"Jos\xe9");
+        std::fs::write(&src, &bytes).unwrap();
+
+        let f = EdfFile::open(&src).unwrap();
+        assert!(f.header().patient_id.contains('\u{fffd}'));
+        f.write_to(&dst, None).unwrap();
+        let g = EdfFile::open(&dst).unwrap();
+        assert_eq!(g.header().patient_id, format!("Jos?{}", "x".repeat(76)));
+    }
+
+    #[test]
+    fn tal_numbers_keep_nanos_and_trim_zeros() {
+        assert_eq!(format_tal_number(0.5), "0.5");
+        assert_eq!(format_tal_number(0.1234567), "0.1234567");
+        assert_eq!(format_tal_number(1e-7), "0.0000001");
+        assert_eq!(format_tal_number(3.0000001), "3.0000001");
+        assert_eq!(format_tal_number(1.0000005), "1.0000005");
+        assert_eq!(format_tal_number(0.9999999), "0.9999999");
+        assert_eq!(format_tal_number(2.0), "2");
+    }
+
+    #[test]
+    fn roundtrip_keeps_subsecond_and_fine_onsets() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("subsecond.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusC);
+        spec.start_datetime += chrono::TimeDelta::nanoseconds(999_999_900);
+        let data = ramp(256 * 2);
+        let mut onsets = [0.1234567, 1e-7, 3.0000001, 1.0000005];
+        onsets.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let anns: Vec<Annotation> = onsets
+            .iter()
+            .map(|&t| Annotation {
+                onset: t,
+                duration: None,
+                text: "e".into(),
+            })
+            .collect();
+        write_edf(&path, spec, &[&data], &anns).unwrap();
+
+        let f = EdfFile::open(&path).unwrap();
+        f.wait_for_annotations();
+        assert!(f.warnings().is_empty(), "{:?}", f.warnings());
+        let subsecond = f.file().with_annotations(|idx| idx.starttime_subsecond);
+        assert!((subsecond - 0.9999999).abs() < 1e-9, "{subsecond}");
+
+        let mut got: Vec<f64> = f.annotations().iter().map(|a| a.onset).collect();
+        got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        for (&want, got) in onsets.iter().zip(got) {
+            assert!((got - want).abs() < 1e-9, "{got} vs {want}");
+        }
+
+        let dst = dir.path().join("copy.edf");
+        f.write_to(&dst, None).unwrap();
+        let g = EdfFile::open(&dst).unwrap();
+        g.wait_for_annotations();
+        assert!(g.warnings().is_empty(), "{:?}", g.warnings());
+        let subsecond = g.file().with_annotations(|idx| idx.starttime_subsecond);
+        assert!((subsecond - 0.9999999).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rejects_annotation_budget_below_timekeeping_tal() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("tiny.edf");
+        let mut spec = sample_spec(EdfVariant::EdfPlusC);
+        spec.annotation_bytes_per_record = Some(0);
+        let err = match EdfWriter::create(&path, spec) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => e,
+        };
+        assert!(matches!(
+            err,
+            EdfError::InvalidArgument {
+                name: "annotation_bytes_per_record",
+                ..
+            }
+        ));
+        assert!(!path.exists());
     }
 
     #[test]

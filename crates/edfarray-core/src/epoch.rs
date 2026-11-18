@@ -166,6 +166,22 @@ pub fn plan_epochs(
     // a row is always grid index `first + j`, where `first` is the first sample at or after
     // the window start.
     let n_samples = first_sample_at_or_after((pre + post) * sample_rate).max(1) as usize;
+    // a row that cannot fit in the address space is a units typo, not a request for more RAM
+    let row_bytes = group
+        .indices()
+        .len()
+        .checked_mul(n_samples)
+        .and_then(|row| row.checked_mul(std::mem::size_of::<f64>()));
+    if row_bytes.is_none_or(|bytes| bytes > isize::MAX as usize) {
+        return Err(epoch_argument(
+            "pre/post",
+            format!(
+                "window width {n_samples} samples x {} channels does not fit in one output \
+                 row; pre + post is too large",
+                group.indices().len()
+            ),
+        ));
+    }
     let n = n_samples as i64;
     let spr_i = spr as i64;
 
@@ -311,8 +327,22 @@ pub fn extract_epochs(
         _ => valid.clone(),
     };
 
-    let row_size = nc * n;
-    let mut data = vec![fill; kept.len() * row_size];
+    let row_size = nc.checked_mul(n).ok_or_else(|| {
+        epoch_argument(
+            "n_samples",
+            format!("{n} samples x {nc} channels overflows the row size"),
+        )
+    })?;
+    let total = kept.len().checked_mul(row_size).ok_or_else(|| {
+        epoch_argument(
+            "epochs",
+            format!(
+                "{} epochs x {row_size} samples per row overflows the output size",
+                kept.len()
+            ),
+        )
+    })?;
+    let mut data = crate::alloc::filled_vec(total, fill, "epochs")?;
 
     // Each task owns one row block (disjoint mutable slice), so the parallel closure never
     // shares `data`. Nothing to fill when no rows survived or the row width collapsed to zero.
@@ -485,6 +515,42 @@ mod tests {
 
     pub(super) fn group_of(file: &crate::file::EdfFile, indices: &[usize]) -> SignalGroup {
         SignalGroup::from_indices(file.header(), indices).unwrap()
+    }
+
+    #[test]
+    fn plan_rejects_absurd_window_width() {
+        let f = NamedTempFile::new().unwrap();
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0, 1]);
+        let err = plan_epochs(&file, &group, &[1.0], 1e300, 1e300).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                EdfError::InvalidArgument {
+                    name: "pre/post",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn extract_epochs_absurd_width_raises_instead_of_aborting() {
+        let f = NamedTempFile::new().unwrap();
+        // 1000 events x 2 channels x 2e8 samples is about 3.2 TB
+        write_contig(f.path().to_str().unwrap(), 10, 10.0, 2);
+        let file = crate::file::EdfFile::open(f.path()).unwrap();
+        let group = group_of(&file, &[0, 1]);
+        let plan = plan_epochs(&file, &group, &vec![0.0; 1000], 1e7, 1e7).unwrap();
+        assert_eq!(plan.n_samples, 200_000_000);
+        let err = extract_epochs(&file, &group, &plan, EpochPad::Fill(PadMode::Nan)).unwrap_err();
+        assert!(matches!(err, EdfError::MemoryRequest { .. }), "{err:?}");
+
+        let (data, _, dropped) = extract_epochs(&file, &group, &plan, EpochPad::Drop).unwrap();
+        assert!(data.is_empty());
+        assert_eq!(dropped.len(), 1000);
     }
 
     #[test]

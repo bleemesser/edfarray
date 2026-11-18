@@ -185,6 +185,10 @@ pub fn to_py_err(e: EdfError) -> PyErr {
             | EdfError::SampleOutOfRange { .. } => &c.out_of_range,
 
             EdfError::SignalNotFound { .. } => &c.signal_not_found,
+
+            EdfError::MemoryRequest { .. } => {
+                return pyo3::exceptions::PyMemoryError::new_err(message);
+            }
         };
         PyErr::from_type(cls.bind(py).clone(), message)
     })

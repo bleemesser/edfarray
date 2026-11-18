@@ -9,7 +9,7 @@ use edfarray_core::proxy_2d::Proxy2D;
 
 use crate::errors::{invalid_argument_err, to_py_err};
 use crate::indexing::{extract_index, normalize_index, range_len, unsupported_index_err};
-use crate::numpy_util::numpy_dtype;
+use crate::numpy_util::{numpy_dtype, try_flatten};
 
 /// A 2D array proxy for numpy-style access to many signals.
 ///
@@ -72,14 +72,8 @@ impl PyProxy2D {
         let data = py
             .detach(|| self.proxy.read_digital(&signals, start..stop))
             .map_err(to_py_err)?;
-        let array = numpy::PyArray2::<i32>::zeros(py, (signals.len(), count), false);
-        if count > 0 {
-            let slice = unsafe { array.as_slice_mut()? };
-            for (i, row) in data.iter().enumerate() {
-                slice[i * count..i * count + count].copy_from_slice(row);
-            }
-        }
-        Ok(array)
+        let flat = try_flatten(data, count)?;
+        numpy::PyArray1::from_vec(py, flat).reshape((signals.len(), count))
     }
 
     /// Always 2.

@@ -155,3 +155,28 @@ def test_annotation_text_with_reserved_tal_bytes_is_rejected(tmp_path):
                 data=[np.zeros(20)],
                 annotations=[edfarray.Annotation(onset=1.0, text=bad)],
             )
+
+
+def test_ordinary_tal_numbers_stay_short(tmp_path):
+    path = tmp_path / "short.edf"
+    edfarray.write_edf(
+        str(path),
+        variant="EDF+C",
+        record_duration=1.0,
+        signals=[
+            edfarray.WriterSignal(
+                label="S1",
+                physical_dimension="uV",
+                physical_min=-100.0,
+                physical_max=100.0,
+                digital_min=-32768,
+                digital_max=32767,
+                samples_per_record=10,
+            )
+        ],
+        data=[np.zeros(20)],
+        annotations=[edfarray.Annotation(onset=0.5, text="start", duration=0.25)],
+    )
+    raw = path.read_bytes()
+    assert b"+0.5\x150.25\x14" in raw
+    assert b"0.500000" not in raw

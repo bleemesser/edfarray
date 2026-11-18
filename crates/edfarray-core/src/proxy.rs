@@ -246,6 +246,14 @@ impl SignalProxy {
     }
 
     fn read_physical_cached(&self, start: usize, end: usize, out: &mut [f64]) -> Result<()> {
+        // a cache miss honors the read strategy, as an uncached read does
+        let stream = start < end && self.should_stream(start, end);
+        let record_size = self.file.layout.record_size;
+        let mut stream_buf: Vec<u8> = if stream {
+            vec![0u8; record_size]
+        } else {
+            Vec::new()
+        };
         let mut remaining_start = start;
         let mut out_pos = 0;
 
@@ -254,12 +262,6 @@ impl SignalProxy {
             let available = self.samples_per_record - offset;
             let needed = end - remaining_start;
             let count = available.min(needed);
-
-            let record_data = self.file.record_bytes(rec_idx)?;
-            let sig_bytes = self
-                .file
-                .layout
-                .signal_bytes(record_data, self.signal_idx)?;
 
             // One lock acquisition per record: the hit path returns under it, and the miss path
             // takes an evicted buffer to decode into so the hot loop does not allocate.
@@ -272,6 +274,18 @@ impl SignalProxy {
                     continue;
                 }
                 cache.take_buffer(self.samples_per_record)
+            };
+
+            let sig_bytes = if stream {
+                self.file.read_records_into(rec_idx, 1, &mut stream_buf)?;
+                self.file
+                    .layout
+                    .signal_bytes(&stream_buf, self.signal_idx)?
+            } else {
+                let record_data = self.file.record_bytes(rec_idx)?;
+                self.file
+                    .layout
+                    .signal_bytes(record_data, self.signal_idx)?
             };
 
             {
@@ -847,6 +861,43 @@ mod tests {
         let sig = SignalProxy::new(mapped, 0).unwrap().with_cache(0);
         let mut buf = vec![0.0; 4];
         sig.read_physical(0, 4, &mut buf).unwrap();
+    }
+
+    #[test]
+    fn cached_read_honors_strategy() {
+        let file = build_test_file(4, 5);
+        let mapped = MappedFile::open(file.path()).unwrap();
+
+        let streamed = SignalProxy::new(Arc::clone(&mapped), 0)
+            .unwrap()
+            .with_strategy(ReadStrategy::Stream)
+            .with_cache(2);
+        let mut buf = vec![0.0f64; streamed.len()];
+        streamed.read_physical(0, streamed.len(), &mut buf).unwrap();
+        let streamed_reads = mapped
+            .stream_reads
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            streamed_reads > 0,
+            "a stream-strategy cache miss must read through the bounded buffer"
+        );
+
+        let mapped_only = SignalProxy::new(Arc::clone(&mapped), 0)
+            .unwrap()
+            .with_strategy(ReadStrategy::Mmap)
+            .with_cache(2);
+        let mut buf2 = vec![0.0f64; mapped_only.len()];
+        mapped_only
+            .read_physical(0, mapped_only.len(), &mut buf2)
+            .unwrap();
+        assert_eq!(
+            mapped
+                .stream_reads
+                .load(std::sync::atomic::Ordering::Relaxed),
+            streamed_reads,
+            "an mmap-strategy cache miss must not read through the bounded buffer"
+        );
+        assert_eq!(buf, buf2);
     }
 
     fn write_field(buf: &mut [u8], offset: usize, size: usize, value: &str) {

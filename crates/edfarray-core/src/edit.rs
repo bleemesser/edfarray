@@ -413,23 +413,27 @@ impl AuditReport {
 
 /// Derive identity terms (lowercased) from the patient name, patient code, technician, and
 /// admin code subfields.
+/// Fall back to the tokens of the raw patient field when no subfield gives a term.
 fn identity_terms(header: &EdfHeader) -> Vec<String> {
     let mut terms: Vec<String> = Vec::new();
-    let mut add_tokens = |value: Option<&str>, min_len: usize| {
-        if let Some(value) = value {
-            for token in value.split([' ', '_']) {
-                let t = token.trim().to_lowercase();
-                if t.len() >= min_len && t != "x" && !terms.contains(&t) {
-                    terms.push(t);
-                }
-            }
-        }
-    };
-    add_tokens(header.patient.name.as_deref(), 3);
-    add_tokens(header.patient.code.as_deref(), 4);
-    add_tokens(header.recording.technician.as_deref(), 3);
-    add_tokens(header.recording.admin_code.as_deref(), 4);
+    add_identity_tokens(&mut terms, header.patient.name.as_deref(), 3);
+    add_identity_tokens(&mut terms, header.patient.code.as_deref(), 4);
+    add_identity_tokens(&mut terms, header.recording.technician.as_deref(), 3);
+    add_identity_tokens(&mut terms, header.recording.admin_code.as_deref(), 4);
+    if terms.is_empty() {
+        add_identity_tokens(&mut terms, Some(&header.patient_id), 3);
+    }
     terms
+}
+
+fn add_identity_tokens(terms: &mut Vec<String>, value: Option<&str>, min_len: usize) {
+    let Some(value) = value else { return };
+    for token in value.split([' ', '_']) {
+        let t = token.trim().to_lowercase();
+        if t.len() >= min_len && t != "x" && !terms.contains(&t) {
+            terms.push(t);
+        }
+    }
 }
 
 /// Scan signal labels, transducers, prefilters, and annotation text for strings that repeat
@@ -731,8 +735,8 @@ fn generate_pseudonym(seed: &str, subject: &str) -> String {
 }
 
 /// Date shift in days, taken from `seed`. The hash is not stretched, on purpose. The shift has
-/// only `span` possible values, so an attacker can try all of them, whatever the seed hash is.
-/// A stretch will give no protection here and will double the cost of every call.
+/// only `2 * span - 2` possible values, so an attacker can try all of them, whatever the seed
+/// hash is. A stretch will give no protection here and will double the cost of every call.
 fn derive_shift_days(seed: &str) -> i32 {
     let digest = hmac_sha256(seed.as_bytes(), b"dates", b"");
     // +/-10 years, skipping 0 (a zero shift leaves dates untouched).
@@ -786,7 +790,7 @@ mod tests {
             ),
             record_duration_secs: 1.0,
             signals: vec![WriterSignal::new(
-                "EEG Haagansen Fpz",
+                "EEG Haagansen",
                 "uV",
                 -3200.0,
                 3200.0,
@@ -1077,6 +1081,51 @@ mod tests {
         assert!(!residual.is_clean());
         assert!(residual.hits.iter().all(|h| h.term == "haagansen"));
         assert_eq!(residual.hits.len(), 2);
+    }
+
+    #[test]
+    fn audit_falls_back_to_raw_patient_field_tokens() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("free.edf");
+        let spec = WriterSpec {
+            variant: EdfVariant::EdfPlusC,
+            patient_id: "John Smith".into(),
+            recording_id: "Startdate 01-JAN-2026 X X X".into(),
+            start_datetime: NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            ),
+            record_duration_secs: 1.0,
+            signals: vec![WriterSignal::new(
+                "EEG Fpz", "uV", -3200.0, 3200.0, -32768, 32767, 32,
+            )],
+            annotation_bytes_per_record: None,
+            record_onsets: None,
+        };
+        let anns = vec![Annotation {
+            onset: 0.5,
+            duration: None,
+            text: "John Smith sat up".into(),
+        }];
+        write_edf(&path, spec, &[&vec![0.0f64; 64]], &anns).unwrap();
+
+        let report = audit(&path).unwrap();
+        assert!(report.terms.contains(&"john".to_string()));
+        assert!(report.terms.contains(&"smith".to_string()));
+        assert!(!report.is_clean(), "unexpected clean: {:?}", report.hits);
+
+        let ann_hits: Vec<_> = report
+            .hits
+            .iter()
+            .filter(|h| h.signal_index.is_none())
+            .collect();
+        assert_eq!(ann_hits.len(), 2);
+        assert_eq!(ann_hits[0].term, "john");
+        assert_eq!(ann_hits[1].term, "smith");
+
+        let result = anonymize(&path, &AnonymizeOptions::default()).unwrap();
+        assert!(result.scrubbed_terms.contains(&"john".to_string()));
+        assert!(result.scrubbed_terms.contains(&"smith".to_string()));
     }
 
     #[test]

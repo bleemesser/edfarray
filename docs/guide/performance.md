@@ -87,6 +87,9 @@ automatic path causes 2. To force one mode, use `f.signal(0, strategy="mmap")` o
 `strategy="stream"`. The default is `"auto"`. Streaming is slower than a warm mapping. If you
 know that the data will not be in the page cache, you can set `"stream"` explicitly. In other cases, do not set it.
 
+The choice also covers a `Signal` with `cache_capacity` set. On a cache miss, the signal fetches
+the record the same way, so `strategy="stream"` still avoids one page fault per record.
+
 ## Async annotation scan
 
 For large files, the annotation scan can take a noticeable time. An example is a 24-hour EEG of approximately 12 GB. edfarray runs the scan in the background, so you can read signal data immediately:

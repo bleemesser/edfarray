@@ -32,6 +32,12 @@ except edfarray.EdfError:              # anything from edfarray
 An index of an unsupported type raises `TypeError`, as in numpy. `TypeError` is not part of
 the `EdfError` hierarchy, because it shows a programming error, not a data problem.
 
+A request for a buffer larger than the machine can give raises the builtin `MemoryError`, not
+an `EdfError`. Examples are `Proxy2D.read_digital` over a sample range far past the end of the
+file with a pad mode, and `extract_epochs` with a `pre` or `post` of `1e12`. A window that no
+index can hold, such as `pre=1e300`, raises `InvalidArgumentError` before the allocation. In
+both cases the process stays alive, so the caller can catch the error and fix the request.
+
 ## Supported indexing
 
 A proxy is an object that reads samples only on access. `Signal`, `Proxy2D`, and `Proxy3D`

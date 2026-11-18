@@ -78,6 +78,7 @@ sig = f.signal("EEG Fpz-Cz", cache_capacity=8)  # cache 8 decoded records
 - Set the capacity to a few records more than your largest repeated window: `ceil(window_samples / samples_per_record) + 2`. For example, you read 5-second windows many times from a 256 Hz signal with 256 samples per record. For this case, the capacity is `ceil(5*256 / 256) + 2 = 7`.
 - The cache makes only physical reads faster (`to_physical()`, slicing). `to_digital()` always decodes again from the memory map and ignores the cache.
 - Each `Signal` instance has its own cache. If you call `f.signal(...)` again, the new instance starts with an empty cache.
+- A cache miss reads with the same `strategy` as an uncached read. With `strategy="stream"` (or an `"auto"` miss on a large, cold span), the missed record comes through a bounded sequential read instead of a page fault on the mapping.
 
 The `cache_capacity` argument works the same way in the [async API](async.md).
 
@@ -202,7 +203,7 @@ data. Reads of more than one signal run in parallel with rayon.
 
 ## Annotation signals
 
-EDF+ files contain one or more annotation channels. An annotation channel is an "EDF Annotations" signal that holds timing and event data. `num_signals` includes the annotation channels, and you can access them like other signals. But their "samples" are raw annotation bytes, and these bytes have no meaning as signal data.
+EDF+ files contain one or more annotation channels. An annotation channel is a signal with the label `EDF Annotations` (in an EDF+ file) or `BDF Annotations` (in a BDF+ file). It holds timing and event data. `num_signals` includes the annotation channels, and you can access them like other signals. But their "samples" are raw annotation bytes, and these bytes have no meaning as signal data.
 
 An ordinary signal is a signal that is not the annotation channel. To get only the ordinary signals, use `ordinary_signal_indices()`:
 

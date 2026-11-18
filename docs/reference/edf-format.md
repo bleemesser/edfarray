@@ -53,7 +53,7 @@ EDF+ is backward-compatible with EDF. This section gives the differences.
 
 The reserved field in the main header contains `"EDF+C"` for contiguous recordings or `"EDF+D"` for discontinuous recordings.
 
-One or more signals have the label `"EDF Annotations"`. Each of these signals is an annotation channel. An annotation channel contains TALs (time-stamped annotation lists) instead of signal data.
+One or more signals have the label `"EDF Annotations"` (in an EDF+ file) or `"BDF Annotations"` (in a BDF+ file). Each of these signals is an annotation channel. An annotation channel contains TALs (time-stamped annotation lists) instead of signal data.
 
 ### Patient identification (EDF+)
 

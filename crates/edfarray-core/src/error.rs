@@ -74,6 +74,15 @@ pub enum EdfError {
 
     #[error("{name}: {reason}")]
     InvalidArgument { name: &'static str, reason: String },
+
+    /// The allocator refused a read or epoch buffer. Python raises it as `MemoryError`.
+    #[error("cannot allocate {bytes} bytes for {name} ({elements} elements)")]
+    MemoryRequest {
+        name: &'static str,
+        elements: usize,
+        // u128 because elements * size_of can exceed usize
+        bytes: u128,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, EdfError>;

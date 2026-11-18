@@ -1,7 +1,9 @@
 use numpy::PyArrayMethods;
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyMemoryError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+
+use crate::numpy_util::try_copy;
 
 use edfarray_core::epoch::EpochPad;
 use edfarray_core::file::EdfFile;
@@ -163,11 +165,16 @@ impl PyEpochs {
     #[gen_stub(override_return_type(type_repr = "numpy.typing.NDArray[numpy.float64]", imports = ("numpy",)))]
     fn data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let (a, b, c) = self.shape;
-        let array = numpy::PyArray3::<f64>::zeros(py, (a, b, c), false);
-        if !self.data.is_empty() {
-            unsafe { array.as_slice_mut()? }.copy_from_slice(&self.data);
+        // a "drop" result can hold zero epochs of a width that numpy cannot describe
+        let epoch_bytes = b as u128 * c as u128 * std::mem::size_of::<f64>() as u128;
+        if epoch_bytes > i64::MAX as u128 {
+            return Err(PyMemoryError::new_err(format!(
+                "Epochs shape ({a}, {b}, {c}) is too large for a NumPy array"
+            )));
         }
-        Ok(array.into_any().to_owned())
+        let buf = try_copy(&self.data)?;
+        let array = numpy::PyArray1::from_vec(py, buf).reshape((a, b, c))?;
+        Ok(array.into_any())
     }
 
     /// The event onset times in caller order, as float64.

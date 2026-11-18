@@ -392,7 +392,7 @@ Writes a file one record at a time. `EdfWriter` supports the context manager pro
 
 `write_record(physical: list[numpy.ndarray], annotations: list[Annotation] | None = None) -> None`: Encodes and appends one record. `physical[i]` must be a 1D float64 array of length `signals[i].samples_per_record`. If you pass `annotations`, edfarray embeds them in the annotation channel of this record. It also embeds any pending annotations that `add_annotation` queued.
 
-`add_annotation(annotation: Annotation) -> None`: Queues an annotation. edfarray embeds it with the next `write_record` call.
+`add_annotation(annotation: Annotation) -> None`: Queues an annotation. edfarray embeds it with the next `write_record` call. It raises `InvalidArgumentError` for a non-finite onset, or a duration that is `NaN`, infinite, or negative, before anything is recorded.
 
 `finish() -> None`: Flushes the data, then seeks back and patches `num_records` in the header. A second call does nothing. `__exit__` calls `finish()`.
 
@@ -484,7 +484,7 @@ Returns a dict with `pseudonym`, `date_shift_days`, `patient_id_before`, `patien
 edfarray.audit(path: str, terms: Sequence[str] | None = None) -> dict
 ```
 
-Searches signal labels, transducers, prefiltering text, and annotation text for identity strings. If `terms` is `None`, `audit` takes the terms from the current header. After `anonymize`, pass its `scrubbed_terms`. Returns a dict with `terms`, `clean`, and `hits`. Each hit has `location`, `signal_index` (`None` for annotation text), `term`, and `excerpt`. `audit` only reads the file, so it works on an open file.
+Searches signal labels, transducers, prefiltering text, and annotation text for identity strings. If `terms` is `None`, `audit` takes the terms from the current header. A patient field without the EDF+ subfields gives no subfield terms, so `audit` falls back to the tokens of the raw patient field, split at spaces and underscores. After `anonymize`, pass its `scrubbed_terms`. Returns a dict with `terms`, `clean`, and `hits`. Each hit has `location`, `signal_index` (`None` for annotation text), `term`, and `excerpt`. `audit` only reads the file, so it works on an open file.
 
 ---
 

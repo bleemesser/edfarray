@@ -309,3 +309,54 @@ def test_fractional_width_valid_rows_are_fully_real(tmp_path):
     assert ep.valid.all()
     assert not np.isnan(ep.data).any()
     assert (np.diff(ep.data, axis=2) == 1.0).all()
+
+
+def test_absurd_window_width_raises_instead_of_panicking(tmp_path):
+
+    path = tmp_path / "wide.edf"
+    sig = edfarray.WriterSignal(
+        label="EEG",
+        physical_dimension="uV",
+        physical_min=-32768.0,
+        physical_max=32767.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=256,
+    )
+    edfarray.write_edf(
+        str(path),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+        data=[np.zeros(256 * 4)],
+    )
+    with edfarray.EdfFile(str(path)) as f:
+        with pytest.raises(edfarray.InvalidArgumentError, match="pre/post"):
+            f.extract_epochs([0.0], pre=1e300, post=1e300, pad="nan")
+
+
+def test_huge_padded_epoch_request_raises_instead_of_aborting(tmp_path):
+
+    path = tmp_path / "big.edf"
+    sig = edfarray.WriterSignal(
+        label="EEG",
+        physical_dimension="uV",
+        physical_min=-32768.0,
+        physical_max=32767.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=256,
+    )
+    edfarray.write_edf(
+        str(path),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+        data=[np.zeros(256 * 4)],
+    )
+    with edfarray.EdfFile(str(path)) as f:
+        with pytest.raises(MemoryError):
+            f.extract_epochs([0.0] * 1000, pre=1e7, post=1e7, pad="nan")
+        # drop also raises at plan time, since one row cannot hold the width
+        with pytest.raises(edfarray.InvalidArgumentError, match="pre/post"):
+            f.extract_epochs([0.0], pre=1e300, post=1e300, pad="drop")

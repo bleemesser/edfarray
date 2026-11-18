@@ -1,7 +1,14 @@
 use crate::error::{EdfError, Result};
 
-/// Label that EDF+ uses to identify an annotation channel.
-const EDF_ANNOTATIONS_LABEL: &str = "EDF Annotations";
+/// Label prefixes that mark an annotation channel in EDF+ and BDF+.
+const ANNOTATION_LABELS: [&str; 2] = ["EDF Annotations", "BDF Annotations"];
+
+/// Report whether `label` names an annotation channel, under either the EDF+ or BDF+ label.
+pub fn is_annotation_label(label: &str) -> bool {
+    ANNOTATION_LABELS
+        .iter()
+        .any(|prefix| label.starts_with(prefix))
+}
 
 /// Metadata for a single signal, parsed from the per-signal header fields.
 #[derive(Debug, Clone)]
@@ -42,7 +49,7 @@ impl SignalHeader {
         let num_samples = parse_signal_usize(data, index, num_signals, 216, 8, "num_samples")?;
         let reserved = read_signal_field(data, index, num_signals, 224, 32)?;
 
-        let is_annotation = label.starts_with(EDF_ANNOTATIONS_LABEL);
+        let is_annotation = is_annotation_label(&label);
 
         // A degenerate range has no usable scale, so digital values pass through unscaled.
         let phys_scale = physical_min.abs().max(physical_max.abs());
@@ -249,6 +256,31 @@ mod tests {
         let data = build_signal_header_bytes(1, &fields);
         let sig = SignalHeader::parse(&data, 0, 1, &mut Vec::new()).unwrap();
         assert!(sig.is_annotation);
+    }
+
+    #[test]
+    fn bdf_annotation_label_is_detected() {
+        let fields: Vec<(&[u8], usize)> = vec![
+            (b"BDF Annotations", 16),
+            (b"", 80),
+            (b"", 8),
+            (b"0", 8),
+            (b"1", 8),
+            (b"0", 8),
+            (b"1", 8),
+            (b"", 80),
+            (b"30", 8),
+            (b"", 32),
+        ];
+        let data = build_signal_header_bytes(1, &fields);
+        let mut warnings = Vec::new();
+        let sig = SignalHeader::parse(&data, 0, 1, &mut warnings).unwrap();
+        assert!(sig.is_annotation);
+
+        assert!(warnings.is_empty());
+        assert!(is_annotation_label("BDF Annotations "));
+        assert!(is_annotation_label("EDF Annotations  "));
+        assert!(!is_annotation_label("EEG Fpz-Cz"));
     }
 
     #[test]

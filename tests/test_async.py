@@ -567,3 +567,64 @@ async def test_signal_rejects_unknown_strategy():
     f = await aio.open(str(_pick_fixture()))
     with pytest.raises(ValueError):
         f.signal(0, strategy="bogus")
+
+
+async def test_extract_epochs_huge_request_raises_instead_of_aborting(tmp_path):
+
+    sig = edfarray.WriterSignal(
+        label="EEG",
+        physical_dimension="uV",
+        physical_min=-32768.0,
+        physical_max=32767.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=256,
+    )
+    edfarray.write_edf(
+        str(tmp_path / "async.edf"),
+        variant="EDF",
+        record_duration=1.0,
+        signals=[sig],
+        data=[np.zeros(256 * 4)],
+    )
+    f = await aio.open(str(tmp_path / "async.edf"))
+    try:
+        with pytest.raises(MemoryError):
+            await f.extract_epochs([0.0] * 1000, pre=1e7, post=1e7, pad="nan")
+    finally:
+        f.close()
+
+
+async def test_async_writer_rejects_a_bad_annotation(tmp_path):
+    out = tmp_path / "bad_ann.edf"
+    sig = aio.WriterSignal(
+        label="ch1",
+        physical_dimension="uV",
+        physical_min=-1.0,
+        physical_max=1.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=10,
+    )
+    w = await aio.EdfWriter.create(
+        str(out),
+        variant="EDF+C",
+        record_duration=1.0,
+        signals=[sig],
+    )
+    with pytest.raises(edfarray.InvalidArgumentError, match="annotations"):
+        await w.add_annotation(edfarray.Annotation(0.5, "x", float("nan")))
+    with pytest.raises(edfarray.InvalidArgumentError, match="annotations"):
+        await w.write_record(
+            [np.zeros(10, dtype=np.float64)],
+            annotations=[edfarray.Annotation(float("inf"), "y")],
+        )
+    await w.write_record([np.zeros(10, dtype=np.float64)])
+    await w.finish()
+
+    f = await aio.open(str(out))
+    try:
+        assert f.num_records == 1
+        assert list(f.annotations) == []
+    finally:
+        f.close()

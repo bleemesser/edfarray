@@ -302,7 +302,8 @@ where
     }
 
     let count = req_end.saturating_sub(req_start);
-    let mut buf = vec![zero; count];
+    // a padded read returns the full requested width, so it cannot clamp to the file
+    let mut buf = crate::alloc::filled_vec(count, zero, "read width")?;
     if count == 0 {
         return Ok(buf);
     }
@@ -504,5 +505,20 @@ mod tests {
         assert_eq!(data.len(), 2);
         assert!((data[0][0] - 0.0).abs() < f64::EPSILON);
         assert!((data[1][0] - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn huge_padded_read_raises_instead_of_aborting() {
+        let f = build_test_file(2, 2, 4);
+        let mapped = open(&f);
+        for mode in [PadMode::Zero, PadMode::Edge, PadMode::Value(1.0)] {
+            let p = Proxy2D::from_indices(mapped.clone(), &[0], mode).unwrap();
+            let err = p.read_digital(&[0], 0..1_000_000_000_000).unwrap_err();
+            assert!(matches!(err, EdfError::MemoryRequest { .. }), "{err:?}");
+        }
+
+        let p = Proxy2D::from_indices(mapped, &[0], PadMode::Raise).unwrap();
+        let err = p.read_digital(&[0], 0..1_000_000_000_000).unwrap_err();
+        assert!(matches!(err, EdfError::SampleOutOfRange { .. }));
     }
 }

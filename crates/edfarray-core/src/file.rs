@@ -407,7 +407,7 @@ impl EdfFile {
         signals: Option<&[usize]>,
     ) -> Result<()> {
         use crate::writer::{EdfWriter, WriterSignal, WriterSpec};
-        use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+        use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
         let target_variant = variant.unwrap_or(self.variant());
         let header = &self.file.header;
@@ -467,21 +467,6 @@ impl EdfFile {
             });
         }
 
-        // Inherit the source annotation channel's byte budget so copying a file whose
-        // annotation channel is larger than the writer's 120-byte default does not
-        // overflow. The budget is in bytes; `EdfWriter::create` rounds it up to a
-        // multiple of the target sample size.
-        let annotation_bytes_per_record = if target_variant.is_plus() {
-            let source_sample_size = header.variant.sample_size_bytes();
-            header
-                .signals
-                .iter()
-                .find(|s| s.is_annotation)
-                .map(|s| s.num_samples * source_sample_size)
-        } else {
-            None
-        };
-
         // An EDF+D to EDF+D copy preserves the source record onsets, so the discontinuity
         // survives the rewrite. Any other target flattens to uniform timing. Reading the
         // table blocks until the source annotation scan finishes.
@@ -493,19 +478,6 @@ impl EdfFile {
         let keep_onsets = source_onsets.is_some() && target_variant.is_plus_d();
         let pack_gaps = source_onsets.is_some() && !target_variant.is_plus_d();
 
-        let spec = WriterSpec {
-            variant: target_variant,
-            patient_id: header.patient_id.clone(),
-            recording_id: header.recording_id.clone(),
-            start_datetime,
-            record_duration_secs: header.record_duration_secs,
-            signals: signals_spec,
-            annotation_bytes_per_record,
-            record_onsets: source_onsets.clone().filter(|_| keep_onsets),
-        };
-
-        let mut writer = EdfWriter::create(path, spec)?;
-
         let record_dur = header.record_duration_secs;
         let num_records = self.num_records();
         let source_onset = |r: usize| {
@@ -514,12 +486,61 @@ impl EdfFile {
                 .and_then(|o| o.get(r).copied())
                 .unwrap_or(r as f64 * record_dur)
         };
+        let dest_onset = |r: usize| {
+            if keep_onsets {
+                source_onset(r)
+            } else {
+                r as f64 * record_dur
+            }
+        };
         let annotations = if target_variant.is_plus() {
             self.annotations()
         } else {
             Vec::new()
         };
-        let mut next_ann = 0;
+
+        // assign annotations to records first, so the budget fits the largest re-encoded record
+        let per_record = assign_annotations(
+            &annotations,
+            num_records,
+            record_dur,
+            source_onset,
+            pack_gaps,
+        );
+
+        // the writer takes the subsecond start from `start_datetime`, so the budget must too
+        let writer_subsecond = start_datetime.nanosecond() as f64 / 1_000_000_000.0;
+        let annotation_bytes_per_record = if target_variant.is_plus() {
+            let mut budget = per_record
+                .iter()
+                .enumerate()
+                .map(|(r, anns)| {
+                    crate::writer::annotation_record_bytes(dest_onset(r), writer_subsecond, anns)
+                })
+                .max()
+                .unwrap_or(0);
+            // a file with no records still needs room for the timekeeping TAL
+            let first_tal =
+                crate::writer::annotation_record_bytes(dest_onset(0), writer_subsecond, &[]);
+            budget = budget.max(first_tal);
+            Some(budget)
+        } else {
+            None
+        };
+
+        let spec = WriterSpec {
+            variant: target_variant,
+            patient_id: header.patient_id.clone(),
+            recording_id: header.recording_id.clone(),
+            start_datetime,
+            record_duration_secs: record_dur,
+            signals: signals_spec,
+            annotation_bytes_per_record,
+            record_onsets: source_onsets.clone().filter(|_| keep_onsets),
+        };
+
+        // a source header may hold non-ASCII bytes, which the copy writes as '?'
+        let mut writer = EdfWriter::create_for_copy(path, spec)?;
 
         // Stream records to avoid loading entire file into RAM.
         let mut proxies: Vec<SignalProxy> = Vec::with_capacity(ordinary.len());
@@ -532,41 +553,50 @@ impl EdfFile {
             .map(|p| vec![0.0f64; p.header().num_samples])
             .collect();
 
-        let mut record_annotations = Vec::new();
-        for r in 0..num_records {
+        for (r, record_annotations) in per_record.iter().enumerate() {
             for (buf, p) in bufs.iter_mut().zip(proxies.iter()) {
                 let spr = p.header().num_samples;
                 let start = r * spr;
                 p.read_physical(start, start + spr, buf)?;
             }
             let row: Vec<&[f64]> = bufs.iter().map(|b| b.as_slice()).collect();
-
-            // annotations are sorted by onset, so each record takes those that start before
-            // the next record, and the last record takes the rest
-            let record_start = source_onset(r);
-            let is_last = r + 1 == num_records;
-            let next_start = source_onset(r + 1);
-            record_annotations.clear();
-            while next_ann < annotations.len()
-                && (is_last || annotations[next_ann].onset < next_start)
-            {
-                let mut ann = annotations[next_ann].clone();
-                if pack_gaps {
-                    // keep the annotation at the same offset into its record. Only gap
-                    // annotations exceed the record, so the clamp moves them to the gap's end.
-                    let lo = if r == 0 { f64::NEG_INFINITY } else { 0.0 };
-                    let hi = if is_last { f64::INFINITY } else { record_dur };
-                    ann.onset = r as f64 * record_dur + (ann.onset - record_start).clamp(lo, hi);
-                }
-                record_annotations.push(ann);
-                next_ann += 1;
-            }
-            writer.write_record_with_annotations(&row, &record_annotations)?;
+            writer.write_record_with_annotations(&row, record_annotations)?;
         }
 
         writer.finish()?;
         Ok(())
     }
+}
+
+/// Split onset-sorted `annotations` into the records their source onsets fall in. With
+/// `pack_gaps`, move each one to the same offset into its record on a uniform timeline.
+fn assign_annotations(
+    annotations: &[Annotation],
+    num_records: usize,
+    record_dur: f64,
+    source_onset: impl Fn(usize) -> f64,
+    pack_gaps: bool,
+) -> Vec<Vec<Annotation>> {
+    let mut per_record: Vec<Vec<Annotation>> = (0..num_records).map(|_| Vec::new()).collect();
+    let mut next_ann = 0;
+    for (r, record) in per_record.iter_mut().enumerate() {
+        let record_start = source_onset(r);
+        let is_last = r + 1 == num_records;
+        let next_start = source_onset(r + 1);
+        while next_ann < annotations.len() && (is_last || annotations[next_ann].onset < next_start)
+        {
+            let mut ann = annotations[next_ann].clone();
+            if pack_gaps {
+                // only gap annotations exceed the record, so the clamp moves them to the gap's end
+                let lo = if r == 0 { f64::NEG_INFINITY } else { 0.0 };
+                let hi = if is_last { f64::INFINITY } else { record_dur };
+                ann.onset = r as f64 * record_dur + (ann.onset - record_start).clamp(lo, hi);
+            }
+            record.push(ann);
+            next_ann += 1;
+        }
+    }
+    per_record
 }
 
 /// Make sure that a `write_to` signal selection is not empty, is in range, has no annotation
@@ -649,13 +679,11 @@ impl EdfFile {
             })?;
 
         let mut header = EdfHeader::parse(&buf)?;
-        if header.num_records < 0 {
-            let file_size = file
-                .metadata()
-                .map(|m| m.len() as usize)
-                .unwrap_or(expected_header_bytes);
-            header.reconcile_num_records_with_file_size(file_size);
-        }
+        let file_size = file
+            .metadata()
+            .map(|m| m.len() as usize)
+            .unwrap_or(expected_header_bytes);
+        header.reconcile_num_records_with_file_size(file_size);
 
         let signal_labels: Vec<String> = header.signals.iter().map(|s| s.label.clone()).collect();
         let sample_rates: Vec<f64> = header
@@ -685,6 +713,60 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn write_to_sizes_budget_from_reencoded_content() {
+        let file = build_packed_annotation_file();
+        let f = EdfFile::open(file.path()).unwrap();
+        assert_eq!(f.annotations().len(), 12);
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let dst = dir.path().join("dst.edf");
+        f.write_to(&dst, None).unwrap();
+
+        let g = EdfFile::open(&dst).unwrap();
+        assert!(g.warnings().is_empty(), "{:?}", g.warnings());
+        let got = g.annotations();
+        assert_eq!(got.len(), 12);
+        assert!(got.iter().any(|a| a.text == "t00"));
+        assert!(got.iter().any(|a| a.text == "t11"));
+    }
+
+    #[test]
+    fn write_to_copies_multiple_annotation_channels() {
+        let file = build_two_annotation_channel_file();
+        let f = EdfFile::open(file.path()).unwrap();
+        assert_eq!(f.annotations().len(), 1);
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let dst = dir.path().join("dst.edf");
+        f.write_to(&dst, None).unwrap();
+
+        let g = EdfFile::open(&dst).unwrap();
+        assert!(g.warnings().is_empty(), "{:?}", g.warnings());
+        let got = g.annotations();
+        assert_eq!(got.len(), 1);
+        assert!(got[0].text.starts_with("a"));
+    }
+
+    #[test]
+    fn inspect_clamps_overdeclared_record_count() {
+        let file = build_synthetic_file(2, false, 0);
+        let mut bytes = std::fs::read(file.path()).unwrap();
+        // declare 10 records in a file that holds 2
+        bytes[236..244].copy_from_slice(b"10      ");
+        let mut patched = NamedTempFile::new().unwrap();
+        patched.write_all(&bytes).unwrap();
+        patched.flush().unwrap();
+
+        let meta = EdfFile::inspect(patched.path()).unwrap();
+        assert_eq!(meta.num_records, 2);
+        assert!((meta.duration - 2.0).abs() < 1e-9);
+
+        let edf = EdfFile::open(patched.path()).unwrap();
+        assert_eq!(edf.num_records(), 2);
+        assert!((edf.duration() - meta.duration).abs() < 1e-9);
+    }
 
     #[test]
     fn edf_file_api() {
@@ -905,6 +987,116 @@ mod tests {
         let start = fo * ns + fs * index;
         let bytes = value.as_bytes();
         data[start..start + bytes.len().min(fs)].copy_from_slice(&bytes[..bytes.len().min(fs)]);
+    }
+
+    /// Build a 1-record EDF+C file whose 80-byte annotation channel packs 12 texts under one
+    /// onset, which needs 137 bytes when re-encoded as one TAL per text.
+    fn build_packed_annotation_file() -> NamedTempFile {
+        let ns = 2;
+        let ann_bytes = 80usize;
+        let header_bytes = 256 + 256 * ns;
+        let mut buf = vec![b' '; header_bytes];
+
+        write_hdr(&mut buf, 0, 8, "0");
+        write_hdr(&mut buf, 8, 80, "X X X X");
+        write_hdr(&mut buf, 88, 80, "Startdate X X X X");
+        write_hdr(&mut buf, 168, 8, "01.01.00");
+        write_hdr(&mut buf, 176, 8, "00.00.00");
+        write_hdr(&mut buf, 184, 8, &header_bytes.to_string());
+        write_hdr(&mut buf, 192, 44, "EDF+C");
+        write_hdr(&mut buf, 236, 8, "1");
+        write_hdr(&mut buf, 244, 8, "1");
+        write_hdr(&mut buf, 252, 4, &ns.to_string());
+
+        let sig = &mut buf[256..];
+        write_sig(sig, 0, ns, 0, 16, "EEG");
+        write_sig(sig, 0, ns, 96, 8, "uV");
+        write_sig(sig, 0, ns, 104, 8, "-32768");
+        write_sig(sig, 0, ns, 112, 8, "32767");
+        write_sig(sig, 0, ns, 120, 8, "-32768");
+        write_sig(sig, 0, ns, 128, 8, "32767");
+        write_sig(sig, 0, ns, 216, 8, "2");
+        write_sig(sig, 1, ns, 0, 16, "EDF Annotations");
+        write_sig(sig, 1, ns, 104, 8, "-1");
+        write_sig(sig, 1, ns, 112, 8, "1");
+        write_sig(sig, 1, ns, 120, 8, "-32768");
+        write_sig(sig, 1, ns, 128, 8, "32767");
+        write_sig(sig, 1, ns, 216, 8, &(ann_bytes / 2).to_string());
+
+        let mut body = vec![0u8; 2 * 2 + ann_bytes];
+        let mut tal = b"+0\x14\x14\x00".to_vec();
+        tal.extend_from_slice(b"+0.5\x14");
+        for i in 0..12 {
+            tal.extend_from_slice(format!("t{i:02}").as_bytes());
+            tal.push(crate::annotation::TAL_SEPARATOR);
+        }
+        tal.push(crate::annotation::TAL_TERMINATOR);
+        assert!(tal.len() <= ann_bytes, "{} bytes", tal.len());
+        body[4..4 + tal.len()].copy_from_slice(&tal);
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&buf).unwrap();
+        file.write_all(&body).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    /// Build a 1-record EDF+C file with a 30-byte timekeeping channel and a 60-byte second
+    /// annotation channel that holds one 40-character annotation.
+    fn build_two_annotation_channel_file() -> NamedTempFile {
+        let ns = 3;
+        let ann_bytes = 30usize;
+        let big_ann_bytes = 60usize;
+        let header_bytes = 256 + 256 * ns;
+        let mut buf = vec![b' '; header_bytes];
+
+        write_hdr(&mut buf, 0, 8, "0");
+        write_hdr(&mut buf, 8, 80, "X X X X");
+        write_hdr(&mut buf, 88, 80, "Startdate X X X X");
+        write_hdr(&mut buf, 168, 8, "01.01.00");
+        write_hdr(&mut buf, 176, 8, "00.00.00");
+        write_hdr(&mut buf, 184, 8, &header_bytes.to_string());
+        write_hdr(&mut buf, 192, 44, "EDF+C");
+        write_hdr(&mut buf, 236, 8, "1");
+        write_hdr(&mut buf, 244, 8, "1");
+        write_hdr(&mut buf, 252, 4, &ns.to_string());
+
+        let sig = &mut buf[256..];
+        write_sig(sig, 0, ns, 0, 16, "EEG");
+        write_sig(sig, 0, ns, 96, 8, "uV");
+        write_sig(sig, 0, ns, 104, 8, "-32768");
+        write_sig(sig, 0, ns, 112, 8, "32767");
+        write_sig(sig, 0, ns, 120, 8, "-32768");
+        write_sig(sig, 0, ns, 128, 8, "32767");
+        write_sig(sig, 0, ns, 216, 8, "2");
+        write_sig(sig, 1, ns, 0, 16, "EDF Annotations");
+        write_sig(sig, 1, ns, 104, 8, "-1");
+        write_sig(sig, 1, ns, 112, 8, "1");
+        write_sig(sig, 1, ns, 120, 8, "-32768");
+        write_sig(sig, 1, ns, 128, 8, "32767");
+        write_sig(sig, 1, ns, 216, 8, &(ann_bytes / 2).to_string());
+        write_sig(sig, 2, ns, 0, 16, "EDF Annotations");
+        write_sig(sig, 2, ns, 104, 8, "-1");
+        write_sig(sig, 2, ns, 112, 8, "1");
+        write_sig(sig, 2, ns, 120, 8, "-32768");
+        write_sig(sig, 2, ns, 128, 8, "32767");
+        write_sig(sig, 2, ns, 216, 8, &(big_ann_bytes / 2).to_string());
+
+        let mut body = vec![0u8; 2 * 2 + ann_bytes + big_ann_bytes];
+        let tal = b"+0\x14\x14\x00";
+        body[4..4 + tal.len()].copy_from_slice(tal);
+        let mut big = b"+0.5\x14".to_vec();
+        big.extend_from_slice(&[b'a'; 40]);
+        big.push(crate::annotation::TAL_SEPARATOR);
+        big.push(crate::annotation::TAL_TERMINATOR);
+        assert!(big.len() <= big_ann_bytes);
+        body[4 + ann_bytes..4 + ann_bytes + big.len()].copy_from_slice(&big);
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(&buf).unwrap();
+        file.write_all(&body).unwrap();
+        file.flush().unwrap();
+        file
     }
 
     /// Build a 1-signal BDF file. `plus_c` writes "BDF+C" in the reserved field.

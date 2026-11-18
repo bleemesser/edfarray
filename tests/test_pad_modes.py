@@ -97,3 +97,12 @@ def test_valid_lengths_match_channel_sample_counts(mixed):
     proxy = f.proxy_2d(group)
     for pos, sig_idx in enumerate(group.indices):
         assert proxy.valid_lengths[pos] == len(f.signal(sig_idx))
+
+
+@pytest.mark.parametrize("mode", ["zero", "edge", 2.0])
+def test_huge_padded_read_raises_instead_of_aborting(mixed, mode):
+
+    f, group = mixed
+    proxy = f.proxy_2d(group, pad_mode=mode)
+    with pytest.raises(MemoryError):
+        proxy.read_digital(list(range(len(group))), 0, 10**15)

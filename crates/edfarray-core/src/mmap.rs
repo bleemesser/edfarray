@@ -141,6 +141,9 @@ pub struct MappedData {
     /// Serializes on-demand index construction when the eager scan is disabled.
     scan_guard: Mutex<()>,
     cancel_scan: AtomicBool,
+    /// Count of positional reads through `read_records_into`.
+    #[cfg(test)]
+    pub(crate) stream_reads: std::sync::atomic::AtomicU64,
 }
 
 /// How the annotation index is built.
@@ -292,6 +295,8 @@ impl MappedFile {
             scan_done: (Mutex::new(!has_annotations), Condvar::new()),
             scan_guard: Mutex::new(()),
             cancel_scan: AtomicBool::new(false),
+            #[cfg(test)]
+            stream_reads: std::sync::atomic::AtomicU64::new(0),
         });
 
         let scan =
@@ -551,6 +556,8 @@ impl MappedData {
         count: usize,
         buf: &mut [u8],
     ) -> Result<()> {
+        #[cfg(test)]
+        self.stream_reads.fetch_add(1, Ordering::Relaxed);
         let Some((start, end)) = self.record_byte_range(start_record, start_record + count) else {
             return Ok(());
         };

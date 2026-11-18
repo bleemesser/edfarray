@@ -3,6 +3,7 @@ import pytest
 
 from edfarray import EdfFile, Proxy3D
 from conftest import FIXTURES
+from edfbuilder import build_edf_plus
 
 
 def open_edf(name: str) -> EdfFile:
@@ -158,3 +159,24 @@ class TestStrideInfoArithmetic:
             + spr * info["sample_stride_bytes"]
         )
         assert last_byte <= (FIXTURES / "test_generator_2.edf").stat().st_size
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        (slice(0, 1), slice(0, 1), slice(5, 2)),
+        (slice(None), slice(None), slice(3, 1)),
+        (slice(None), slice(None), slice(9, 0, None)),
+        (slice(2, 1), slice(None), slice(None)),
+        (slice(None), slice(1, 0), slice(None)),
+        (slice(1, 1), slice(None), slice(None)),
+    ],
+)
+def test_reversed_slice_gives_an_empty_array(tmp_path, key):
+    path = tmp_path / "tiny.edf"
+    build_edf_plus(str(path), record_onsets=[0.0, 1.0, 2.0], samples_per_record=10)
+    with EdfFile(str(path)) as f:
+        proxy = f.proxy_3d(f.signal_group([0]))
+        assert proxy.shape == (3, 1, 10)
+        model = np.arange(30, dtype=np.float64).reshape(proxy.shape)
+        assert proxy[key].shape == model[key].shape

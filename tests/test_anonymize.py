@@ -3,6 +3,7 @@
 import datetime
 
 import edfarray
+import numpy as np
 import pytest
 from edfbuilder import build_edf_plus
 
@@ -247,3 +248,34 @@ def test_edits_refuse_an_open_file(tmp_path):
     edfarray.edit_header(path, patient_id="X X X Subject-001")
     with edfarray.EdfFile(path) as g:
         assert g.patient_id == "X X X Subject-001"
+
+
+def test_audit_falls_back_to_raw_patient_field_tokens(tmp_path):
+    path = str(tmp_path / "free.edf")
+    sig = edfarray.WriterSignal(
+        label="EEG",
+        physical_dimension="uV",
+        physical_min=-3200.0,
+        physical_max=3200.0,
+        digital_min=-32768,
+        digital_max=32767,
+        samples_per_record=256,
+    )
+    edfarray.write_edf(
+        path,
+        variant="EDF+C",
+        record_duration=1.0,
+        signals=[sig],
+        data=[np.zeros(256 * 4)],
+        patient_id="John Smith",
+        annotations=[edfarray.Annotation(onset=0.5, text="John Smith sat up")],
+    )
+
+    report = edfarray.audit(path)
+    assert "john" in report["terms"] and "smith" in report["terms"]
+    assert report["clean"] is False
+    ann_hits = [h for h in report["hits"] if h["signal_index"] is None]
+    assert {h["term"] for h in ann_hits} == {"john", "smith"}
+
+    result = edfarray.anonymize(path, dry_run=True)
+    assert "john" in result["scrubbed_terms"] and "smith" in result["scrubbed_terms"]

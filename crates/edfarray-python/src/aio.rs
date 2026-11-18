@@ -904,7 +904,8 @@ impl PyAsyncEdfWriter {
             onset: annotation.onset,
             duration: annotation.duration,
             text: annotation.text,
-        });
+        })
+        .map_err(to_py_err)?;
         Ok(())
     }
 

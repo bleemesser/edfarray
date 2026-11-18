@@ -314,7 +314,8 @@ impl AxisSpec {
     fn count(self) -> usize {
         match self {
             AxisSpec::Int(_) => 1,
-            AxisSpec::Range(s, e) => e - s,
+            // a reversed step-1 slice gives start > stop, which numpy reads as empty
+            AxisSpec::Range(s, e) => e.saturating_sub(s),
             AxisSpec::Strided { count, .. } => count,
         }
     }

@@ -106,9 +106,11 @@ if not report["clean"]:
 ```
 
 `audit()` takes its search terms from the patient name, patient code, technician, and
-admin code in the current header. Thus you must run it before you anonymize the file. To
-make sure that no removed term remains, run `audit()` again with the terms that `anonymize`
-removed:
+admin code in the current header. A plain EDF file, or an EDF+ file with free text in the
+patient field, has none of these subfields. In that case, `audit()` falls back to the
+tokens of the raw patient field, split at spaces and underscores. Thus you must run it before you
+anonymize the file. To make sure that no removed term remains, run `audit()` again with the
+terms that `anonymize` removed:
 
 ```python
 result = edfarray.anonymize("recording.edf", seed="study-2026")

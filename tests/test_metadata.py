@@ -7,6 +7,7 @@ here. The example values follow the EDF+ specification's own sample header.
 import datetime
 
 import edfarray
+import numpy as np
 import pytest
 from conftest import FIXTURES
 from edfbuilder import build_edf_plus
@@ -120,6 +121,34 @@ class TestInspect:
     def test_missing_file_raises(self):
         with pytest.raises(edfarray.EdfFileError):
             edfarray.inspect("/definitely/not/here.edf")
+
+    def test_clamps_an_overdeclared_record_count(self, tmp_path):
+
+        p = tmp_path / "over.edf"
+        sig = edfarray.WriterSignal(
+            label="EEG",
+            physical_dimension="uV",
+            physical_min=-3200.0,
+            physical_max=3200.0,
+            digital_min=-32768,
+            digital_max=32767,
+            samples_per_record=256,
+        )
+        edfarray.write_edf(
+            str(p),
+            variant="EDF",
+            record_duration=1.0,
+            signals=[sig],
+            data=[np.zeros(256 * 2)],
+        )
+        raw = bytearray(p.read_bytes())
+        raw[236:244] = b"10      "
+        p.write_bytes(bytes(raw))
+
+        info = edfarray.inspect(str(p))
+        f = edfarray.EdfFile(str(p))
+        assert info["num_records"] == f.num_records == 2
+        assert info["duration"] == f.duration == 2.0
 
 
 class TestStartDatetime:
