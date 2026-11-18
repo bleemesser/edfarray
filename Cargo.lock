@@ -214,7 +214,6 @@ dependencies = [
  "chrono",
  "hmac",
  "libc",
- "log",
  "memmap2",
  "proptest",
  "rayon",
