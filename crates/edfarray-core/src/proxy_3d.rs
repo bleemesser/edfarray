@@ -168,10 +168,11 @@ impl Proxy3D {
         }
 
         // Annotation channels corrupt the stride view.
-        for idx in first..first + n_ch {
-            if self.file.header.signals[idx].is_annotation {
-                return None;
-            }
+        if self.file.header.signals[first..first + n_ch]
+            .iter()
+            .any(|s| s.is_annotation)
+        {
+            return None;
         }
 
         let data_offset = self.file.header.data_offset();
